@@ -205,6 +205,8 @@ function connectStream(taskId) {
 }
 
 function handleStreamData(data) {
+  // realtimeSection from old template - define as no-op to prevent errors
+  const realtimeSection = { style: {} };
   switch (data.type) {
     case 'transcribe_start':
       setStep('step-transcribe');
