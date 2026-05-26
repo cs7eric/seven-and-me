@@ -158,3 +158,9 @@ class TextPolisher:
         except Exception as e:
             print(f"[Summarizer] 摘要失败: {e}")
             return {"核心内容": "", "关键要点": [], "待办事项": []}
+
+    def polish_and_summarize(self, text: str) -> dict:
+        """润色并摘要"""
+        polished = self.polish(text)
+        summary = self.summarize(polished)
+        return {"polished": polished, "summary": summary}
