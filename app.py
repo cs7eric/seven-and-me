@@ -109,7 +109,7 @@ def transcribe():
         try:
             transcriber = get_transcriber()
             audio_path = str(wav_path)
-            transcriber.transcribe_streaming(audio_path, chunk_duration=1, callback=on_chunk)
+            transcriber.transcribe_streaming(audio_path, chunk_duration=30, callback=on_chunk)
 
             # 转写完成后自动润色和摘要
             text = _tasks[task_id]["transcript"]
