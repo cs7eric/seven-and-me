@@ -83,6 +83,7 @@ class Transcriber:
         流式转写：按时间段分片转写，实时回调结果
         callback(chunk_idx, text, is_final)
         """
+        print(f"[Transcriber] transcribe_streaming 开始, audio={audio_path}, duration={chunk_duration}s")
         try:
             import torchaudio
             TORCHAUDIO_AVAILABLE = True
