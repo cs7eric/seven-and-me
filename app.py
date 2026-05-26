@@ -154,6 +154,7 @@ def stream(task_id):
         last_polished = ""
         last_summary_str = ""
         last_poll = time.time()
+        last_emitted_len = 0  # 已发出的字符数
 
         while True:
             task = _tasks.get(task_id)
@@ -173,10 +174,12 @@ def stream(task_id):
             if last_status == "" and status == "transcribing":
                 yield f"data: {json.dumps({'type': 'transcribe_start'})}\n\n"
 
-            # transcript 更新
+            # transcript 更新：只发新增的字符（逐字流式）
             if transcript and transcript != last_transcript:
+                # 发所有字符（前端负责逐字动画显示）
                 yield f"data: {json.dumps({'type': 'chunk', 'text': transcript})}\n\n"
                 last_transcript = transcript
+                last_emitted_len = len(transcript)
 
             # 转写完成
             if last_status != "polishing" and status == "polishing" and last_status != "transcribing":

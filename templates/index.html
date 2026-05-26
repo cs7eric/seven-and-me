@@ -256,8 +256,25 @@
             switch(type) {
                 case 'chunk':
                     realtimeSection.style.display = 'block';
-                    realtimeText.textContent = data.text || '';
-                    setStepRunning('Transcribe');
+                    {
+                        const newText = data.text || '';
+                        const oldText = realtimeText.textContent || '';
+                        // 只动画显示新增的字符
+                        if (newText.length > oldText.length) {
+                            const added = newText.slice(oldText.length);
+                            let charIndex = 0;
+                            function addNextChar() {
+                                if (charIndex < added.length) {
+                                    realtimeText.textContent += added[charIndex];
+                                    charIndex++;
+                                    // 每个字符间隔 30ms，流畅的流式效果
+                                    setTimeout(addNextChar, 30);
+                                }
+                            }
+                            addNextChar();
+                        }
+                        setStepRunning('Transcribe');
+                    }
                     break;
 
                 case 'transcribe_done':
@@ -271,8 +288,23 @@
                     break;
 
                 case 'polish_char':
-                    polishRealtimeText.textContent = data.text;
-                    polishedFullText = data.text;
+                    {
+                        const newText = data.text || '';
+                        const oldText = polishRealtimeText.textContent || '';
+                        if (newText.length > oldText.length) {
+                            const added = newText.slice(oldText.length);
+                            let charIndex = 0;
+                            function addNextChar() {
+                                if (charIndex < added.length) {
+                                    polishRealtimeText.textContent += added[charIndex];
+                                    charIndex++;
+                                    setTimeout(addNextChar, 30);
+                                }
+                            }
+                            addNextChar();
+                        }
+                        polishedFullText = newText;
+                    }
                     break;
 
                 case 'done':
