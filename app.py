@@ -4,13 +4,12 @@ import uuid
 import subprocess
 import imageio_ffmpeg
 import json
+import time
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
-import queue
-import threading
 
 load_dotenv()
 
@@ -25,7 +24,6 @@ _executor = ThreadPoolExecutor(max_workers=2)
 
 _tasks = {}
 
-LOCAL_MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", None)
 API_KEY = os.getenv("MINIMAX_API_KEY")
 GROUP_ID = os.getenv("MINIMAX_GROUP_ID")
 
@@ -138,13 +136,18 @@ def stream(task_id):
             yield f"data: {json.dumps({'type': 'error', 'message': 'Task not found'})}\n\n"
             return
 
-        last_status = ""
+        last_transcript = ""
+        check_count = 0
         while True:
-            task = _tasks[task_id]
-            status = task["status"]
+            task = _tasks.get(task_id)
+            if not task:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Task disappeared'})}\n\n"
+                break
 
-            if status == "done" and last_status != "done":
-                transcript = task.get("transcript", "")
+            status = task["status"]
+            transcript = task.get("transcript", "")
+
+            if status == "done":
                 polished = task.get("polished", "")
                 summary = task.get("summary", "")
                 yield f"data: {json.dumps({'type': 'done', 'text': transcript, 'polished': polished, 'summary': summary})}\n\n"
@@ -154,17 +157,17 @@ def stream(task_id):
                 yield f"data: {json.dumps({'type': 'error', 'message': task.get('error', 'Unknown error')})}\n\n"
                 break
 
-            elif status != last_status and status == "processing":
-                transcript = task.get("transcript", "")
-                if transcript:
-                    yield f"data: {json.dumps({'type': 'transcript', 'text': transcript})}\n\n"
+            # 发送最新转写（只要有更新）
+            if transcript and transcript != last_transcript:
+                yield f"data: {json.dumps({'type': 'transcript', 'text': transcript})}\n\n"
+                last_transcript = transcript
 
-            last_status = status
+            check_count += 1
+            time.sleep(0.5)
 
     response = Response(generate(), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',
         'X-Accel-Buffering': 'no',
-        'Connection': 'keep-alive'
     })
     return response
 
