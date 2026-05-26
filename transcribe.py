@@ -158,7 +158,7 @@ class Transcriber:
                 return_timestamps=False,
                 language=language,
                 task="transcribe",
-                max_new_tokens=512,
+                max_new_tokens=256,
             )
 
             text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0]

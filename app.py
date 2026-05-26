@@ -109,11 +109,15 @@ def transcribe():
 
     def run():
         try:
+            print(f"[run] 开始转写 task_id={task_id}")
             transcriber = get_transcriber()
             audio_path = str(wav_path)
+            print(f"[run] audio_path={audio_path}")
             transcriber.transcribe_streaming(audio_path, chunk_duration=30, callback=on_chunk)
+            print(f"[run] 转写完成")
 
             text = _tasks[task_id]["transcript"]
+            print(f"[run] 转写结果长度={len(text)}")
             if not text:
                 _tasks[task_id]["status"] = "error"
                 _tasks[task_id]["error"] = "转写结果为空"
@@ -237,4 +241,23 @@ def output_file(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
 if __name__ == '__main__':
+    import socket
+    # 检查端口 5000 是否有残留进程
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex(('127.0.0.1', 5000))
+    if result == 0:
+        print("[启动] 端口 5000 已被占用，尝试接管...")
+        import subprocess
+        try:
+            result = subprocess.run(['netstat', '-ano'], capture_output=True, text=True)
+            for line in result.stdout.split('\n'):
+                if ':5000' in line and 'LISTENING' in line:
+                    pid = int(line.split()[-1])
+                    print(f"[启动] 杀掉残留进程 PID={pid}")
+                    subprocess.run(['taskkill', '/F', '/PID', str(pid)], capture_output=True)
+                    break
+        except:
+            pass
+    sock.close()
+    print("[启动] 启动 Flask on 0.0.0.0:5000")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True, use_reloader=False)
