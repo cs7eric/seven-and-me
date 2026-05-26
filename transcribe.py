@@ -47,6 +47,34 @@ class Transcriber:
         """转写单个音频文件"""
         return self._transcribe_file(audio_path, language="zh")
 
+    def _load_audio(self, audio_path: str):
+        """加载音频文件，返回 (numpy_waveform_1d, sample_rate)"""
+        try:
+            import torchaudio
+            waveform, sr = torchaudio.load(audio_path)
+            if waveform.shape[0] > 1:
+                waveform = waveform.mean(dim=0)
+            if sr != 16000:
+                waveform = torchaudio.functional.resample(waveform, sr, 16000)
+                sr = 16000
+            return waveform.numpy(), sr
+        except Exception as e:
+            print(f"[Transcriber] torchaudio 加载失败: {e}")
+            try:
+                import soundfile as sf
+                import scipy.signal
+                data, sr = sf.read(audio_path, dtype='float32')
+                if len(data.shape) > 1:
+                    data = data.mean(axis=1)
+                if sr != 16000:
+                    num_samples = int(len(data) * 16000 / sr)
+                    data = scipy.signal.resample(data, num_samples)
+                    sr = 16000
+                return data, sr
+            except Exception as e2:
+                print(f"[Transcriber] soundfile 加载也失败: {e2}")
+                return None, None
+
     def transcribe_streaming(self, audio_path: str, chunk_duration: int = 30, callback=None):
         """
         流式转写：按时间段分片转写，实时回调结果
@@ -81,7 +109,6 @@ class Transcriber:
 
         total_samples = len(full_waveform)
         chunk_samples = chunk_duration * sr
-        tmp_dir = tempfile.gettempdir()
 
         all_text = []
         chunk_idx = 0
@@ -90,11 +117,8 @@ class Transcriber:
             end = min(start + chunk_samples, total_samples)
             chunk_waveform = full_waveform[start:end]
 
-            # 保存片段到临时文件，Whisper 用 ffmpeg 读取
-            chunk_path = os.path.join(tmp_dir, f"whisper_chunk_{chunk_idx}.wav")
-            self._save_wav(chunk_path, chunk_waveform, sr)
-
-            chunk_text = self._transcribe_file(chunk_path)
+            # 直接传音频数组，不走文件路径
+            chunk_text = self._transcribe_array(chunk_waveform, sr)
             if chunk_text:
                 all_text.append(chunk_text)
 
@@ -102,72 +126,12 @@ class Transcriber:
             if callback:
                 callback(chunk_idx, " ".join(all_text), is_final)
 
-            try:
-                os.remove(chunk_path)
-            except:
-                pass
-
             chunk_idx += 1
 
         return " ".join(all_text)
 
-    def _load_audio(self, audio_path: str):
-        """加载音频文件，返回 (numpy_waveform_1d, sample_rate)"""
-        try:
-            import torchaudio
-            waveform, sr = torchaudio.load(audio_path)
-            if waveform.shape[0] > 1:
-                waveform = waveform.mean(dim=0)
-            if sr != 16000:
-                waveform = torchaudio.functional.resample(waveform, sr, 16000)
-                sr = 16000
-            return waveform.numpy(), sr
-        except Exception as e:
-            print(f"[Transcriber] torchaudio 加载失败: {e}")
-            try:
-                import soundfile as sf
-                import scipy.signal
-                data, sr = sf.read(audio_path, dtype='float32')
-                if len(data.shape) > 1:
-                    data = data.mean(axis=1)
-                if sr != 16000:
-                    num_samples = int(len(data) * 16000 / sr)
-                    data = scipy.signal.resample(data, num_samples)
-                    sr = 16000
-                return data, sr
-            except Exception as e2:
-                print(f"[Transcriber] soundfile 加载也失败: {e2}")
-                return None, None
-
-    def _save_wav(self, path: str, waveform, sr: int):
-        """保存音频到 WAV 文件"""
-        try:
-            import soundfile as sf
-            sf.write(path, waveform, sr)
-        except Exception:
-            # fallback: 用 subprocess 调用 ffmpeg
-            import struct
-            waveform_int = np.clip(waveform * 32768, -32768, 32767).astype(np.int16)
-            with open(path, 'wb') as f:
-                # RIFF header
-                num_samples = len(waveform_int)
-                f.write(b'RIFF')
-                f.write(struct.pack('<I', 36 + num_samples * 2))
-                f.write(b'WAVE')
-                f.write(b'fmt ')
-                f.write(struct.pack('<I', 16))
-                f.write(struct.pack('<H', 1))
-                f.write(struct.pack('<H', 1))
-                f.write(struct.pack('<I', sr))
-                f.write(struct.pack('<I', sr * 2))
-                f.write(struct.pack('<H', 2))
-                f.write(struct.pack('<H', 16))
-                f.write(b'data')
-                f.write(struct.pack('<I', num_samples * 2))
-                f.write(waveform_int.tobytes())
-
-    def _transcribe_file(self, audio_path: str, language: str = "zh") -> str:
-        """转写音频文件（ffmpeg 会在 pipeline 内部自动调用）"""
+    def _transcribe_array(self, waveform: np.ndarray, sampling_rate: int, language: str = "zh") -> str:
+        """传音频数组给 Whisper pipeline"""
         try:
             generate_kwargs = {
                 "max_new_tokens": 256,
@@ -175,7 +139,10 @@ class Transcriber:
                 "task": "transcribe",
                 "condition_on_prev_tokens": False,
             }
-            result = self.pipe(audio_path, generate_kwargs=generate_kwargs)
+            result = self.pipe(
+                inputs={"array": waveform, "sampling_rate": sampling_rate},
+                generate_kwargs=generate_kwargs
+            )
             if isinstance(result, dict) and "text" in result:
                 return result["text"].strip()
             return str(result).strip()
@@ -184,6 +151,13 @@ class Transcriber:
             import traceback
             traceback.print_exc()
             return ""
+
+    def _transcribe_file(self, audio_path: str, language: str = "zh") -> str:
+        """转写音频文件"""
+        waveform, sr = self._load_audio(audio_path)
+        if waveform is None:
+            return ""
+        return self._transcribe_array(waveform, sr, language)
 
     def _get_audio_duration(self, audio_path: str) -> float:
         """获取音频时长"""
