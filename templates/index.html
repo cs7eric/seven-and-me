@@ -1,409 +1,330 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MP4 转文字 & AI 润色</title>
-    <link rel="stylesheet" href="/static/style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MP4 转文字 - 语音转写与AI润色</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1419; color: #e7e9ea; min-height: 100vh; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; color: #1d9bf0; }
+  .subtitle { color: #71767b; font-size: 14px; margin-bottom: 20px; }
+  .step-bar { display: flex; gap: 0; margin-bottom: 20px; background: #1c2732; border-radius: 12px; padding: 4px; }
+  .step { flex: 1; text-align: center; padding: 10px; border-radius: 8px; font-size: 13px; color: #71767b; cursor: pointer; transition: all 0.2s; }
+  .step.active { background: #1d9bf0; color: #fff; font-weight: 600; }
+  .step.done { color: #1d9bf0; }
+  .upload-box { border: 2px dashed #2f3336; border-radius: 16px; padding: 48px; text-align: center; margin-bottom: 20px; transition: border-color 0.2s; cursor: pointer; }
+  .upload-box:hover { border-color: #1d9bf0; }
+  .upload-box.dragover { border-color: #1d9bf0; background: rgba(29,155,240,0.05); }
+  .upload-icon { font-size: 48px; margin-bottom: 12px; }
+  .upload-text { font-size: 16px; margin-bottom: 8px; }
+  .upload-hint { font-size: 13px; color: #71767b; }
+  input[type="file"] { display: none; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; background: #1d9bf0; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 15px; cursor: pointer; transition: background 0.2s; }
+  .btn:hover { background: #1a8cd8; }
+  .btn:disabled { background: #2f3336; color: #71767b; cursor: not-allowed; }
+  /* 两列布局 */
+  .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .result-box { background: #16181c; border: 1px solid #2f3336; border-radius: 16px; overflow: hidden; }
+  .result-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #2f3336; }
+  .result-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .result-title .icon { font-size: 16px; }
+  .char-count { font-size: 12px; color: #71767b; }
+  .result-body { padding: 14px 16px; min-height: 300px; max-height: 500px; overflow-y: auto; font-size: 15px; line-height: 1.8; color: #e7e9ea; white-space: pre-wrap; word-break: break-word; }
+  .result-body::-webkit-scrollbar { width: 6px; }
+  .result-body::-webkit-scrollbar-track { background: #16181c; }
+  .result-body::-webkit-scrollbar-thumb { background: #2f3336; border-radius: 3px; }
+  .result-body:empty::before { content: '等待转写...'; color: #71767b; }
+  /* 摘要单独一行 */
+  .summary-box { background: #16181c; border: 1px solid #2f3336; border-radius: 16px; overflow: hidden; }
+  .summary-body { padding: 14px 16px; min-height: 100px; max-height: 200px; overflow-y: auto; font-size: 14px; line-height: 1.7; color: #e7e9ea; }
+  .summary-body:empty::before { content: '等待摘要...'; color: #71767b; }
+  .section-label { font-size: 12px; color: #1d9bf0; font-weight: 600; margin-bottom: 8px; }
+  .copy-btn { background: #2f3336; color: #e7e9ea; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background 0.2s; }
+  .copy-btn:hover { background: #3f4448; }
+  .copy-btn.copied { background: #1d9bf0; }
+  .polish-section { margin-top: 4px; padding-top: 12px; border-top: 1px dashed #2f3336; }
+  .summary-section { margin-top: 8px; }
+  /* 进度指示 */
+  .realtime-section { margin-top: 12px; font-size: 13px; color: #71767b; }
+  .progress-bar { height: 4px; background: #2f3336; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+  .progress-fill { height: 100%; background: #1d9bf0; border-radius: 2px; transition: width 0.3s; width: 0%; }
+  .phase { display: inline-block; background: #1d9bf0; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+</style>
 </head>
 <body>
-    <div class="container">
-        <header class="header">
-            <h1>📝 视频转文字</h1>
-            <p>Whisper Large-v3 + MiniMax AI</p>
-        </header>
+<div class="container">
+  <h1>🎙️ MP4 转文字</h1>
+  <p class="subtitle">上传视频，AI 自动转写、润色并总结（支持A股、炒股等金融内容）</p>
 
-        <div class="upload-card" id="uploadCard">
-            <div class="upload-area" id="uploadArea">
-                <div class="upload-icon">🎬</div>
-                <p class="upload-text">选择视频或音频文件</p>
-                <p class="upload-hint">支持 MP4, MOV, MKV, MP3, WAV 等</p>
-                <input type="file" id="fileInput" accept="video/*,audio/*" hidden>
-            </div>
+  <!-- 步骤条 -->
+  <div class="step-bar">
+    <div class="step active" id="step-upload">① 上传文件</div>
+    <div class="step" id="step-upload2">② 转换音频</div>
+    <div class="step" id="step-transcribe">③ 语音转写</div>
+    <div class="step" id="step-polish">④ AI润色</div>
+    <div class="step" id="step-summary">⑤ 摘要总结</div>
+  </div>
 
-            <div class="file-info" id="fileInfo" style="display: none;">
-                <div class="file-icon">📎</div>
-                <div style="flex:1;overflow:hidden;">
-                    <div class="file-name" id="fileName"></div>
-                    <div class="file-size" id="fileSize"></div>
-                </div>
-                <button class="btn-remove" id="btnRemove">✕</button>
-            </div>
+  <!-- 上传区 -->
+  <div class="upload-box" id="uploadBox" onclick="fileInput.click()">
+    <div class="upload-icon">📁</div>
+    <div class="upload-text">点击选择 MP4 文件，或拖拽到此处</div>
+    <div class="upload-hint">支持 MP4、MOV、AVI 等格式</div>
+  </div>
+  <input type="file" id="fileInput" accept="video/*">
 
-            <button class="btn-primary" id="btnProcess" disabled>
-                <span class="btn-text">开始处理</span>
-                <span class="btn-loading" style="display: none;">
-                    <span class="spinner"></span>
-                    处理中...
-                </span>
-            </button>
+  <!-- 实时进度 -->
+  <div id="progressInfo" style="display:none; margin-bottom:16px; font-size:13px; color:#71767b;">
+    <span id="phaseLabel"></span>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+
+  <!-- 结果区域：左右并列 -->
+  <div id="resultsArea" style="display:none">
+    <div class="columns">
+      <!-- 左：原始转写 -->
+      <div class="result-box">
+        <div class="result-header">
+          <span class="result-title"><span class="icon">📝</span>原始转写</span>
+          <span class="char-count" id="rawCharCount">0 字</span>
         </div>
-
-        <div class="progress-card" id="progressCard" style="display: none;">
-            <div class="progress-header">
-                <div class="progress-icon">🎙️</div>
-                <div class="progress-info">
-                    <h3 id="progressTitle">正在处理...</h3>
-                    <p id="progressPercent">0%</p>
-                </div>
-            </div>
-
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill" style="width: 0%"></div>
-            </div>
-
-            <div class="progress-steps">
-                <div class="step step-pending" id="stepUpload">
-                    <div class="step-icon">📤</div>
-                    <span class="step-text">上传文件</span>
-                    <span class="step-status">等待中</span>
-                </div>
-                <div class="step step-pending" id="stepTranscribe">
-                    <div class="step-icon">📝</div>
-                    <span class="step-text">语音转文字</span>
-                    <span class="step-status">等待中</span>
-                </div>
-                <div class="step step-pending" id="stepPolish">
-                    <div class="step-icon">✨</div>
-                    <span class="step-text">AI 润色</span>
-                    <span class="step-status">等待中</span>
-                </div>
-            </div>
-
-            <div class="realtime-section" id="realtimeSection" style="display: none;">
-                <h4 style="font-size:14px;color:#666;margin:20px 0 10px;">📝 实时转写：</h4>
-                <div class="text-output realtime-text" id="realtimeText"></div>
-            </div>
-
-            <div class="realtime-section" id="polishRealtimeSection" style="display: none;">
-                <h4 style="font-size:14px;color:#666;margin:20px 0 10px;">✨ AI 润色：</h4>
-                <div class="text-output realtime-text" id="polishRealtimeText"></div>
-            </div>
+        <div class="result-body" id="realtimeText"></div>
+      </div>
+      <!-- 右：AI润色 -->
+      <div class="result-box">
+        <div class="result-header">
+          <span class="result-title"><span class="icon">✨</span>AI 润色</span>
+          <span class="char-count" id="polishCharCount">0 字</span>
         </div>
-
-        <div class="result-card" id="resultCard" style="display: none;">
-            <div class="result-tabs">
-                <button class="tab-btn active" data-tab="raw">原始转写</button>
-                <button class="tab-btn" data-tab="polished">AI 润色</button>
-            </div>
-
-            <div class="result-content">
-                <div class="tab-panel active" id="panel-raw">
-                    <div class="text-output" id="rawText"></div>
-                </div>
-                <div class="tab-panel" id="panel-polished">
-                    <div class="text-output" id="polishedText"></div>
-                </div>
-            </div>
-
-            <div class="result-meta">
-                <span class="char-count" id="charCount"></span>
-                <button class="btn-copy" id="btnCopy">复制润色结果</button>
-            </div>
-        </div>
-
-        <div class="error-card" id="errorCard" style="display: none;">
-            <div class="error-icon">😵</div>
-            <div class="error-message" id="errorMessage"></div>
-            <button class="btn-primary" onclick="location.reload()">重新开始</button>
-        </div>
-
-        <footer class="footer">
-            Powered by Whisper Large-v3 + MiniMax AI
-        </footer>
+        <div class="result-body" id="polishRealtimeText"></div>
+      </div>
     </div>
 
-    <script>
-        let selectedFile = null;
-        let currentTaskId = null;
-        let eventSource = null;
+    <!-- 摘要单独一行 -->
+    <div class="summary-box">
+      <div class="result-header">
+        <span class="result-title"><span class="icon">🧠</span>AI 摘要与总结</span>
+      </div>
+      <div class="summary-body" id="summaryText"></div>
+    </div>
+  </div>
+</div>
 
-        const uploadArea = document.getElementById('uploadArea');
-        const fileInput = document.getElementById('fileInput');
-        const fileInfo = document.getElementById('fileInfo');
-        const fileName = document.getElementById('fileName');
-        const fileSize = document.getElementById('fileSize');
-        const btnRemove = document.getElementById('btnRemove');
-        const btnProcess = document.getElementById('btnProcess');
-        const uploadCard = document.getElementById('uploadCard');
-        const progressCard = document.getElementById('progressCard');
-        const resultCard = document.getElementById('resultCard');
-        const errorCard = document.getElementById('errorCard');
-        const progressFill = document.getElementById('progressFill');
-        const progressPercent = document.getElementById('progressPercent');
-        const progressTitle = document.getElementById('progressTitle');
-        const realtimeSection = document.getElementById('realtimeSection');
-        const realtimeText = document.getElementById('realtimeText');
-        const polishRealtimeSection = document.getElementById('polishRealtimeSection');
-        const polishRealtimeText = document.getElementById('polishRealtimeText');
+<script>
+const uploadBox = document.getElementById('uploadBox');
+const fileInput = document.getElementById('fileInput');
+const resultsArea = document.getElementById('resultsArea');
+const realtimeText = document.getElementById('realtimeText');
+const polishRealtimeText = document.getElementById('polishRealtimeText');
+const summaryText = document.getElementById('summaryText');
+const rawCharCount = document.getElementById('rawCharCount');
+const polishCharCount = document.getElementById('polishCharCount');
+const progressInfo = document.getElementById('progressInfo');
+const phaseLabel = document.getElementById('phaseLabel');
+const progressFill = document.getElementById('progressFill');
 
-        uploadArea.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) handleFile(e.target.files[0]);
-        });
+let polishedFullText = '';
+let summaryFullText = '';
+let eventSource = null;
+let streamClosed = false;
 
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-        uploadArea.addEventListener('dragleave', () => {
-            uploadArea.classList.remove('dragover');
-        });
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            if (e.dataTransfer.files.length > 0) {
-                handleFile(e.dataTransfer.files[0]);
+// ========== 文件上传 ==========
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) uploadFile(file);
+});
+
+uploadBox.addEventListener('dragover', (e) => { e.preventDefault(); uploadBox.classList.add('dragover'); });
+uploadBox.addEventListener('dragleave', () => uploadBox.classList.remove('dragover'));
+uploadBox.addEventListener('drop', (e) => {
+  e.preventDefault();
+  uploadBox.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+function setStep(stepId) {
+  document.querySelectorAll('.step').forEach(s => s.classList.remove('active', 'done'));
+  const step = document.getElementById(stepId);
+  if (step) step.classList.add('active');
+}
+
+function setProgress(phase, pct) {
+  progressInfo.style.display = 'block';
+  phaseLabel.textContent = phase;
+  progressFill.style.width = pct + '%';
+}
+
+async function uploadFile(file) {
+  resultsArea.style.display = 'block';
+  realtimeText.textContent = '';
+  polishRealtimeText.textContent = '';
+  summaryText.textContent = '';
+  rawCharCount.textContent = '0 字';
+  polishCharCount.textContent = '0 字';
+  polishedFullText = '';
+  setStep('step-upload2');
+  setProgress('正在转换音频…', 10);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/api/transcribe', { method: 'POST', body: formData });
+    const data = await resp.json();
+    if (data.error) { alert('错误: ' + data.error); return; }
+
+    setStep('step-transcribe');
+    setProgress('正在转写…', 30);
+    connectStream(data.task_id);
+  } catch (err) {
+    alert('上传失败: ' + err.message);
+  }
+}
+
+function connectStream(taskId) {
+  if (eventSource) eventSource.close();
+  streamClosed = false;
+  eventSource = new EventSource(`/api/stream/${taskId}`);
+
+  eventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      handleStreamData(data);
+    } catch (err) { console.error(err); }
+  };
+
+  eventSource.onerror = () => {
+    if (!streamClosed) {
+      streamClosed = true;
+      eventSource.close();
+    }
+  };
+}
+
+function handleStreamData(data) {
+  switch (data.type) {
+    case 'transcribe_start':
+      setStep('step-transcribe');
+      setProgress('正在转写…', 30);
+      break;
+
+    case 'chunk':
+      realtimeSection.style.display = 'block';
+      {
+        const newText = data.text || '';
+        const oldText = realtimeText.textContent || '';
+        // 只动画显示新增的字符
+        if (newText.length > oldText.length) {
+          const added = newText.slice(oldText.length);
+          let charIndex = 0;
+          function addNextChar() {
+            if (charIndex < added.length) {
+              realtimeText.textContent += added[charIndex];
+              charIndex++;
+              rawCharCount.textContent = realtimeText.textContent.length + ' 字';
+              setTimeout(addNextChar, 30);
             }
-        });
+          }
+          addNextChar();
+        }
+      }
+      setProgress('转写中…', Math.min(60, 30 + Math.floor(data.text.length / 20)));
+      break;
 
-        function handleFile(file) {
-            const ext = file.name.split('.').pop().toLowerCase();
-            const allowed = ['mp4','avi','mov','mkv','webm','flv','wmv','mp3','wav','m4a','aac','ogg','flac','wma'];
-            if (!allowed.includes(ext)) {
-                showError('不支持的文件格式');
-                return;
+    case 'transcribe_done':
+      setStep('step-polish');
+      setProgress('正在润色…', 65);
+      break;
+
+    case 'polish_start':
+      break;
+
+    case 'polish_char':
+      {
+        const newText = data.text || '';
+        const oldText = polishRealtimeText.textContent || '';
+        if (newText.length > oldText.length) {
+          const added = newText.slice(oldText.length);
+          let charIndex = 0;
+          function addNextChar() {
+            if (charIndex < added.length) {
+              polishRealtimeText.textContent += added[charIndex];
+              charIndex++;
+              polishCharCount.textContent = polishRealtimeText.textContent.length + ' 字';
+              setTimeout(addNextChar, 30);
             }
-            if (file.size > 500*1024*1024) {
-                showError('文件过大，请选择小于 500MB 的文件');
-                return;
-            }
-
-            selectedFile = file;
-            fileName.textContent = file.name;
-            fileSize.textContent = formatSize(file.size);
-            uploadArea.style.display = 'none';
-            fileInfo.style.display = 'flex';
-            btnProcess.disabled = false;
+          }
+          addNextChar();
         }
+        polishedFullText = newText;
+      }
+      setProgress('润色中…', Math.min(90, 65 + Math.floor(data.text.length / 20)));
+      break;
 
-        function formatSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-            return (bytes/1024/1024).toFixed(1) + ' MB';
+    case 'polish_done':
+      // 润色一次性完成，直接显示
+      if (data.polished_text) {
+        polishRealtimeText.textContent = data.polished_text;
+        polishCharCount.textContent = data.polished_text.length + ' 字';
+      }
+      break;
+
+    case 'summary_start':
+      setStep('step-summary');
+      setProgress('正在总结…', 93);
+      break;
+
+    case 'summary_char':
+      summaryText.textContent = data.text;
+      break;
+
+    case 'summary_done':
+      if (data.summary_text) {
+        if (typeof data.summary_text === 'string') {
+          summaryText.textContent = data.summary_text;
+        } else {
+          const s = data.summary_text;
+          let html = '';
+          if (s.核心内容) html += `<div style="margin-bottom:10px"><b style="color:#1d9bf0">💡 核心内容：</b>${s.核心内容}</div>`;
+          if (s.关键要点 && s.关键要点.length) {
+            html += `<div><b style="color:#1d9bf0">📌 关键要点：</b><ul style="margin:6px 0 0 20px">`;
+            s.关键要点.forEach(p => { html += `<li>${p}</li>`; });
+            html += `</ul></div>`;
+          }
+          summaryText.innerHTML = html;
         }
+      }
+      setProgress('完成', 100);
+      setStep('step-summary');
+      document.querySelectorAll('.step').forEach(s => s.classList.add('done'));
+      break;
 
-        btnRemove.addEventListener('click', () => {
-            selectedFile = null;
-            fileInput.value = '';
-            fileInfo.style.display = 'none';
-            uploadArea.style.display = 'block';
-            btnProcess.disabled = true;
-        });
+    case 'error':
+      alert('错误: ' + (data.error || data.message || '未知错误'));
+      break;
+  }
+}
 
-        btnProcess.addEventListener('click', async () => {
-            if (!selectedFile) return;
-
-            uploadCard.style.display = 'none';
-            progressCard.style.display = 'block';
-            resetSteps();
-            realtimeSection.style.display = 'none';
-            polishRealtimeSection.style.display = 'none';
-            realtimeText.textContent = '';
-            polishRealtimeText.textContent = '';
-
-            const formData = new FormData();
-            formData.append('file', selectedFile);
-            formData.append('mode', 'all');
-
-            try {
-                const response = await fetch('/api/transcribe', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-
-                if (!data.task_id) {
-                    showError(data.error || '启动处理失败');
-                    return;
-                }
-
-                currentTaskId = data.task_id;
-                setStepRunning('Upload');
-                updateProgress(10, '上传中...');
-                startStream();
-
-            } catch (e) {
-                showError('启动处理失败: ' + e.message);
-            }
-        });
-
-        function startStream() {
-            eventSource = new EventSource('/api/stream/' + currentTaskId);
-
-            eventSource.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                handleStreamData(data);
-            };
-
-            eventSource.onerror = (e) => {
-                console.error('SSE 错误', e);
-                eventSource.close();
-            };
-        }
-
-        let polishedFullText = '';
-
-        function handleStreamData(data) {
-            const type = data.type;
-            const progress = data.progress;
-
-            if (progress !== undefined) {
-                updateProgress(progress, getProgressText(progress));
-            }
-
-            switch(type) {
-                case 'chunk':
-                    realtimeSection.style.display = 'block';
-                    {
-                        const newText = data.text || '';
-                        const oldText = realtimeText.textContent || '';
-                        // 只动画显示新增的字符
-                        if (newText.length > oldText.length) {
-                            const added = newText.slice(oldText.length);
-                            let charIndex = 0;
-                            function addNextChar() {
-                                if (charIndex < added.length) {
-                                    realtimeText.textContent += added[charIndex];
-                                    charIndex++;
-                                    // 每个字符间隔 30ms，流畅的流式效果
-                                    setTimeout(addNextChar, 30);
-                                }
-                            }
-                            addNextChar();
-                        }
-                        setStepRunning('Transcribe');
-                    }
-                    break;
-
-                case 'transcribe_done':
-                    setStepDone('Transcribe');
-                    break;
-
-                case 'polish_start':
-                    setStepRunning('Polish');
-                    polishRealtimeSection.style.display = 'block';
-                    polishedFullText = '';
-                    break;
-
-                case 'polish_char':
-                    {
-                        const newText = data.text || '';
-                        const oldText = polishRealtimeText.textContent || '';
-                        if (newText.length > oldText.length) {
-                            const added = newText.slice(oldText.length);
-                            let charIndex = 0;
-                            function addNextChar() {
-                                if (charIndex < added.length) {
-                                    polishRealtimeText.textContent += added[charIndex];
-                                    charIndex++;
-                                    setTimeout(addNextChar, 30);
-                                }
-                            }
-                            addNextChar();
-                        }
-                        polishedFullText = newText;
-                    }
-                    break;
-
-                case 'done':
-                    setStepDone('Polish');
-                    updateProgress(100, '完成');
-                    showResult({
-                        raw_text: data.raw_text,
-                        polished_text: data.polished_text,
-                        polish_error: data.polish_error,
-                        char_count: data.char_count
-                    });
-                    eventSource.close();
-                    break;
-
-                case 'error':
-                    showError(data.error || '处理失败');
-                    eventSource.close();
-                    break;
-            }
-        }
-
-        function getProgressText(progress) {
-            if (progress < 20) return '上传中...';
-            if (progress < 75) return '转写中...';
-            if (progress < 95) return '润色中...';
-            return '完成';
-        }
-
-        function resetSteps() {
-            ['Upload', 'Transcribe', 'Polish'].forEach(s => {
-                const el = document.getElementById('step' + s);
-                if (el) {
-                    el.className = 'step step-pending';
-                    el.querySelector('.step-icon').textContent = {'Upload': '📤', 'Transcribe': '📝', 'Polish': '✨'}[s];
-                    el.querySelector('.step-status').textContent = '等待中';
-                }
-            });
-        }
-
-        function updateProgress(percent, text) {
-            progressFill.style.width = percent + '%';
-            progressPercent.textContent = percent + '%';
-            progressTitle.textContent = text || '处理中...';
-        }
-
-        function setStepDone(name) {
-            const el = document.getElementById('step' + name);
-            if (el && !el.classList.contains('step-done')) {
-                el.className = 'step step-done';
-                el.querySelector('.step-icon').textContent = '✓';
-                el.querySelector('.step-status').textContent = '完成';
-            }
-        }
-
-        function setStepRunning(name) {
-            const el = document.getElementById('step' + name);
-            if (el && el.classList.contains('step-pending')) {
-                el.className = 'step step-running';
-                el.querySelector('.step-status').textContent = '进行中...';
-            }
-        }
-
-        function showResult(result) {
-            progressCard.style.display = 'none';
-            resultCard.style.display = 'block';
-
-            document.getElementById('rawText').textContent = result.raw_text || '（无内容）';
-            document.getElementById('polishedText').textContent = result.polished_text || result.polish_error || '（润色失败）';
-            document.getElementById('charCount').textContent = '字符数: ' + (result.char_count || 0);
-        }
-
-        function showError(message) {
-            progressCard.style.display = 'none';
-            resultCard.style.display = 'none';
-            errorCard.style.display = 'block';
-            document.getElementById('errorMessage').textContent = message;
-        }
-
-        document.querySelectorAll('.tab-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tab = btn.dataset.tab;
-                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-                document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-                btn.classList.add('active');
-                document.getElementById('panel-' + tab).classList.add('active');
-            });
-        });
-
-        document.getElementById('btnCopy').addEventListener('click', async () => {
-            const text = document.getElementById('polishedText').textContent;
-            try {
-                await navigator.clipboard.writeText(text);
-                const btn = document.getElementById('btnCopy');
-                btn.textContent = '已复制 ✓';
-                setTimeout(() => btn.textContent = '复制润色结果', 2000);
-            } catch {
-                showError('复制失败');
-            }
-        });
-    </script>
+// ========== 复制按钮功能（动态创建）==========
+document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('copy-btn')) {
+    const targetId = e.target.dataset.target;
+    const el = document.getElementById(targetId);
+    if (el) {
+      navigator.clipboard.writeText(el.textContent).then(() => {
+        e.target.textContent = '已复制 ✓';
+        e.target.classList.add('copied');
+        setTimeout(() => {
+          e.target.textContent = '复制';
+          e.target.classList.remove('copied');
+        }, 1500);
+      });
+    }
+  }
+});
+</script>
 </body>
 </html>
