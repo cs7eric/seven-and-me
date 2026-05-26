@@ -52,8 +52,11 @@ class Transcriber:
         try:
             import torchaudio
             waveform, sr = torchaudio.load(audio_path)
+            # shape: [channels, samples], 确保是 [samples]
             if waveform.shape[0] > 1:
                 waveform = waveform.mean(dim=0)
+            else:
+                waveform = waveform.squeeze(0)  # [1, N] -> [N]
             if sr != 16000:
                 waveform = torchaudio.functional.resample(waveform, sr, 16000)
                 sr = 16000
@@ -110,17 +113,22 @@ class Transcriber:
         total_samples = len(full_waveform)
         chunk_samples = chunk_duration * sr
 
+        print(f"[Transcriber] 总样本={total_samples}, chunk_samples={chunk_samples}, chunks={total_samples // chunk_samples + 1}")
+
         all_text = []
         chunk_idx = 0
 
         for start in range(0, total_samples, chunk_samples):
             end = min(start + chunk_samples, total_samples)
             chunk_waveform = full_waveform[start:end]
+            chunk_len_s = len(chunk_waveform) / sr
+            print(f"[Transcriber] chunk {chunk_idx}: {chunk_len_s:.1f}s ({start}-{end})")
 
-            # 直接传音频数组，不走文件路径
+            # 传音频数组，每个chunk最大30秒，不会触发mel>3000问题
             chunk_text = self._transcribe_array(chunk_waveform, sr)
             if chunk_text:
                 all_text.append(chunk_text)
+                print(f"[Transcriber] chunk {chunk_idx} 完成: {len(chunk_text)} 字")
 
             is_final = (end >= total_samples)
             if callback:
@@ -131,21 +139,30 @@ class Transcriber:
         return " ".join(all_text)
 
     def _transcribe_array(self, waveform: np.ndarray, sampling_rate: int, language: str = "zh") -> str:
-        """传音频数组给 Whisper pipeline"""
+        """用 feature_extractor 提取特征 + model.generate"""
         try:
-            generate_kwargs = {
-                "max_new_tokens": 256,
-                "language": language,
-                "task": "transcribe",
-                "condition_on_prev_tokens": False,
-            }
-            result = self.pipe(
-                inputs={"array": waveform, "sampling_rate": sampling_rate},
-                generate_kwargs=generate_kwargs
+            # 直接用 feature_extractor 提取 mel spectrogram
+            inputs = self.processor.feature_extractor(
+                raw_speech=waveform,
+                sampling_rate=sampling_rate,
+                return_tensors="pt",
             )
-            if isinstance(result, dict) and "text" in result:
-                return result["text"].strip()
-            return str(result).strip()
+            # 转换到与模型相同的 dtype
+            dtype = self.model.dtype
+            inputs = {k: v.to(dtype=dtype, device=self.model.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
+
+            # generate
+            generated_ids = self.model.generate(
+                **inputs,
+                return_timestamps=False,
+                language=language,
+                task="transcribe",
+                max_new_tokens=256,
+            )
+
+            text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+            return text.strip()
+
         except Exception as e:
             print(f"[Transcriber] 转写失败: {e}")
             import traceback

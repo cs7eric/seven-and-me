@@ -290,7 +290,7 @@ function App() {
   const startStream = (taskId) => {
     streamClosed = false
     console.log('[SSE] connecting to', `/api/stream/${taskId}`)
-    const es = new EventSource(`/api/stream/${taskId}`)
+    const es = new EventSource(`http://localhost:5000/api/stream/${taskId}`)
     eventSourceRef.current = es
 
     es.onmessage = (e) => {
