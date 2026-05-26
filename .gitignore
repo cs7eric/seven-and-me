@@ -1,0 +1,28 @@
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Node
+node_modules/
+client/node_modules/
+.vite/
+dist/
+
+# Uploads & outputs
+uploads/
+outputs/
+
+# Models (too large to commit)
+models/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
