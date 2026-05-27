@@ -12,6 +12,8 @@ node_modules/
 client/node_modules/
 .vite/
 dist/
+.next/
+.next-cache/
 
 # Uploads & outputs
 uploads/
