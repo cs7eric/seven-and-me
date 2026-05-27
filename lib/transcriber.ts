@@ -28,7 +28,7 @@ export async function convertVideoToAudio(videoPath: string, outputPath: string)
 }
 
 // --- Whisper transcription ---
-let transformersModule: typeof import('transformers') | null = null;
+let transformersModule: any = null;
 let whisperPipeline: any = null;
 
 async function loadWhisper() {
@@ -103,14 +103,14 @@ export async function transcribe_streaming(
     const chunk = audio.slice(start, end);
     const isFinal = i === totalChunks - 1;
 
-    const chunkTensor = transformersModule!.tensor('float32', [Array.from(chunk)]);
+    const chunkTensor = new (transformersModule as any).Tensor('float32', Array.from(chunk));
 
     const result = await whisperPipeline({
       input_features: chunkTensor,
       generate_kwargs: {
         language: 'zh',
         task: 'transcribe',
-        timestamp_granularities': ['chunk'],
+        timestamp_granularities: ['chunk'],
       },
     });
 
