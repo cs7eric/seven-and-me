@@ -1,6 +1,7 @@
+import json
 import os
 import requests
-from typing import Optional
+from typing import Callable, Optional
 
 
 class TextPolisher:
@@ -19,7 +20,81 @@ class TextPolisher:
 
         print(f"[Polisher] API Key: {self.api_key[:12]}...")
 
-    def polish(self, text: str) -> str:
+    def _stream_chat_completion(
+        self,
+        system_prompt: str,
+        user_text: str,
+        timeout: int = 120,
+        on_chunk: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """调用 MiniMax 流式接口，并在每次有增量时回调当前完整文本。"""
+        url = f"{self.BASE_URL}/v1/text/chatcompletion_v2"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": "MiniMax-M2.5",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text},
+            ],
+            "group_id": self.group_id,
+            "stream": True,
+        }
+
+        full_text = ""
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+                stream=True,
+            )
+        except requests.exceptions.Timeout:
+            raise ValueError("AI 请求超时")
+        except requests.exceptions.ConnectionError as e:
+            raise ValueError(f"网络连接失败: {e}")
+
+        if response.status_code != 200:
+            preview = response.text[:500] if response.text else ""
+            raise ValueError(f"API 请求失败: {response.status_code} {preview}")
+
+        for raw_line in response.iter_lines(decode_unicode=True):
+            if not raw_line:
+                continue
+
+            line = raw_line.strip()
+            if not line.startswith("data:"):
+                continue
+
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            content = ""
+            choices = chunk.get("choices") or []
+            if choices:
+                choice = choices[0] or {}
+                delta = choice.get("delta") or {}
+                message = choice.get("message") or {}
+                content = delta.get("content") or message.get("content") or ""
+
+            if content:
+                full_text += content
+                if on_chunk:
+                    on_chunk(full_text)
+
+        return full_text
+
+    def polish(self, text: str, on_chunk: Optional[Callable[[str], None]] = None) -> str:
         """对文字进行润色"""
         if not text or not text.strip():
             return text
@@ -127,50 +202,15 @@ class TextPolisher:
 """
 
         try:
-            url = f"{self.BASE_URL}/v1/text/chatcompletion_v2"
-
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-
-            payload = {
-                "model": "MiniMax-M2.5",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text}
-                ],
-                "group_id": self.group_id
-            }
-
-            print(f"[Polisher] 发送请求，长度: {len(text)}")
-
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=120
-            )
-
-            print(f"[Polisher] 状态: {response.status_code}")
-            print(f"[Polisher] 响应: {response.text[:500]}")
-
-            if response.status_code != 200:
-                raise ValueError(f"API 请求失败: {response.status_code}")
-
-            result = response.json()
-
-            if "choices" in result and len(result["choices"]) > 0:
-                polished = result["choices"][0]["message"]["content"].strip()
-                print(f"[Polisher] 润色成功: {len(text)} -> {len(polished)}")
-                return polished
-            else:
-                raise ValueError(f"API 返回格式异常: {result}")
-
-        except requests.exceptions.Timeout:
-            raise ValueError("润色请求超时")
-        except requests.exceptions.ConnectionError as e:
-            raise ValueError(f"网络连接失败: {e}")
+            print(f"[Polisher] 润色请求，长度: {len(text)}")
+            polished = self._stream_chat_completion(
+                system_prompt=system_prompt,
+                user_text=text,
+                timeout=120,
+                on_chunk=on_chunk,
+            ).strip()
+            print(f"[Polisher] 润色成功: {len(text)} -> {len(polished)}")
+            return polished
         except ValueError:
             raise
         except Exception as e:
@@ -203,69 +243,70 @@ class TextPolisher:
         print(f"[Polisher] 润色完成: {len(result)} 字符")
         return result
 
-    def summarize(self, text: str) -> dict:
-        """AI 摘要与总结 - 返回模型生成的结构化 JSON"""
+    def summarize(self, text: str, on_chunk: Optional[Callable[[str], None]] = None) -> str:
+        """AI 摘要与总结 - 返回适合流式展示的结构化纯文本"""
         if not text or not text.strip():
-            return {}
+            return ""
 
         system_prompt = """你是一名专业的股票投资知识整理与学习助手，擅长从A股知识分享、交易经验、盘面讲解、选股方法、仓位管理、技术分析、基本面分析和投资心法类文本中，提炼可学习、可复盘、可迁移的方法论。
 
 你的任务不是判断股票买卖，也不是给出投资建议，而是基于输入文本，提炼其中的知识点、交易逻辑、底层思路、适用场景和风险提醒。
 
-输出严格按以下JSON格式，只返回纯JSON，不要有任何解释、说明、Markdown或多余文字：
+请严格按以下纯文本结构输出，不要返回 JSON，不要返回 Markdown 代码块，不要添加任何解释：
 
-{
-  "核心主题": "用一句话概括这段分享主要讲什么，不超过50字",
-  "核心观点": [
-    "观点1：提炼作者最重要的观点，并说明它解决什么投资问题，不超过40字",
-    "观点2",
-    "观点3"
-  ],
-  "关键知识点": [
-    "知识点1：如选股逻辑、买入逻辑、卖出逻辑、仓位管理、风险控制、市场情绪、板块轮动、技术形态、基本面判断等，不超过40字",
-    "知识点2",
-    "知识点3"
-  ],
-  "方法论框架": {
-    "看什么": "作者主要关注的指标、信号、板块、情绪或基本面因素",
-    "怎么判断": "作者判断机会或风险的核心依据",
-    "何时行动": "满足什么条件才考虑行动",
-    "何时放弃": "什么情况下应放弃或回避",
-    "如何控风险": "作者提到或隐含的风险控制方式"
-  },
-  "可复用原则": [
-    "如果……那么……",
-    "当……时，需要……"
-  ],
-  "适用场景": [
-    "如短线交易、趋势行情、题材炒作、板块轮动、龙头股交易、震荡市等"
-  ],
-  "失效场景": [
-    "这套观点可能不适用或容易误判的情况"
-  ],
-  "风险提醒": [
-    "风险1：原文直接提到或根据原文逻辑推断出的风险，推断内容需注明“推断”",
-    "风险2"
-  ],
-  "新手误区": [
-    "普通投资者容易误解或误用这段内容的地方"
-  ],
-  "学习笔记": {
-    "一句话精华": "这段内容最值得记住的一句话",
-    "三个关键词": ["关键词1", "关键词2", "关键词3"],
-    "核心方法": "最重要的可学习方法",
-    "最大风险": "最需要警惕的风险",
-    "复盘问题": "以后看类似股票或行情时值得反复追问的问题"
-  },
-  "可执行清单": [
-    "是否符合作者提到的核心条件？",
-    "是否存在明显风险？",
-    "是否有明确买入或卖出依据？",
-    "是否只是情绪冲动？",
-    "是否做好仓位控制？"
-  ],
-  "思考方式总结": "这段分享真正值得学习的思考方式，不超过50字"
-}
+核心主题：
+用一句话概括这段分享主要讲什么，不超过50字
+
+核心观点：
+1. 观点1：提炼作者最重要的观点，不超过40字
+2. 观点2
+3. 观点3
+
+关键知识点：
+1. 知识点1：如选股逻辑、买入逻辑、卖出逻辑、仓位管理、风险控制、市场情绪、板块轮动、技术形态、基本面判断等，不超过40字
+2. 知识点2
+3. 知识点3
+
+方法论框架：
+看什么：作者主要关注的指标、信号、板块、情绪或基本面因素
+怎么判断：作者判断机会或风险的核心依据
+何时行动：满足什么条件才考虑行动
+何时放弃：什么情况下应放弃或回避
+如何控风险：作者提到或隐含的风险控制方式
+
+可复用原则：
+1. 如果……那么……
+2. 当……时，需要……
+
+适用场景：
+1. 如短线交易、趋势行情、题材炒作、板块轮动、龙头股交易、震荡市等
+
+失效场景：
+1. 这套观点可能不适用或容易误判的情况
+
+风险提醒：
+1. 风险1：原文直接提到或根据原文逻辑推断出的风险，推断内容需注明“推断”
+2. 风险2
+
+新手误区：
+1. 普通投资者容易误解或误用这段内容的地方
+
+学习笔记：
+一句话精华：这段内容最值得记住的一句话
+三个关键词：关键词1、关键词2、关键词3
+核心方法：最重要的可学习方法
+最大风险：最需要警惕的风险
+复盘问题：以后看类似股票或行情时值得反复追问的问题
+
+可执行清单：
+1. 是否符合作者提到的核心条件？
+2. 是否存在明显风险？
+3. 是否有明确买入或卖出依据？
+4. 是否只是情绪冲动？
+5. 是否做好仓位控制？
+
+思考方式总结：
+这段分享真正值得学习的思考方式，不超过50字
 
 要求：
 1. 严格基于原文内容整理，不要编造作者没有表达的观点。
@@ -275,46 +316,21 @@ class TextPolisher:
 5. 优先提炼方法论，而不是复述原文。
 6. 过滤重复表述、语气词、寒暄、感谢语、无效口播内容。
 7. 保留A股交易语境中的专业术语，如K线、打板、低吸、首板、连板、炸板、回封、换手、量价配合、筹码、承接、分歧、一致、情绪周期、板块轮动、龙头、补涨、卡位等。
-8. 所有数组字段最多输出5条。
-9. 输出必须是合法JSON，不能包含注释，不能使用单引号，不能有尾随逗号。"""
+8. 保持输出自然、清晰、适合逐段阅读。"""
 
         try:
-            url = f"{self.BASE_URL}/v1/text/chatcompletion_v2"
-
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-
-            payload = {
-                "model": "MiniMax-M2.5",
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text}
-                ],
-                "group_id": self.group_id
-            }
-
-            response = requests.post(url, headers=headers, json=payload, timeout=60)
-
-            if response.status_code != 200:
-                raise ValueError(f"API 请求失败: {response.status_code}")
-
-            result = response.json()
-            content = result["choices"][0]["message"]["content"].strip()
-
-            import json
-            try:
-                summary = json.loads(content)
-                if isinstance(summary, dict):
-                    return summary
-                return {"摘要内容": content}
-            except json.JSONDecodeError:
-                return {"摘要内容": content}
-
+            print(f"[Summarizer] 摘要请求，长度: {len(text)}")
+            summary = self._stream_chat_completion(
+                system_prompt=system_prompt,
+                user_text=text,
+                timeout=120,
+                on_chunk=on_chunk,
+            ).strip()
+            print(f"[Summarizer] 摘要成功: {len(summary)} 字符")
+            return summary
         except Exception as e:
             print(f"[Summarizer] 摘要失败: {e}")
-            return {"摘要内容": ""}
+            return ""
 
     def polish_and_summarize(self, text: str) -> dict:
         """润色并摘要"""

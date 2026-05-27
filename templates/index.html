@@ -7,7 +7,7 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1419; color: #e7e9ea; min-height: 100vh; }
-  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .container { width: min(75vw, 1800px); max-width: none; margin: 0 auto; padding: 24px; }
   h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; color: #1d9bf0; }
   .subtitle { color: #71767b; font-size: 14px; margin-bottom: 20px; }
   .step-bar { display: flex; gap: 0; margin-bottom: 20px; background: #1c2732; border-radius: 12px; padding: 4px; }
@@ -25,21 +25,28 @@
   .btn:hover { background: #1a8cd8; }
   .btn:disabled { background: #2f3336; color: #71767b; cursor: not-allowed; }
   /* 两列布局 */
-  .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
   .result-box { background: #16181c; border: 1px solid #2f3336; border-radius: 16px; overflow: hidden; }
   .result-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid #2f3336; }
   .result-title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
   .result-title .icon { font-size: 16px; }
   .char-count { font-size: 12px; color: #71767b; }
-  .result-body { padding: 14px 16px; min-height: 300px; max-height: 500px; overflow-y: auto; font-size: 15px; line-height: 1.8; color: #e7e9ea; white-space: pre-wrap; word-break: break-word; }
+  .result-body { padding: 18px 20px; min-height: 420px; max-height: 720px; overflow-y: auto; font-size: 15px; line-height: 1.85; color: #e7e9ea; white-space: pre-wrap; word-break: break-word; }
   .result-body::-webkit-scrollbar { width: 6px; }
   .result-body::-webkit-scrollbar-track { background: #16181c; }
   .result-body::-webkit-scrollbar-thumb { background: #2f3336; border-radius: 3px; }
   .result-body:empty::before { content: '等待转写...'; color: #71767b; }
-  /* 摘要单独一行 */
+  /* 摘要卡片区 */
   .summary-box { background: #16181c; border: 1px solid #2f3336; border-radius: 16px; overflow: hidden; }
-  .summary-body { padding: 14px 16px; min-height: 100px; max-height: 200px; overflow-y: auto; font-size: 14px; line-height: 1.7; color: #e7e9ea; }
-  .summary-body:empty::before { content: '等待摘要...'; color: #71767b; }
+  .summary-grid { padding: 18px 20px; min-height: 320px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .summary-grid:empty::before { content: '等待摘要...'; color: #71767b; font-size: 14px; }
+  .summary-card { background: #111418; border: 1px solid #2a2f34; border-radius: 14px; overflow: hidden; min-height: 180px; }
+  .summary-card.wide { grid-column: span 2; }
+  .summary-card.full { grid-column: 1 / -1; }
+  .summary-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #2a2f34; background: #161d24; }
+  .summary-card-title { font-size: 13px; font-weight: 700; color: #1d9bf0; }
+  .summary-card-body { padding: 14px; font-size: 14px; line-height: 1.8; color: #e7e9ea; white-space: pre-wrap; word-break: break-word; }
+  .summary-raw { display: none; }
   .section-label { font-size: 12px; color: #1d9bf0; font-weight: 600; margin-bottom: 8px; }
   .copy-btn { background: #2f3336; color: #e7e9ea; border: none; padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background 0.2s; }
   .copy-btn:hover { background: #3f4448; }
@@ -51,6 +58,15 @@
   .progress-bar { height: 4px; background: #2f3336; border-radius: 2px; margin-top: 6px; overflow: hidden; }
   .progress-fill { height: 100%; background: #1d9bf0; border-radius: 2px; transition: width 0.3s; width: 0%; }
   .phase { display: inline-block; background: #1d9bf0; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px; margin-right: 6px; }
+  @media (max-width: 1500px) {
+    .container { width: calc(100vw - 48px); }
+    .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 900px) {
+    .columns { grid-template-columns: 1fr; }
+    .summary-grid { grid-template-columns: 1fr; }
+    .summary-card.wide, .summary-card.full { grid-column: auto; }
+  }
 </style>
 </head>
 <body>
@@ -88,7 +104,10 @@
       <div class="result-box">
         <div class="result-header">
           <span class="result-title"><span class="icon">📝</span>原始转写</span>
-          <span class="char-count" id="rawCharCount">0 字</span>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="char-count" id="rawCharCount">0 字</span>
+            <button class="copy-btn" data-target="realtimeText">复制</button>
+          </div>
         </div>
         <div class="result-body" id="realtimeText"></div>
       </div>
@@ -96,7 +115,10 @@
       <div class="result-box">
         <div class="result-header">
           <span class="result-title"><span class="icon">✨</span>AI 润色</span>
-          <span class="char-count" id="polishCharCount">0 字</span>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="char-count" id="polishCharCount">0 字</span>
+            <button class="copy-btn" data-target="polishRealtimeText">复制</button>
+          </div>
         </div>
         <div class="result-body" id="polishRealtimeText"></div>
       </div>
@@ -106,8 +128,10 @@
     <div class="summary-box">
       <div class="result-header">
         <span class="result-title"><span class="icon">🧠</span>AI 摘要与总结</span>
+        <button class="copy-btn" data-target="summaryText">复制全部</button>
       </div>
-      <div class="summary-body" id="summaryText"></div>
+      <div class="summary-grid" id="summaryCards"></div>
+      <div class="summary-raw" id="summaryText"></div>
     </div>
   </div>
 </div>
@@ -119,16 +143,26 @@ const resultsArea = document.getElementById('resultsArea');
 const realtimeText = document.getElementById('realtimeText');
 const polishRealtimeText = document.getElementById('polishRealtimeText');
 const summaryText = document.getElementById('summaryText');
+const summaryCards = document.getElementById('summaryCards');
 const rawCharCount = document.getElementById('rawCharCount');
 const polishCharCount = document.getElementById('polishCharCount');
 const progressInfo = document.getElementById('progressInfo');
 const phaseLabel = document.getElementById('phaseLabel');
 const progressFill = document.getElementById('progressFill');
+const SUMMARY_TITLES = [
+  '核心主题', '核心观点', '关键知识点', '方法论框架', '可复用原则', '适用场景',
+  '失效场景', '风险提醒', '新手误区', '学习笔记', '可执行清单', '思考方式总结',
+];
 
 let polishedFullText = '';
 let summaryFullText = '';
 let eventSource = null;
 let streamClosed = false;
+const typewriterState = {
+  raw: { target: '', timer: null },
+  polish: { target: '', timer: null },
+  summary: { target: '', timer: null },
+};
 
 // ========== 文件上传 ==========
 fileInput.addEventListener('change', (e) => {
@@ -157,14 +191,90 @@ function setProgress(phase, pct) {
   progressFill.style.width = pct + '%';
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function parseSummarySections(text) {
+  const lines = String(text || '').split('\n');
+  const sections = [];
+  let current = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const maybeTitle = trimmed.endsWith('：') ? trimmed.slice(0, -1) : '';
+
+    if (SUMMARY_TITLES.includes(maybeTitle)) {
+      if (current) sections.push(current);
+      current = { title: maybeTitle, lines: [] };
+      continue;
+    }
+
+    if (!current) {
+      if (trimmed) {
+        current = { title: '摘要内容', lines: [line] };
+      }
+      continue;
+    }
+
+    current.lines.push(line);
+  }
+
+  if (current) sections.push(current);
+  return sections;
+}
+
+function getSummaryCardClass(title) {
+  if (['核心主题', '思考方式总结'].includes(title)) return 'summary-card';
+  if (['学习笔记', '方法论框架', '可执行清单'].includes(title)) return 'summary-card wide';
+  return 'summary-card';
+}
+
+function renderSummaryCards(text) {
+  const sections = parseSummarySections(text);
+
+  if (!sections.length) {
+    summaryCards.innerHTML = '';
+    return;
+  }
+
+  summaryCards.innerHTML = sections.map((section, index) => {
+    const content = section.lines.join('\n').trim() || '生成中...';
+    const escapedContent = escapeHtml(content).replace(/\n/g, '<br>');
+    const cardClass = getSummaryCardClass(section.title, index);
+
+    return `
+      <div class="${cardClass}">
+        <div class="summary-card-header">
+          <div class="summary-card-title">${escapeHtml(section.title)}</div>
+          <button class="copy-btn" data-copy-text="${escapeHtml(content)}">复制</button>
+        </div>
+        <div class="summary-card-body">${escapedContent}</div>
+      </div>
+    `;
+  }).join('');
+}
+
 async function uploadFile(file) {
   resultsArea.style.display = 'block';
   realtimeText.textContent = '';
   polishRealtimeText.textContent = '';
   summaryText.textContent = '';
+  summaryCards.innerHTML = '';
+  Object.values(typewriterState).forEach((state) => {
+    state.target = '';
+    if (state.timer) clearTimeout(state.timer);
+    state.timer = null;
+  });
   rawCharCount.textContent = '0 字';
   polishCharCount.textContent = '0 字';
   polishedFullText = '';
+  summaryFullText = '';
   setStep('step-upload2');
   setProgress('正在转换音频…', 10);
 
@@ -204,72 +314,34 @@ function connectStream(taskId) {
   };
 }
 
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+function syncAnimatedText(element, nextText, state, onUpdate) {
+  state.target = nextText || '';
 
-function formatSummaryValue(value) {
-  if (value == null || value === '') return '';
+  if (state.timer) return;
 
-  if (Array.isArray(value)) {
-    const items = value
-      .map(item => {
-        const formatted = formatSummaryValue(item);
-        return formatted ? `<li>${formatted}</li>` : '';
-      })
-      .filter(Boolean)
-      .join('');
-    return items ? `<ul style="margin:6px 0 0 20px; line-height:1.8;">${items}</ul>` : '';
+  function tick() {
+    const target = state.target || '';
+    const current = element.textContent || '';
+
+    if (current === target) {
+      state.timer = null;
+      return;
+    }
+
+    if (!target.startsWith(current)) {
+      element.textContent = target;
+      if (onUpdate) onUpdate(target);
+      state.timer = null;
+      return;
+    }
+
+    element.textContent = current + target[current.length];
+    if (onUpdate) onUpdate(element.textContent);
+    element.scrollTop = element.scrollHeight;
+    state.timer = setTimeout(tick, 18);
   }
 
-  if (typeof value === 'object') {
-    return Object.entries(value)
-      .map(([key, nested]) => {
-        const formatted = formatSummaryValue(nested);
-        if (!formatted) return '';
-        return `
-          <div style="margin-top:8px;">
-            <div style="color:#9ecdf7; font-weight:600; margin-bottom:4px;">${escapeHtml(key)}</div>
-            <div>${formatted}</div>
-          </div>
-        `;
-      })
-      .filter(Boolean)
-      .join('');
-  }
-
-  return escapeHtml(value).replace(/\n/g, '<br>');
-}
-
-function renderSummary(summary) {
-  if (!summary) return '';
-
-  if (typeof summary === 'string') {
-    return `<div style="line-height:1.8;">${escapeHtml(summary).replace(/\n/g, '<br>')}</div>`;
-  }
-
-  if (typeof summary === 'object') {
-    return Object.entries(summary)
-      .map(([key, value]) => {
-        const formatted = formatSummaryValue(value);
-        if (!formatted) return '';
-        return `
-          <div style="margin-bottom:14px;">
-            <div style="color:#1d9bf0; font-weight:700; margin-bottom:6px;">${escapeHtml(key)}</div>
-            <div>${formatted}</div>
-          </div>
-        `;
-      })
-      .filter(Boolean)
-      .join('');
-  }
-
-  return `<div>${escapeHtml(summary)}</div>`;
+  state.timer = setTimeout(tick, 0);
 }
 
 function handleStreamData(data) {
@@ -283,24 +355,9 @@ function handleStreamData(data) {
 
     case 'chunk':
       realtimeSection.style.display = 'block';
-      {
-        const newText = data.text || '';
-        const oldText = realtimeText.textContent || '';
-        // 只动画显示新增的字符
-        if (newText.length > oldText.length) {
-          const added = newText.slice(oldText.length);
-          let charIndex = 0;
-          function addNextChar() {
-            if (charIndex < added.length) {
-              realtimeText.textContent += added[charIndex];
-              charIndex++;
-              rawCharCount.textContent = realtimeText.textContent.length + ' 字';
-              setTimeout(addNextChar, 30);
-            }
-          }
-          addNextChar();
-        }
-      }
+      syncAnimatedText(realtimeText, data.text || '', typewriterState.raw, (value) => {
+        rawCharCount.textContent = value.length + ' 字';
+      });
       setProgress('转写中…', Math.min(60, 30 + Math.floor(data.text.length / 20)));
       break;
 
@@ -313,32 +370,19 @@ function handleStreamData(data) {
       break;
 
     case 'polish_char':
-      {
-        const newText = data.text || '';
-        const oldText = polishRealtimeText.textContent || '';
-        if (newText.length > oldText.length) {
-          const added = newText.slice(oldText.length);
-          let charIndex = 0;
-          function addNextChar() {
-            if (charIndex < added.length) {
-              polishRealtimeText.textContent += added[charIndex];
-              charIndex++;
-              polishCharCount.textContent = polishRealtimeText.textContent.length + ' 字';
-              setTimeout(addNextChar, 30);
-            }
-          }
-          addNextChar();
-        }
-        polishedFullText = newText;
-      }
+      polishedFullText = data.text || '';
+      syncAnimatedText(polishRealtimeText, polishedFullText, typewriterState.polish, (value) => {
+        polishCharCount.textContent = value.length + ' 字';
+      });
       setProgress('润色中…', Math.min(90, 65 + Math.floor(data.text.length / 20)));
       break;
 
     case 'polish_done':
-      // 润色一次性完成，直接显示
       if (data.polished_text) {
-        polishRealtimeText.textContent = data.polished_text;
-        polishCharCount.textContent = data.polished_text.length + ' 字';
+        polishedFullText = data.polished_text;
+        syncAnimatedText(polishRealtimeText, polishedFullText, typewriterState.polish, (value) => {
+          polishCharCount.textContent = value.length + ' 字';
+        });
       }
       break;
 
@@ -348,12 +392,18 @@ function handleStreamData(data) {
       break;
 
     case 'summary_char':
-      summaryText.textContent = data.text;
+      summaryFullText = data.text || '';
+      syncAnimatedText(summaryText, summaryFullText, typewriterState.summary, (value) => {
+        renderSummaryCards(value);
+      });
       break;
 
     case 'summary_done':
       if (data.summary_text) {
-        summaryText.innerHTML = renderSummary(data.summary_text);
+        summaryFullText = data.summary_text;
+        syncAnimatedText(summaryText, summaryFullText, typewriterState.summary, (value) => {
+          renderSummaryCards(value);
+        });
       }
       setProgress('完成', 100);
       setStep('step-summary');
@@ -369,14 +419,17 @@ function handleStreamData(data) {
 // ========== 复制按钮功能（动态创建）==========
 document.addEventListener('click', (e) => {
   if (e.target.classList.contains('copy-btn')) {
+    const copyText = e.target.dataset.copyText;
     const targetId = e.target.dataset.target;
-    const el = document.getElementById(targetId);
-    if (el) {
-      navigator.clipboard.writeText(el.textContent).then(() => {
+    const el = targetId ? document.getElementById(targetId) : null;
+    const text = copyText || (el ? el.textContent : '');
+
+    if (text) {
+      navigator.clipboard.writeText(text).then(() => {
         e.target.textContent = '已复制 ✓';
         e.target.classList.add('copied');
         setTimeout(() => {
-          e.target.textContent = '复制';
+          e.target.textContent = targetId ? (targetId === 'summaryText' ? '复制全部' : '复制') : '复制';
           e.target.classList.remove('copied');
         }, 1500);
       });

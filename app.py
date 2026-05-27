@@ -126,13 +126,19 @@ def transcribe():
             # 润色
             _tasks[task_id]["status"] = "polishing"
             polisher = get_polisher()
-            polished = polisher.polish(text)
+            def on_polish_chunk(current_text):
+                _tasks[task_id]["polished"] = current_text
+
+            polished = polisher.polish(text, on_chunk=on_polish_chunk)
             _tasks[task_id]["polished"] = polished
             _tasks[task_id]["polish_progress"] = 100
 
             # 摘要
             _tasks[task_id]["status"] = "summarizing"
-            summary = polisher.summarize(polished)
+            def on_summary_chunk(current_text):
+                _tasks[task_id]["summary"] = current_text
+
+            summary = polisher.summarize(polished, on_chunk=on_summary_chunk)
             _tasks[task_id]["summary"] = summary
             _tasks[task_id]["summary_progress"] = 100
             _tasks[task_id]["status"] = "done"
@@ -156,9 +162,8 @@ def stream(task_id):
         last_status = ""
         last_transcript = ""
         last_polished = ""
-        last_summary_str = ""
+        last_summary = ""
         last_poll = time.time()
-        last_emitted_len = 0  # 已发出的字符数
 
         while True:
             task = _tasks.get(task_id)
@@ -169,7 +174,7 @@ def stream(task_id):
             status = task["status"]
             transcript = task.get("transcript", "")
             polished = task.get("polished", "")
-            summary = task.get("summary", {})
+            summary = task.get("summary", "")
             error = task.get("error")
 
             # ====== 状态变化检测 ======
@@ -183,12 +188,6 @@ def stream(task_id):
                 # 发所有字符（前端负责逐字动画显示）
                 yield f"data: {json.dumps({'type': 'chunk', 'text': transcript})}\n\n"
                 last_transcript = transcript
-                last_emitted_len = len(transcript)
-
-            # 转写完成
-            if last_status != "polishing" and status == "polishing" and last_status != "transcribing":
-                # 第一次进入 polishing
-                pass
 
             if last_status == "transcribing" and status in ("polishing", "summarizing", "done"):
                 yield f"data: {json.dumps({'type': 'transcribe_done'})}\n\n"
@@ -196,6 +195,11 @@ def stream(task_id):
             # 进入润色
             if last_status != "polishing" and status == "polishing":
                 yield f"data: {json.dumps({'type': 'polish_start'})}\n\n"
+
+            # 润色流式增量
+            if polished and polished != last_polished:
+                yield f"data: {json.dumps({'type': 'polish_char', 'text': polished})}\n\n"
+                last_polished = polished
 
             # 润色完成
             if last_status in ("polishing", "transcribing") and status in ("summarizing", "done") and polished:
@@ -205,9 +209,13 @@ def stream(task_id):
             if last_status != "summarizing" and status == "summarizing":
                 yield f"data: {json.dumps({'type': 'summary_start'})}\n\n"
 
+            # 摘要流式增量
+            if summary and summary != last_summary:
+                yield f"data: {json.dumps({'type': 'summary_char', 'text': summary})}\n\n"
+                last_summary = summary
+
             # 摘要完成
             if last_status == "summarizing" and status == "done" and summary:
-                summary_str = json.dumps(summary, ensure_ascii=False)
                 yield f"data: {json.dumps({'type': 'summary_done', 'summary_text': summary})}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'raw_text': transcript, 'polished_text': polished, 'summary_text': summary, 'char_count': len(polished)})}\n\n"
                 break
