@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import requests
 from typing import Callable, Optional
 
@@ -93,6 +94,29 @@ class TextPolisher:
                     on_chunk(full_text)
 
         return full_text
+
+    def _parse_json_object(self, content: str) -> dict:
+        """从包含额外文本的响应中尽量提取第一个 JSON 对象。"""
+        cleaned = (content or "").strip()
+        if not cleaned:
+            raise ValueError("空响应，无法解析 JSON")
+
+        fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned, re.IGNORECASE)
+        if fenced:
+            cleaned = fenced.group(1).strip()
+
+        decoder = json.JSONDecoder()
+        start = cleaned.find("{")
+        while start != -1:
+            try:
+                obj, _end = decoder.raw_decode(cleaned[start:])
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+            start = cleaned.find("{", start + 1)
+
+        raise ValueError("未找到可解析的 JSON 对象")
 
     def polish(self, text: str, on_chunk: Optional[Callable[[str], None]] = None) -> str:
         """对文字进行润色"""
@@ -331,6 +355,71 @@ class TextPolisher:
         except Exception as e:
             print(f"[Summarizer] 摘要失败: {e}")
             return ""
+
+    def generate_post_metadata(self, polished_text: str, summary_text: str) -> dict:
+        """生成 Markdown 导出所需的标题、分类和标签。"""
+        if not polished_text.strip() and not summary_text.strip():
+            return {
+                "title": "未命名笔记",
+                "categories": ["未分类"],
+                "tags": ["待整理"],
+            }
+
+        system_prompt = """你是一名中文内容编辑助手，负责为一篇基于股票投资、交易复盘、知识分享的文章生成 Markdown front matter 元数据。
+
+请根据用户提供的润色正文和摘要总结，提炼出：
+1. title：一个简洁、自然、适合文章标题的中文标题，18字以内，不要带书名号
+2. categories：1到2个分类，偏栏目级别，例如 交易复盘、投资方法、市场观察、仓位管理、龙头战法
+3. tags：2到4个标签，偏关键词级别，例如 情绪周期、板块轮动、低吸、打板、风险控制
+
+要求：
+1. 输出必须是合法 JSON
+2. 只输出 JSON，不要输出解释
+3. categories 和 tags 都必须是字符串数组
+4. 不要生成空数组
+5. 如果信息不足，也要给出合理、通用但不过度夸张的结果
+
+输出格式：
+{
+  "title": "文章标题",
+  "categories": ["分类1", "分类2"],
+  "tags": ["标签1", "标签2", "标签3"]
+}"""
+
+        user_text = f"""【润色正文】
+{polished_text.strip()}
+
+【摘要总结】
+{summary_text.strip()}"""
+
+        try:
+            content = self._stream_chat_completion(
+                system_prompt=system_prompt,
+                user_text=user_text,
+                timeout=60,
+            ).strip()
+
+            if not content:
+                raise ValueError("元数据生成结果为空")
+
+            parsed = self._parse_json_object(content)
+
+            title = str(parsed.get("title") or "").strip() or "未命名笔记"
+            categories = [str(item).strip() for item in (parsed.get("categories") or []) if str(item).strip()]
+            tags = [str(item).strip() for item in (parsed.get("tags") or []) if str(item).strip()]
+
+            return {
+                "title": title,
+                "categories": categories[:2] or ["未分类"],
+                "tags": tags[:4] or ["待整理"],
+            }
+        except Exception as e:
+            print(f"[Meta] 元数据生成失败: {e}")
+            return {
+                "title": "未命名笔记",
+                "categories": ["未分类"],
+                "tags": ["待整理"],
+            }
 
     def polish_and_summarize(self, text: str) -> dict:
         """润色并摘要"""

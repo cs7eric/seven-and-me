@@ -5,6 +5,8 @@ import subprocess
 import imageio_ffmpeg
 import json
 import time
+from datetime import datetime
+from urllib.parse import quote
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
 from werkzeug.utils import secure_filename
 from pathlib import Path
@@ -31,6 +33,52 @@ from polisher import TextPolisher
 
 _transcriber = None
 _polisher = None
+
+
+def sanitize_filename(name: str) -> str:
+    safe = "".join(ch for ch in name if ch.isprintable() and ch not in ('<', '>', ':', '"', '/', '\\', '|', '?', '*')).strip()
+    safe = safe.replace(" ", "-")
+    return safe[:80] or "untitled"
+
+
+def build_export_filename(task: dict, task_id: str) -> str:
+    metadata = task.get("metadata") or {}
+    title = str(metadata.get("title") or "").strip()
+    original_name = Path(str(task.get("file_name") or "")).stem
+
+    base_name = sanitize_filename(title)
+    if not base_name or base_name == "untitled":
+        base_name = sanitize_filename(original_name)
+
+    if not base_name or base_name == "untitled":
+        base_name = "untitled"
+
+    return f"{base_name}.md"
+
+
+def build_markdown_document(task: dict) -> str:
+    metadata = task.get("metadata") or {}
+    title = str(metadata.get("title") or "Untitled Note").strip()
+    categories = metadata.get("categories") or ["Uncategorized"]
+    tags = metadata.get("tags") or ["待整理"]
+    polished = (task.get("polished") or "").strip()
+    summary = (task.get("summary") or "").strip()
+    date_str = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+
+    frontmatter = "\n".join([
+        "---",
+        f"title: {title}",
+        "",
+        f"categories: {','.join(categories)}",
+        "",
+        f"tags: {','.join(tags)}",
+        "",
+        f"date: {date_str}",
+        "---",
+    ])
+
+    sections = [frontmatter, polished, summary]
+    return "\n\n".join(section for section in sections if section)
 
 def get_transcriber():
     global _transcriber
@@ -99,6 +147,8 @@ def transcribe():
         "transcript": "",
         "polished": "",
         "summary": "",
+        "metadata": {},
+        "file_name": file.filename,
         "polish_progress": 0,
         "summary_progress": 0,
         "error": None,
@@ -141,6 +191,7 @@ def transcribe():
             summary = polisher.summarize(polished, on_chunk=on_summary_chunk)
             _tasks[task_id]["summary"] = summary
             _tasks[task_id]["summary_progress"] = 100
+            _tasks[task_id]["metadata"] = polisher.generate_post_metadata(polished, summary)
             _tasks[task_id]["status"] = "done"
 
         except Exception as e:
@@ -175,6 +226,7 @@ def stream(task_id):
             transcript = task.get("transcript", "")
             polished = task.get("polished", "")
             summary = task.get("summary", "")
+            metadata = task.get("metadata", {})
             error = task.get("error")
 
             # ====== 状态变化检测 ======
@@ -217,7 +269,7 @@ def stream(task_id):
             # 摘要完成
             if last_status == "summarizing" and status == "done" and summary:
                 yield f"data: {json.dumps({'type': 'summary_done', 'summary_text': summary})}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'raw_text': transcript, 'polished_text': polished, 'summary_text': summary, 'char_count': len(polished)})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'raw_text': transcript, 'polished_text': polished, 'summary_text': summary, 'char_count': len(polished), 'metadata': metadata, 'task_id': task_id})}\n\n"
                 break
 
             # 错误
@@ -247,6 +299,30 @@ def uploaded_file(filename):
 @app.route('/outputs/<path:filename>')
 def output_file(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
+
+
+@app.route('/api/export-markdown/<task_id>')
+def export_markdown(task_id):
+    task = _tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+
+    if task.get("status") != "done":
+        return jsonify({"error": "任务尚未完成，暂时不能导出 Markdown"}), 400
+
+    markdown = build_markdown_document(task)
+    metadata = task.get("metadata") or {}
+    title = str(metadata.get("title") or task.get("file_name") or "untitled").strip()
+    filename = build_export_filename(task, task_id)
+    utf8_filename = quote(f"{title}.md")
+
+    return Response(
+        markdown,
+        mimetype='text/markdown; charset=utf-8',
+        headers={
+            'Content-Disposition': f"attachment; filename=\"{filename}\"; filename*=UTF-8''{utf8_filename}",
+        }
+    )
 
 if __name__ == '__main__':
     import socket
