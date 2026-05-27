@@ -314,13 +314,14 @@ def export_markdown(task_id):
     metadata = task.get("metadata") or {}
     title = str(metadata.get("title") or task.get("file_name") or "untitled").strip()
     filename = build_export_filename(task, task_id)
-    utf8_filename = quote(f"{title}.md")
+    ascii_filename = filename.encode('ascii', 'replace').decode('ascii')
+    utf8_filename = quote(filename)
 
     return Response(
         markdown,
         mimetype='text/markdown; charset=utf-8',
         headers={
-            'Content-Disposition': f"attachment; filename=\"{filename}\"; filename*=UTF-8''{utf8_filename}",
+            'Content-Disposition': f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{utf8_filename}",
         }
     )
 

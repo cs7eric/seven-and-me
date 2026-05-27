@@ -18,7 +18,7 @@
     text-rendering: optimizeLegibility;
   }
   .container {
-    width: min(75vw, 1760px);
+    width: min(90vw, 2200px);
     max-width: none;
     margin: 0 auto;
     padding: 40px 24px 56px;
@@ -142,8 +142,8 @@
   .char-count { font-size: 12px; color: #86868b; }
   .result-body {
     padding: 22px 22px 24px;
-    min-height: 420px;
-    max-height: 720px;
+    min-height: 600px;
+    max-height: 900px;
     overflow-y: auto;
     font-size: 15px;
     line-height: 1.92;
@@ -165,14 +165,14 @@
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
   }
-  .summary-grid { padding: 22px; min-height: 360px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .summary-grid { padding: 22px; min-height: 480px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
   .summary-grid:empty::before { content: '等待摘要...'; color: #8e8e93; font-size: 14px; }
   .summary-card {
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(246, 248, 252, 0.96) 100%);
     border: 1px solid rgba(15, 23, 42, 0.06);
     border-radius: 24px;
     overflow: hidden;
-    min-height: 180px;
+    min-height: 240px;
     box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
   }
   .summary-card.wide { grid-column: span 2; }
@@ -231,6 +231,132 @@
     cursor: not-allowed;
     box-shadow: none;
   }
+  /* Modal / Fullscreen Reader */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .modal-overlay.active {
+    display: flex;
+  }
+  .modal-card {
+    background: #fff;
+    border-radius: 28px;
+    width: 100%;
+    max-width: 1100px;
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 48px 120px rgba(15, 23, 42, 0.3);
+    overflow: hidden;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    background: linear-gradient(180deg, #fff 0%, #f7f9fc 100%);
+    flex-shrink: 0;
+  }
+  .modal-header-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: #1d1d1f;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .modal-close-btn {
+    background: rgba(15, 23, 42, 0.06);
+    color: #86868b;
+    border: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+  }
+  .modal-close-btn:hover {
+    background: rgba(15, 23, 42, 0.12);
+    color: #1d1d1f;
+  }
+  .modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 36px 40px;
+    font-size: 17px;
+    line-height: 2;
+    color: #1d1d1f;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .modal-body::-webkit-scrollbar { width: 8px; }
+  .modal-body::-webkit-scrollbar-track { background: transparent; }
+  .modal-body::-webkit-scrollbar-thumb { background: rgba(110, 110, 115, 0.28); border-radius: 999px; }
+  .modal-footer {
+    padding: 16px 24px;
+    border-top: 1px solid rgba(15, 23, 42, 0.06);
+    background: #f7f9fc;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    gap: 12px;
+  }
+  .modal-copy-btn {
+    background: linear-gradient(180deg, #0a84ff 0%, #0071e3 100%);
+    color: #fff;
+    border: none;
+    padding: 9px 20px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(0, 113, 227, 0.25);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .modal-copy-btn:hover { transform: translateY(-1px); }
+  .modal-copy-btn.copied { background: #34c759; box-shadow: none; }
+  @media (max-width: 900px) {
+    .modal-body { padding: 24px 20px; font-size: 15px; }
+    .modal-card { border-radius: 20px; max-height: 95vh; }
+  }
+
+  /* trigger button */
+  .expand-btn {
+    background: rgba(0, 113, 227, 0.08);
+    color: #0071e3;
+    border: 1px solid rgba(0, 113, 227, 0.12);
+    padding: 7px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .expand-btn:hover {
+    background: rgba(0, 113, 227, 0.14);
+    transform: translateY(-1px);
+  }
   .polish-section { margin-top: 4px; padding-top: 12px; border-top: 1px dashed rgba(15, 23, 42, 0.1); }
   .summary-section { margin-top: 8px; }
   /* 进度指示 */
@@ -260,7 +386,7 @@
     -webkit-backdrop-filter: blur(22px);
   }
   @media (max-width: 1500px) {
-    .container { width: calc(100vw - 48px); }
+    .container { width: min(92vw, 2200px); }
     .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 900px) {
@@ -323,6 +449,15 @@
           <span class="result-title"><span class="icon">✨</span>AI Polish</span>
           <div style="display:flex; align-items:center; gap:10px;">
             <span class="char-count" id="polishCharCount">0 字</span>
+            <button class="expand-btn" id="expandPolishBtn" title="Open in reading mode" aria-label="Open reading mode">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                <polyline points="15 3 21 3 21 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="9 21 3 21 3 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="21" y1="3" x2="14" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Read
+            </button>
             <button class="copy-btn" data-target="polishRealtimeText" title="Copy polished text" aria-label="Copy polished text">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
@@ -352,6 +487,37 @@
       <div class="summary-grid" id="summaryCards"></div>
       <div class="summary-raw" id="summaryText"></div>
     </div>
+  <!-- Fullscreen reader modal -->
+  <div class="modal-overlay" id="readerModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-header-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="3" width="18" height="18" rx="4" stroke="#0071e3" stroke-width="1.8"/>
+            <line x1="7" y1="9" x2="17" y2="9" stroke="#0071e3" stroke-width="1.8" stroke-linecap="round"/>
+            <line x1="7" y1="13" x2="17" y2="13" stroke="#0071e3" stroke-width="1.8" stroke-linecap="round"/>
+            <line x1="7" y1="17" x2="13" y2="17" stroke="#0071e3" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <span id="modalTitle">Reading Mode</span>
+        </div>
+        <button class="modal-close-btn" id="modalCloseBtn" aria-label="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer">
+        <button class="modal-copy-btn" id="modalCopyBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
+            <rect x="5" y="5" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8" opacity="0.75"/>
+          </svg>
+          Copy All
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -369,6 +535,11 @@ const polishCharCount = document.getElementById('polishCharCount');
 const progressInfo = document.getElementById('progressInfo');
 const phaseLabel = document.getElementById('phaseLabel');
 const progressFill = document.getElementById('progressFill');
+const readerModal = document.getElementById('readerModal');
+const modalBody = document.getElementById('modalBody');
+const modalCloseBtn = document.getElementById('modalCloseBtn');
+const modalCopyBtn = document.getElementById('modalCopyBtn');
+const expandPolishBtn = document.getElementById('expandPolishBtn');
 const SUMMARY_TITLES = [
   '核心主题', '核心观点', '关键知识点', '方法论框架', '可复用原则', '适用场景',
   '失效场景', '风险提醒', '新手误区', '学习笔记', '可执行清单', '思考方式总结',
@@ -556,9 +727,13 @@ function connectStream(taskId) {
 }
 
 function syncAnimatedText(element, nextText, state, onUpdate) {
+  const prevTarget = state.target;
   state.target = nextText || '';
 
-  if (state.timer) return;
+  if (state.timer) {
+    clearTimeout(state.timer);
+    state.timer = null;
+  }
 
   function tick() {
     const target = state.target || '';
@@ -730,6 +905,52 @@ async function exportMarkdown() {
 }
 
 exportMdBtn.addEventListener('click', exportMarkdown);
+
+// ========== Reading Mode Modal ==========
+let modalCurrentSource = '';
+
+function openReaderModal(text, label) {
+  modalCurrentSource = text;
+  document.getElementById('modalTitle').textContent = label;
+  modalBody.textContent = text;
+  readerModal.classList.add('active');
+  modalBody.scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeReaderModal() {
+  readerModal.classList.remove('active');
+  document.body.style.overflow = '';
+  modalCurrentSource = '';
+}
+
+expandPolishBtn.addEventListener('click', () => {
+  openReaderModal(polishedFullText || polishRealtimeText.textContent || '', 'AI Polish');
+});
+
+modalCloseBtn.addEventListener('click', closeReaderModal);
+
+readerModal.addEventListener('click', (e) => {
+  if (e.target === readerModal) closeReaderModal();
+});
+
+modalCopyBtn.addEventListener('click', () => {
+  if (!modalCurrentSource) return;
+  navigator.clipboard.writeText(modalCurrentSource).then(() => {
+    modalCopyBtn.classList.add('copied');
+    modalCopyBtn.textContent = 'Copied!';
+    setTimeout(() => {
+      modalCopyBtn.classList.remove('copied');
+      modalCopyBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/><rect x="5" y="5" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8" opacity="0.75"/></svg> Copy All`;
+    }, 1500);
+  });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && readerModal.classList.contains('active')) {
+    closeReaderModal();
+  }
+});
 
 // ========== 复制按钮功能（动态创建）==========
 document.addEventListener('click', (e) => {
