@@ -127,42 +127,56 @@ def transcribe():
     except Exception as e:
         return jsonify({"error": f"文件保存失败: {e}"}), 500
 
-    # 转换为 WAV
-    try:
-        ffmpeg_cmd = [
-            imageio_ffmpeg.get_ffmpeg_exe(),
-            "-y", "-i", str(file_path),
-            "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
-            str(wav_path)
-        ]
-        result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=300)
-        if result.returncode != 0:
-            return jsonify({"error": f"ffmpeg 转换失败"}), 500
-    except Exception as e:
-        return jsonify({"error": f"转换音频失败: {e}"}), 500
+    filename_lower = file.filename.lower()
+    is_audio = any(filename_lower.endswith(ext) for ext in ('.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.aiff'))
 
-    # 初始化任务状态
-    _tasks[task_id] = {
-        "status": "transcribing",
-        "transcript": "",
-        "polished": "",
-        "summary": "",
-        "metadata": {},
-        "file_name": file.filename,
-        "polish_progress": 0,
-        "summary_progress": 0,
-        "error": None,
-    }
+    if is_audio:
+        audio_path = str(file_path)
+        _tasks[task_id] = {
+            "status": "transcribing",
+            "transcript": "",
+            "polished": "",
+            "summary": "",
+            "metadata": {},
+            "file_name": file.filename,
+            "polish_progress": 0,
+            "summary_progress": 0,
+            "error": None,
+        }
+    else:
+        audio_path = str(wav_path)
+        try:
+            ffmpeg_cmd = [
+                imageio_ffmpeg.get_ffmpeg_exe(),
+                "-y", "-i", str(file_path),
+                "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
+                str(wav_path)
+            ]
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, timeout=300)
+            if result.returncode != 0:
+                return jsonify({"error": f"ffmpeg 转换失败"}), 500
+        except Exception as e:
+            return jsonify({"error": f"转换音频失败: {e}"}), 500
+
+        _tasks[task_id] = {
+            "status": "transcribing",
+            "transcript": "",
+            "polished": "",
+            "summary": "",
+            "metadata": {},
+            "file_name": file.filename,
+            "polish_progress": 0,
+            "summary_progress": 0,
+            "error": None,
+        }
 
     def on_chunk(chunk_idx, text, is_final):
         _tasks[task_id]["transcript"] = text
 
     def run():
         try:
-            print(f"[run] 开始转写 task_id={task_id}")
+            print(f"[run] 开始转写 task_id={task_id}, audio={audio_path}")
             transcriber = get_transcriber()
-            audio_path = str(wav_path)
-            print(f"[run] audio_path={audio_path}")
             transcriber.transcribe_streaming(audio_path, chunk_duration=30, callback=on_chunk)
             print(f"[run] 转写完成")
 
