@@ -204,6 +204,74 @@ function connectStream(taskId) {
   };
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatSummaryValue(value) {
+  if (value == null || value === '') return '';
+
+  if (Array.isArray(value)) {
+    const items = value
+      .map(item => {
+        const formatted = formatSummaryValue(item);
+        return formatted ? `<li>${formatted}</li>` : '';
+      })
+      .filter(Boolean)
+      .join('');
+    return items ? `<ul style="margin:6px 0 0 20px; line-height:1.8;">${items}</ul>` : '';
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .map(([key, nested]) => {
+        const formatted = formatSummaryValue(nested);
+        if (!formatted) return '';
+        return `
+          <div style="margin-top:8px;">
+            <div style="color:#9ecdf7; font-weight:600; margin-bottom:4px;">${escapeHtml(key)}</div>
+            <div>${formatted}</div>
+          </div>
+        `;
+      })
+      .filter(Boolean)
+      .join('');
+  }
+
+  return escapeHtml(value).replace(/\n/g, '<br>');
+}
+
+function renderSummary(summary) {
+  if (!summary) return '';
+
+  if (typeof summary === 'string') {
+    return `<div style="line-height:1.8;">${escapeHtml(summary).replace(/\n/g, '<br>')}</div>`;
+  }
+
+  if (typeof summary === 'object') {
+    return Object.entries(summary)
+      .map(([key, value]) => {
+        const formatted = formatSummaryValue(value);
+        if (!formatted) return '';
+        return `
+          <div style="margin-bottom:14px;">
+            <div style="color:#1d9bf0; font-weight:700; margin-bottom:6px;">${escapeHtml(key)}</div>
+            <div>${formatted}</div>
+          </div>
+        `;
+      })
+      .filter(Boolean)
+      .join('');
+  }
+
+  return `<div>${escapeHtml(summary)}</div>`;
+}
+
 function handleStreamData(data) {
   // realtimeSection from old template - define as no-op to prevent errors
   const realtimeSection = { style: {} };
@@ -285,19 +353,7 @@ function handleStreamData(data) {
 
     case 'summary_done':
       if (data.summary_text) {
-        if (typeof data.summary_text === 'string') {
-          summaryText.textContent = data.summary_text;
-        } else {
-          const s = data.summary_text;
-          let html = '';
-          if (s.核心内容) html += `<div style="margin-bottom:10px"><b style="color:#1d9bf0">💡 核心内容：</b>${s.核心内容}</div>`;
-          if (s.关键要点 && s.关键要点.length) {
-            html += `<div><b style="color:#1d9bf0">📌 关键要点：</b><ul style="margin:6px 0 0 20px">`;
-            s.关键要点.forEach(p => { html += `<li>${p}</li>`; });
-            html += `</ul></div>`;
-          }
-          summaryText.innerHTML = html;
-        }
+        summaryText.innerHTML = renderSummary(data.summary_text);
       }
       setProgress('完成', 100);
       setStep('step-summary');

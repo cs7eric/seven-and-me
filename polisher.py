@@ -204,9 +204,9 @@ class TextPolisher:
         return result
 
     def summarize(self, text: str) -> dict:
-        """AI 摘要与总结 - 返回固定结构"""
+        """AI 摘要与总结 - 返回模型生成的结构化 JSON"""
         if not text or not text.strip():
-            return {"核心内容": "", "关键要点": [], "待办事项": []}
+            return {}
 
         system_prompt = """你是一名专业的股票投资知识整理与学习助手，擅长从A股知识分享、交易经验、盘面讲解、选股方法、仓位管理、技术分析、基本面分析和投资心法类文本中，提炼可学习、可复盘、可迁移的方法论。
 
@@ -306,16 +306,15 @@ class TextPolisher:
             import json
             try:
                 summary = json.loads(content)
-                return {
-                    "核心内容": summary.get("核心内容", ""),
-                    "关键要点": summary.get("关键要点", []),
-                }
+                if isinstance(summary, dict):
+                    return summary
+                return {"摘要内容": content}
             except json.JSONDecodeError:
-                return {"核心内容": content[:100], "关键要点": [], "待办事项": []}
+                return {"摘要内容": content}
 
         except Exception as e:
             print(f"[Summarizer] 摘要失败: {e}")
-            return {"核心内容": "", "关键要点": [], "待办事项": []}
+            return {"摘要内容": ""}
 
     def polish_and_summarize(self, text: str) -> dict:
         """润色并摘要"""
