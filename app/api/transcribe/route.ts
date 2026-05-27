@@ -5,14 +5,11 @@ import * as path from 'path';
 import { taskStore } from '@/lib/task-store';
 import { transcribe_streaming, convertVideoToAudio } from '@/lib/transcriber';
 import { polish_stream, summarize_stream } from '@/lib/polisher';
-import type { SSEEvent } from '@/lib/types';
+
+export const dynamic = 'force-dynamic';
 
 async function processTask(taskId: string, filePath: string): Promise<void> {
   const audioPath = path.join(os.tmpdir(), `${taskId}_audio.wav`);
-
-  const sendUpdate = (event: SSEEvent) => {
-    // Update taskStore — the stream route will push these
-  };
 
   try {
     // Convert video to audio
