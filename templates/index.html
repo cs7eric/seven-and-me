@@ -1,4 +1,6 @@
 <!DOCTYPE html>
+<!-- Version: action-only right rail + bottom Risk Radar, generated for direct copy/paste -->
+
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
@@ -196,9 +198,10 @@
     grid-template-areas:
       "hero map action"
       "hero map action"
+      "risk risk risk"
       "learn learn learn";
     gap: 18px;
-    align-items: stretch;
+    align-items: start;
   }
   .summary-panel {
     background: rgba(255, 255, 255, 0.82);
@@ -211,6 +214,7 @@
   .summary-panel.hero-panel { grid-area: hero; }
   .summary-panel.map-panel { grid-area: map; }
   .summary-panel.action-panel { grid-area: action; }
+  .summary-panel.risk-radar-panel { grid-area: risk; }
   .summary-panel.learning-panel { grid-area: learn; }
   .summary-panel-head {
     padding: 16px 18px 12px;
@@ -443,6 +447,40 @@
   .decision-card.risk .summary-list-icon {
     background: rgba(245, 158, 11, 0.14);
     color: #b45309;
+  }
+
+  .risk-radar-panel {
+    background:
+      linear-gradient(180deg, rgba(255, 251, 245, 0.88), rgba(255, 255, 255, 0.82)),
+      radial-gradient(circle at 12% 0%, rgba(245, 158, 11, 0.12), transparent 32%);
+    border-color: rgba(245, 158, 11, 0.16);
+  }
+  .risk-radar-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 0.8fr;
+    gap: 14px;
+    align-items: start;
+  }
+  .risk-radar-grid .decision-card {
+    min-height: 100%;
+  }
+  .risk-radar-grid .decision-card:first-child:last-child {
+    grid-column: 1 / -1;
+  }
+  .action-panel .decision-card.action {
+    position: relative;
+    overflow: hidden;
+  }
+  .action-panel .decision-card.action::after {
+    content: '';
+    position: absolute;
+    right: -44px;
+    top: -44px;
+    width: 120px;
+    height: 120px;
+    border-radius: 999px;
+    background: rgba(0, 113, 227, 0.08);
+    pointer-events: none;
   }
   .learning-grid {
     display: grid;
@@ -977,8 +1015,10 @@
       grid-template-areas:
         "hero hero"
         "map action"
+        "risk risk"
         "learn learn";
     }
+    .risk-radar-grid { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 980px) {
     .summary-stage { padding: 16px; }
@@ -988,8 +1028,10 @@
         "hero"
         "map"
         "action"
+        "risk"
         "learn";
     }
+    .risk-radar-grid { grid-template-columns: 1fr; }
     .knowledge-board { grid-template-columns: 1fr; }
     .learning-grid { grid-template-columns: 1fr; }
   }
@@ -1483,20 +1525,38 @@ function renderSummaryCards(text) {
     <section class="summary-panel action-panel">
       <div class="summary-panel-head">
         <div>
-          <div class="summary-kicker">Decision Board</div>
-          <div class="summary-panel-title">行动与风险</div>
-          <div class="summary-panel-subtitle">把“知道了”转换成“下一步怎么做”。</div>
+          <div class="summary-kicker">Action Dock</div>
+          <div class="summary-panel-title">下一步行动</div>
+          <div class="summary-panel-subtitle">右侧只保留行动入口，避免长风险文本把三列布局撑高。</div>
         </div>
       </div>
       <div class="summary-panel-body">
         <div class="decision-stack">
           ${renderDecisionCard('可执行清单', actions || coreView, 'action', '✓')}
-          ${renderDecisionCard('风险 / 失效场景', risks, 'risk', '!')}
-          ${renderDecisionCard('新手误区', mistakes, 'risk', '×')}
         </div>
       </div>
     </section>
   `;
+
+  const riskItems = [
+    renderDecisionCard('风险提醒 / 失效场景', risks, 'risk', '!'),
+    renderDecisionCard('新手误区', mistakes, 'risk', '×')
+  ].filter(Boolean).join('');
+
+  const riskPanel = riskItems ? `
+    <section class="summary-panel risk-radar-panel">
+      <div class="summary-panel-head">
+        <div>
+          <div class="summary-kicker">Risk Radar</div>
+          <div class="summary-panel-title">风险雷达</div>
+          <div class="summary-panel-subtitle">风险内容通常更长，放到横向雷达区，既保留完整信息，又不破坏上方三列平衡。</div>
+        </div>
+      </div>
+      <div class="summary-panel-body">
+        <div class="risk-radar-grid">${riskItems}</div>
+      </div>
+    </section>
+  ` : '';
 
   const learningItems = [
     renderLearningCard('学习笔记', notes),
@@ -1519,7 +1579,7 @@ function renderSummaryCards(text) {
     </section>
   ` : '';
 
-  summaryCards.innerHTML = heroPanel + mapPanel + actionPanel + learningPanel;
+  summaryCards.innerHTML = heroPanel + mapPanel + actionPanel + riskPanel + learningPanel;
 }
 
 let isRawView = false;
