@@ -28,7 +28,14 @@ class TextPolisher:
         timeout: int = 120,
         on_chunk: Optional[Callable[[str], None]] = None,
     ) -> str:
-        """调用 MiniMax 流式接口，并在每次有增量时回调当前完整文本。"""
+        """调用 MiniMax 流式接口，并在每次有增量时回调当前完整文本。
+
+        MiniMax 的流式返回有时会在 delta 增量之后，再给一次完整 message.content。
+        如果把 delta.content 和 message.content 都直接拼接，就会得到：
+        `{...json...}{...json...}` 或 ```json...``````json...```。
+        这里的规则是：优先使用 delta 增量；只有没有 delta 时，才把
+        message.content 当作完整候选文本进行覆盖/补全，而不是盲目 append。
+        """
         url = f"{self.BASE_URL}/v1/text/chatcompletion_v2"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -80,18 +87,34 @@ class TextPolisher:
             except json.JSONDecodeError:
                 continue
 
-            content = ""
             choices = chunk.get("choices") or []
-            if choices:
-                choice = choices[0] or {}
-                delta = choice.get("delta") or {}
-                message = choice.get("message") or {}
-                content = delta.get("content") or message.get("content") or ""
+            if not choices:
+                continue
 
-            if content:
-                full_text += content
+            choice = choices[0] or {}
+            delta = choice.get("delta") or {}
+            message = choice.get("message") or {}
+
+            delta_content = delta.get("content") or ""
+            message_content = message.get("content") or ""
+
+            if delta_content:
+                full_text += delta_content
                 if on_chunk:
                     on_chunk(full_text)
+                continue
+
+            if message_content:
+                # message.content 通常是最终完整文本。不要追加到 delta 之后。
+                if not full_text:
+                    full_text = message_content
+                    if on_chunk:
+                        on_chunk(full_text)
+                elif message_content.startswith(full_text) and len(message_content) > len(full_text):
+                    full_text = message_content
+                    if on_chunk:
+                        on_chunk(full_text)
+                # 如果 message_content 与已累计内容相同或更短，忽略，避免重复。
 
         return full_text
 
@@ -117,6 +140,102 @@ class TextPolisher:
             start = cleaned.find("{", start + 1)
 
         raise ValueError("未找到可解析的 JSON 对象")
+
+    def _qa_fallback_json(self, message: str) -> str:
+        """生成前端可稳定渲染的 Ask AI 兜底 JSON 字符串。"""
+        payload = {
+            "version": "qa_v1",
+            "answer_type": "general",
+            "grounding": {
+                "source_used": False,
+                "summary_used": False,
+                "extension_used": False,
+                "source_summary_conflict": False,
+            },
+            "sections": {
+                "core_answer": [message or "抱歉，暂未能生成回答，请稍后重试。"],
+                "source_explanation": [],
+                "plain_language": [],
+                "extra_context": [],
+                "caution": [],
+            },
+            "followups": [],
+            "disclaimer": "仅用于投资知识学习，不构成投资建议。",
+        }
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _ensure_string_list(self, value, max_items: int = 4) -> list[str]:
+        """把模型返回的字段统一整理成字符串数组。"""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            items = [value]
+        elif isinstance(value, list):
+            items = value
+        else:
+            items = [str(value)]
+
+        result = []
+        for item in items:
+            text = str(item).strip()
+            if text:
+                result.append(text)
+            if len(result) >= max_items:
+                break
+        return result
+
+    def _normalize_qa_answer(self, content: str) -> dict:
+        """把模型输出标准化成固定 qa_v1 schema。
+
+        这里会从 fenced code、额外解释、重复 JSON 中提取第一个 JSON 对象，
+        然后补齐缺失字段，保证前端可以稳定 JSON.parse。
+        """
+        parsed = self._parse_json_object(content)
+
+        sections = parsed.get("sections") or {}
+        if not isinstance(sections, dict):
+            sections = {}
+
+        grounding = parsed.get("grounding") or {}
+        if not isinstance(grounding, dict):
+            grounding = {}
+
+        answer_type = str(parsed.get("answer_type") or "general").strip()
+        valid_answer_types = {
+            "concept",
+            "operation_logic",
+            "correctness_check",
+            "stock_specific",
+            "simple",
+            "general",
+        }
+        if answer_type not in valid_answer_types:
+            answer_type = "general"
+
+        normalized = {
+            "version": "qa_v1",
+            "answer_type": answer_type,
+            "grounding": {
+                "source_used": bool(grounding.get("source_used", True)),
+                "summary_used": bool(grounding.get("summary_used", True)),
+                "extension_used": bool(grounding.get("extension_used", False)),
+                "source_summary_conflict": bool(grounding.get("source_summary_conflict", False)),
+            },
+            "sections": {
+                "core_answer": self._ensure_string_list(sections.get("core_answer"), 3),
+                "source_explanation": self._ensure_string_list(sections.get("source_explanation"), 4),
+                "plain_language": self._ensure_string_list(sections.get("plain_language"), 3),
+                "extra_context": self._ensure_string_list(sections.get("extra_context"), 4),
+                "caution": self._ensure_string_list(sections.get("caution"), 4),
+            },
+            "followups": self._ensure_string_list(parsed.get("followups"), 4),
+            "disclaimer": "仅用于投资知识学习，不构成投资建议。",
+        }
+
+        if not normalized["sections"]["core_answer"]:
+            normalized["sections"]["core_answer"] = ["原文没有提供足够信息直接回答这个问题。"]
+
+        return normalized
 
     def polish(self, text: str, on_chunk: Optional[Callable[[str], None]] = None) -> str:
         """对文字进行润色"""
@@ -433,79 +552,96 @@ class TextPolisher:
         polished_text: str,
         summary_text: str,
     ) -> str:
-        """根据润色文本和摘要内容，回答用户关于这段内容的问题。"""
+        """根据润色文本和摘要内容，回答用户关于这段内容的问题。
+
+        返回值永远是一个合法 JSON 字符串，schema 固定为 qa_v1。
+        """
         system_prompt = """
- 你是一名专业的股票投资知识导师，擅长结合股票知识分享文本、AI摘要和用户问题，进行清晰、准确、可学习的问答讲解。
+你是一名专业的股票投资知识导师，擅长结合股票知识分享文本、AI摘要和用户问题，进行清晰、准确、可学习的问答讲解。
 
- 你的任务是：
- 基于用户提供的「原文内容」和「AI摘要总结」回答用户问题，并在必要时结合通用股票知识进行扩展解释，帮助用户真正理解其中的投资逻辑、交易方法、术语含义和使用场景。
+你的任务是：基于用户提供的「原文内容」和「AI摘要总结」回答用户问题，并在必要时结合通用股票知识进行扩展解释，帮助用户真正理解其中的投资逻辑、交易方法、术语含义和使用场景。
 
- 回答优先级：
- 1. 优先依据「原文内容」回答。
- 2. 如果「AI摘要总结」与原文一致，可以参考摘要帮助组织答案。
- 3. 如果原文和摘要存在冲突，以「原文内容」为准，并指出摘要可能存在简化或偏差。
- 4. 如果用户问题在原文和摘要中没有明确答案，可以基于通用股票知识进行扩展补充，但必须明确标注为"扩展补充"。
- 5. 不允许把扩展补充说成是原文作者的观点。
+你必须严格遵守以下规则：
 
- 回答要求：
- 1. 严格区分三类内容：
-    - 原文明确提到的内容
-    - 根据原文逻辑可以合理推导的内容
-    - 原文未提到、但可以作为通用知识补充的内容
+1. 回答优先级：
+- 优先依据「原文内容」回答。
+- 如果「AI摘要总结」与原文一致，可以参考摘要帮助组织答案。
+- 如果原文和摘要存在冲突，以「原文内容」为准，并在 caution 中指出摘要可能存在简化或偏差。
+- 如果用户问题在原文和摘要中没有明确答案，可以基于通用股票知识进行扩展补充，但必须设置 grounding.extension_used 为 true。
+- 不允许把扩展补充说成是原文作者的观点。
 
- 2. 如果用户问的是概念解释，例如KDJ、金叉、死叉、背离、钝化、20日均线、板块轮动、情绪周期等：
-    - 先用简单话解释概念
-    - 再结合原文说明作者是怎么用的
-    - 最后说明容易误解的地方
+2. 内容边界：
+- 必须区分：原文明确提到的内容、根据原文逻辑合理推导的内容、原文未提到但可作为通用知识补充的内容。
+- 不要编造原文没有的股票、案例、价格、数据、结论。
+- 不要输出与问题无关的大段内容。
+- 不要使用夸张、承诺收益、保证胜率等表达。
+- 所有回答仅用于投资知识学习，不构成投资建议。
 
- 3. 如果用户问的是操作逻辑，例如"为什么不能直接买""为什么要等确认""什么时候进场""什么时候卖出"等：
-    - 先回答核心结论
-    - 再解释原文里的判断条件
-    - 再说明风险和适用前提
-    - 不要直接给出具体买卖建议
+3. 问题类型处理：
+- 如果用户问概念解释，例如 KDJ、金叉、死叉、背离、钝化、20日均线、板块轮动、情绪周期等：
+  - core_answer 先用简单话解释概念。
+  - source_explanation 说明原文中作者是怎么使用这个概念的。
+  - caution 说明容易误解的地方。
 
- 4. 如果用户问某个说法对不对：
-    - 先判断这个说法是否符合原文逻辑
-    - 再说明成立条件
-    - 再说明失效场景或风险
+- 如果用户问操作逻辑，例如“为什么不能直接买”“为什么要等确认”“什么时候进场”“什么时候卖出”等：
+  - core_answer 先回答核心结论。
+  - source_explanation 解释原文里的判断条件。
+  - caution 说明风险和适用前提。
+  - 不要直接给出具体买卖建议。
 
- 5. 如果用户问具体股票、代码、价格、涨跌、能不能买、能不能卖：
-    - 不要直接给出买入、卖出、持有建议
-    - 应转化为方法论回答
-    - 告诉用户应该依据哪些条件检查
-    - 可以给出观察清单，但不能替用户做投资决策
+- 如果用户问某个说法对不对：
+  - core_answer 先判断这个说法是否符合原文逻辑。
+  - source_explanation 说明成立条件。
+  - caution 说明失效场景或风险。
 
- 6. 回答要像老师讲课：
-    - 语言通俗
-    - 逻辑清楚
-    - 多用"为什么""怎么判断""容易错在哪里"
-    - 不要堆砌术语
-    - 不要写成研报风格
+- 如果用户问具体股票、代码、价格、涨跌、能不能买、能不能卖：
+  - 不要直接给出买入、卖出、持有建议。
+  - 应转化为方法论回答。
+  - 告诉用户应该依据哪些条件检查。
+  - 可以给出观察清单，但不能替用户做投资决策。
 
- 7. 不要编造原文没有的股票、案例、数据、结论。
- 8. 不要输出与问题无关的大段内容。
- 9. 不要使用夸张、承诺收益、保证胜率等表达。
- 10. 所有回答仅用于投资知识学习，不构成投资建议。
+4. 输出语言：
+- 使用中文。
+- 像老师讲课，语言通俗，逻辑清楚。
+- 多解释“为什么”“怎么判断”“容易错在哪里”。
+- 不要堆砌术语。
+- 不要写成研报风格。
 
- 推荐输出结构：
+5. 输出格式：
+你必须只输出一个合法 JSON 对象。
+不要输出 Markdown。
+不要输出代码块。
+不要输出任何 JSON 之外的解释文字。
+不要使用中文标题符号，例如【核心回答】。
+不要在 JSON 前后添加说明。
+所有字段必须存在。
+如果某个部分不需要内容，使用空数组 []，不要省略字段。
+每个数组元素必须是完整句子。
+每个数组最多 4 条。
+每条句子尽量控制在 80 个中文字符以内。
+JSON内容不要重复输出
 
- 【核心回答】
- 直接回答用户的问题，用1-3句话讲清楚。
-
- 【结合原文解释】
- 说明原文中相关观点是什么，以及它为什么这么说。
-
- 【通俗理解】
- 用更容易懂的话解释背后的逻辑。
-
- 【扩展补充】
- 如果原文没有讲清楚，可以补充通用股票知识；如果不需要扩展，可以省略本部分。
-
- 【注意事项】
- 指出这个知识点容易误用的地方、适用条件或风险。
-
- 如果用户问题非常简单，可以简化输出，但仍要保证准确、清楚、基于上下文。
- """
+JSON 格式必须严格如下：
+{
+  "version": "qa_v1",
+  "answer_type": "concept | operation_logic | correctness_check | stock_specific | simple | general",
+  "grounding": {
+    "source_used": true,
+    "summary_used": true,
+    "extension_used": false,
+    "source_summary_conflict": false
+  },
+  "sections": {
+    "core_answer": [],
+    "source_explanation": [],
+    "plain_language": [],
+    "extra_context": [],
+    "caution": []
+  },
+  "followups": [],
+  "disclaimer": "仅用于投资知识学习，不构成投资建议。"
+}
+"""
 
         user_text = f"""【原文内容（润色后）】
 {polished_text.strip()}
@@ -514,15 +650,23 @@ class TextPolisher:
 {summary_text.strip()}
 
 【用户问题】
-{question.strip()}"""
+{question.strip()}
+
+请严格按照 system prompt 中的 JSON schema 输出。
+只输出 JSON，不要输出 Markdown，不要输出解释文字。"""
 
         try:
-            answer = self._stream_chat_completion(
+            raw_answer = self._stream_chat_completion(
                 system_prompt=system_prompt,
                 user_text=user_text,
                 timeout=60,
             ).strip()
-            return answer or "抱歉，暂未能生成回答，请稍后重试。"
+
+            if not raw_answer:
+                return self._qa_fallback_json("抱歉，暂未能生成回答，请稍后重试。")
+
+            normalized = self._normalize_qa_answer(raw_answer)
+            return json.dumps(normalized, ensure_ascii=False)
         except Exception as e:
             print(f"[Ask] 问答生成失败: {e}")
-            return "抱歉，回答生成失败，请稍后重试。"
+            return self._qa_fallback_json("抱歉，回答生成失败，请稍后重试。")
