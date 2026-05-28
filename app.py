@@ -339,6 +339,37 @@ def export_markdown(task_id):
         }
     )
 
+
+@app.route('/api/ask', methods=['POST'])
+def ask_about_content():
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid request"}), 400
+
+    task_id = data.get("task_id")
+    question = data.get("question", "").strip()
+
+    if not task_id:
+        return jsonify({"error": "Task ID is required"}), 400
+    if not question:
+        return jsonify({"error": "Question cannot be empty"}), 400
+
+    task = _tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    if task.get("status") != "done":
+        return jsonify({"error": "Task is not completed yet"}), 400
+
+    polished = (task.get("polished") or "").strip()
+    summary = (task.get("summary") or "").strip()
+
+    if not polished and not summary:
+        return jsonify({"error": "No content available for Q&A"}), 400
+
+    polisher = get_polisher()
+    answer = polisher.ask_about_content(question, polished, summary)
+    return jsonify({"answer": answer})
+
 if __name__ == '__main__':
     import socket
     # 检查端口 5000 是否有残留进程

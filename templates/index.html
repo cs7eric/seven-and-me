@@ -128,6 +128,8 @@
     box-shadow: 0 24px 64px rgba(15, 23, 42, 0.1);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
+    display: flex;
+    flex-direction: column;
   }
   .result-header {
     display: flex;
@@ -136,10 +138,24 @@
     padding: 18px 20px;
     border-bottom: 1px solid rgba(15, 23, 42, 0.07);
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(247, 249, 252, 0.72) 100%);
+    cursor: pointer;
+    user-select: none;
+    gap: 10px;
+    flex-shrink: 0;
   }
+  .result-header:hover { background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 252, 0.9) 100%); }
   .result-title { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; color: #1d1d1f; }
   .result-title .icon { font-size: 16px; }
-  .char-count { font-size: 12px; color: #86868b; }
+  .result-meta { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: flex-end; }
+  .result-toggle { color: #86868b; transition: transform 0.25s ease; flex-shrink: 0; }
+  .result-toggle.open { transform: rotate(180deg); }
+  .result-body-wrap {
+    overflow: visible;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    max-height: none;
+    opacity: 1;
+  }
+  .result-body-wrap.collapsed { max-height: 0; opacity: 0; overflow: hidden; }
   .result-body {
     padding: 22px 22px 24px;
     min-height: 600px;
@@ -154,7 +170,7 @@
   .result-body::-webkit-scrollbar { width: 6px; }
   .result-body::-webkit-scrollbar-track { background: transparent; }
   .result-body::-webkit-scrollbar-thumb { background: rgba(110, 110, 115, 0.28); border-radius: 999px; }
-  .result-body:empty::before { content: '等待转写...'; color: #8e8e93; }
+  .result-body:empty::before { content: 'Waiting for transcription...'; color: #8e8e93; }
   /* 摘要卡片区 */
   .summary-box {
     background: rgba(255, 255, 255, 0.76);
@@ -333,6 +349,254 @@
   }
   .modal-copy-btn:hover { transform: translateY(-1px); }
   .modal-copy-btn.copied { background: #34c759; box-shadow: none; }
+
+  /* Q&A Section */
+  .qa-section {
+    margin-top: 14px;
+    border-top: 1px solid rgba(15, 23, 42, 0.07);
+    padding-top: 14px;
+  }
+  .qa-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .qa-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0071e3;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 113, 227, 0.08);
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .qa-label svg { flex-shrink: 0; }
+  .qa-badge {
+    background: linear-gradient(135deg, #0a84ff, #0071e3);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-left: 8px;
+  }
+  .qa-input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .qa-input {
+    flex: 1;
+    padding: 8px 14px;
+    border: 1.5px solid rgba(15, 23, 42, 0.12);
+    border-radius: 14px;
+    font-size: 13px;
+    font-family: inherit;
+    color: #1d1d1f;
+    background: rgba(255, 255, 255, 0.7);
+    outline: none;
+    transition: border-color 0.2s ease;
+    resize: none;
+    min-height: 38px;
+    max-height: 100px;
+  }
+  .qa-input:focus {
+    border-color: #0071e3;
+    background: #fff;
+  }
+  .qa-input::placeholder { color: #86868b; }
+  .qa-send-btn {
+    background: linear-gradient(180deg, #0a84ff 0%, #0071e3 100%);
+    color: #fff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 14px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 113, 227, 0.2);
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    align-self: flex-end;
+  }
+  .qa-send-btn:hover:not(:disabled) { transform: translateY(-1px); }
+  .qa-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .qa-loading { font-size: 12px; color: #86868b; padding: 8px 0; display: flex; align-items: center; gap: 6px; }
+  .qa-answer {
+    background: linear-gradient(135deg, rgba(0, 113, 227, 0.04), rgba(10, 132, 255, 0.06));
+    border: 1px solid rgba(0, 113, 227, 0.12);
+    border-radius: 16px;
+    padding: 14px 16px;
+    font-size: 13.5px;
+    line-height: 1.85;
+    color: #1d1d1f;
+    margin-top: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .qa-answer-q {
+    font-size: 11px;
+    font-weight: 700;
+    color: #86868b;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .qa-item {
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.92);
+    border-radius: 22px;
+    overflow: hidden;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: box-shadow 0.2s ease;
+  }
+  .qa-item:hover { box-shadow: 0 8px 32px rgba(15, 23, 42, 0.1); }
+  .qa-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    cursor: pointer;
+    gap: 12px;
+    user-select: none;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(247, 249, 252, 0.9) 100%);
+  }
+  .qa-item-header:hover { background: linear-gradient(180deg, rgba(247, 249, 252, 0.98) 0%, rgba(240, 243, 248, 0.95) 100%); }
+  .qa-item-q-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1d1d1f;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .qa-item-q-text::before {
+    content: 'Q';
+    background: linear-gradient(135deg, #0a84ff, #0071e3);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .qa-item-q-text.expanded { white-space: normal; }
+  .qa-item-q-text.expanded::before { content: 'Q'; }
+  .qa-item-toggle {
+    color: #86868b;
+    transition: transform 0.25s ease;
+    flex-shrink: 0;
+  }
+  .qa-item-toggle.open { transform: rotate(180deg); }
+  .qa-item-body {
+    display: none;
+    border-top: 1px solid rgba(15, 23, 42, 0.06);
+    background: rgba(255, 255, 255, 0.5);
+  }
+  .qa-item-body.open { display: block; }
+  .qa-answer-body {
+    overflow-y: auto;
+    max-height: 520px;
+    padding: 18px 20px;
+  }
+  .qa-answer-body::-webkit-scrollbar { width: 6px; }
+  .qa-answer-body::-webkit-scrollbar-track { background: transparent; }
+  .qa-answer-body::-webkit-scrollbar-thumb { background: rgba(110, 110, 115, 0.28); border-radius: 999px; }
+  .qa-item-body .qa-answer {
+    margin: 0;
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 14px;
+    line-height: 1.9;
+    color: #1d1d1f;
+  }
+  .qa-item-body .qa-answer h1,
+  .qa-item-body .qa-answer h2,
+  .qa-item-body .qa-answer h3 {
+    color: #111;
+    margin: 14px 0 6px;
+    font-weight: 700;
+  }
+  .qa-item-body .qa-answer h1 { font-size: 16px; border-bottom: 1px solid rgba(15, 23, 42, 0.08); padding-bottom: 6px; }
+  .qa-item-body .qa-answer h2 { font-size: 14px; color: #0071e3; }
+  .qa-item-body .qa-answer h3 { font-size: 13px; color: #444; }
+  .qa-item-body .qa-answer p { margin: 6px 0; }
+  .qa-item-body .qa-answer ul, .qa-item-body .qa-answer ol { margin: 6px 0 8px 20px; }
+  .qa-item-body .qa-answer li { margin: 3px 0; line-height: 1.7; }
+  .qa-item-body .qa-answer strong { color: #1d1d1f; font-weight: 700; }
+  .qa-item-body .qa-answer code {
+    background: rgba(0, 113, 227, 0.08);
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #0071e3;
+  }
+  .qa-item-body .qa-answer pre {
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 12px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 8px 0;
+  }
+  .qa-item-body .qa-answer pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    color: #1d1d1f;
+    font-size: 12.5px;
+  }
+  .qa-item-body .qa-answer blockquote {
+    border-left: 3px solid #0071e3;
+    background: rgba(0, 113, 227, 0.04);
+    padding: 10px 14px;
+    border-radius: 0 10px 10px 0;
+    color: #555;
+    margin: 8px 0;
+    font-style: normal;
+  }
+  .qa-item-body .qa-answer blockquote p { margin: 0; }
+  .qa-item-body .qa-answer hr {
+    border: none;
+    border-top: 1px solid rgba(15, 23, 42, 0.1);
+    margin: 14px 0;
+  }
+  .qa-item-body .qa-answer table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 12.5px;
+    margin: 8px 0;
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .qa-item-body .qa-answer th, .qa-item-body .qa-answer td {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    padding: 8px 12px;
+    text-align: left;
+  }
+  .qa-item-body .qa-answer th { background: rgba(0, 113, 227, 0.06); font-weight: 700; color: #0071e3; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .qa-item-body .qa-answer tr:nth-child(even) td { background: rgba(0, 113, 227, 0.02); }
+  .qa-item-body .qa-answer em { color: #555; font-style: italic; }
+
   @media (max-width: 900px) {
     .modal-body { padding: 24px 20px; font-size: 15px; }
     .modal-card { border-radius: 20px; max-height: 95vh; }
@@ -429,27 +693,32 @@
     <div class="columns">
       <!-- 左：原始转写 -->
       <div class="result-box">
-        <div class="result-header">
+        <div class="result-header" id="header-transcript" onclick="toggleResultBox('transcript')">
           <span class="result-title"><span class="icon">📝</span>Transcript</span>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span class="char-count" id="rawCharCount">0 字</span>
-            <button class="copy-btn" data-target="realtimeText" title="Copy transcript" aria-label="Copy transcript">
+          <div class="result-meta">
+            <span class="char-count" id="rawCharCount">0 chars</span>
+            <button class="copy-btn" data-target="realtimeText" title="Copy transcript" aria-label="Copy transcript" onclick="event.stopPropagation()">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
                 <rect x="5" y="5" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8" opacity="0.75"/>
               </svg>
             </button>
+            <svg class="result-toggle open" id="toggle-transcript" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
           </div>
         </div>
-        <div class="result-body" id="realtimeText"></div>
+        <div class="result-body-wrap open" id="wrap-transcript">
+          <div class="result-body" id="realtimeText"></div>
+        </div>
       </div>
       <!-- 右：AI润色 -->
       <div class="result-box">
-        <div class="result-header">
+        <div class="result-header" id="header-polish" onclick="toggleResultBox('polish')">
           <span class="result-title"><span class="icon">✨</span>AI Polish</span>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <span class="char-count" id="polishCharCount">0 字</span>
-            <button class="expand-btn" id="expandPolishBtn" title="Open in reading mode" aria-label="Open reading mode">
+          <div class="result-meta">
+            <span class="char-count" id="polishCharCount">0 chars</span>
+            <button class="expand-btn" id="expandPolishBtn" title="Open in reading mode" aria-label="Open reading mode" onclick="event.stopPropagation()">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
                 <polyline points="15 3 21 3 21 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 <polyline points="9 21 3 21 3 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -458,34 +727,71 @@
               </svg>
               Read
             </button>
-            <button class="copy-btn" data-target="polishRealtimeText" title="Copy polished text" aria-label="Copy polished text">
+            <button class="copy-btn" data-target="polishRealtimeText" title="Copy polished text" aria-label="Copy polished text" onclick="event.stopPropagation()">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
                 <rect x="5" y="5" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8" opacity="0.75"/>
               </svg>
             </button>
+            <svg class="result-toggle open" id="toggle-polish" width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
           </div>
         </div>
-        <div class="result-body" id="polishRealtimeText"></div>
+        <div class="result-body-wrap open" id="wrap-polish">
+          <div class="result-body" id="polishRealtimeText"></div>
+        </div>
       </div>
     </div>
 
     <!-- 摘要单独一行 -->
     <div class="summary-box">
-      <div class="result-header">
+      <div class="result-header" id="header-summary" onclick="toggleResultBox('summary')">
         <span class="result-title"><span class="icon">🧠</span>AI Summary</span>
-        <div class="action-group">
-          <button class="copy-btn" data-target="summaryText" title="Copy full summary" aria-label="Copy full summary">
+        <div class="result-meta">
+          <button class="copy-btn" data-target="summaryText" title="Copy full summary" aria-label="Copy full summary" onclick="event.stopPropagation()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
               <rect x="5" y="5" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8" opacity="0.75"/>
             </svg>
           </button>
-          <button class="export-btn" id="exportMdBtn" disabled>Export MD</button>
+          <button class="export-btn" id="exportMdBtn" disabled onclick="event.stopPropagation()">Export MD</button>
+          <svg class="result-toggle open" id="toggle-summary" width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </div>
       </div>
-      <div class="summary-grid" id="summaryCards"></div>
-      <div class="summary-raw" id="summaryText"></div>
+      <div class="result-body-wrap open" id="wrap-summary">
+        <div class="summary-grid" id="summaryCards"></div>
+        <div class="summary-raw" id="summaryText"></div>
+      </div>
+    </div>
+
+    <!-- Q&A 单独一行 -->
+    <div class="summary-box" style="margin-top: 20px;">
+      <div class="result-header">
+        <span class="result-title"><span class="icon">💬</span>Ask AI</span>
+        <div class="qa-badge" id="qaBadge" style="display:none;"></div>
+      </div>
+      <div id="qaArea" style="padding: 16px 20px 20px;">
+        <div class="qa-input-row">
+          <textarea id="qaInput" class="qa-input" placeholder="Ask a question about the content, e.g. 'What is the core trading logic?'" rows="1" maxlength="500"></textarea>
+          <button class="qa-send-btn" id="qaSendBtn" disabled>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+              <line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Send
+          </button>
+        </div>
+        <div id="qaLoading" style="display:none;" class="qa-loading">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="animation: spin 0.8s linear infinite;">
+            <circle cx="12" cy="12" r="9" stroke="#86868b" stroke-width="2" stroke-dasharray="40 20" stroke-linecap="round"/>
+          </svg>
+          Thinking...
+        </div>
+        <div id="qaResult" style="margin-top: 12px;"></div>
+      </div>
     </div>
   <!-- Fullscreen reader modal -->
   <div class="modal-overlay" id="readerModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -727,7 +1033,6 @@ function connectStream(taskId) {
 }
 
 function syncAnimatedText(element, nextText, state, onUpdate) {
-  const prevTarget = state.target;
   state.target = nextText || '';
 
   if (state.timer) {
@@ -738,8 +1043,11 @@ function syncAnimatedText(element, nextText, state, onUpdate) {
   function tick() {
     const target = state.target || '';
     const current = element.textContent || '';
+    const diff = target.length - current.length;
 
-    if (current === target) {
+    if (diff <= 0) {
+      element.textContent = target;
+      if (onUpdate) onUpdate(target);
       state.timer = null;
       return;
     }
@@ -751,18 +1059,24 @@ function syncAnimatedText(element, nextText, state, onUpdate) {
       return;
     }
 
-    element.textContent = current + target[current.length];
+    if (diff <= 5) {
+      element.textContent = target;
+      if (onUpdate) onUpdate(target);
+      state.timer = null;
+      return;
+    }
+
+    const batch = Math.min(diff, 40);
+    element.textContent = target.substring(0, current.length + batch);
     if (onUpdate) onUpdate(element.textContent);
     element.scrollTop = element.scrollHeight;
-    state.timer = setTimeout(tick, 18);
+    state.timer = setTimeout(tick, 3);
   }
 
   state.timer = setTimeout(tick, 0);
 }
 
 function handleStreamData(data) {
-  // realtimeSection from old template - define as no-op to prevent errors
-  const realtimeSection = { style: {} };
   switch (data.type) {
     case 'transcribe_start':
       setStep('step-transcribe');
@@ -770,11 +1084,10 @@ function handleStreamData(data) {
       break;
 
     case 'chunk':
-      realtimeSection.style.display = 'block';
       syncAnimatedText(realtimeText, data.text || '', typewriterState.raw, (value) => {
-        rawCharCount.textContent = value.length + ' 字';
+        rawCharCount.textContent = value.length + ' chars';
       });
-      setProgress('Transcribing...', Math.min(60, 30 + Math.floor(data.text.length / 20)));
+      setProgress('Transcribing...', Math.min(60, 30 + Math.floor((data.text || '').length / 20)));
       break;
 
     case 'transcribe_done':
@@ -788,16 +1101,16 @@ function handleStreamData(data) {
     case 'polish_char':
       polishedFullText = data.text || '';
       syncAnimatedText(polishRealtimeText, polishedFullText, typewriterState.polish, (value) => {
-        polishCharCount.textContent = value.length + ' 字';
+        polishCharCount.textContent = value.length + ' chars';
       });
-      setProgress('Polishing with AI...', Math.min(90, 65 + Math.floor(data.text.length / 20)));
+      setProgress('Polishing with AI...', Math.min(90, 65 + Math.floor((data.text || '').length / 20)));
       break;
 
     case 'polish_done':
       if (data.polished_text) {
         polishedFullText = data.polished_text;
         syncAnimatedText(polishRealtimeText, polishedFullText, typewriterState.polish, (value) => {
-          polishCharCount.textContent = value.length + ' 字';
+          polishCharCount.textContent = value.length + ' chars';
         });
       }
       break;
@@ -945,6 +1258,168 @@ modalCopyBtn.addEventListener('click', () => {
     }, 1500);
   });
 });
+
+// ========== Accordion (Transcript / Polish) ==========
+function toggleResultBox(name) {
+  const wrap = document.getElementById('wrap-' + name);
+  const toggle = document.getElementById('toggle-' + name);
+  if (!wrap) return;
+
+  const isOpen = wrap.classList.contains('open');
+  if (isOpen) {
+    wrap.classList.remove('open');
+    wrap.classList.add('collapsed');
+    if (toggle) toggle.classList.remove('open');
+  } else {
+    wrap.classList.remove('collapsed');
+    wrap.classList.add('open');
+    if (toggle) toggle.classList.add('open');
+  }
+}
+
+// ========== Q&A (Ask AI) ==========
+const qaInput = document.getElementById('qaInput');
+const qaSendBtn = document.getElementById('qaSendBtn');
+const qaCharCount = document.getElementById('qaCharCount');
+const qaLoading = document.getElementById('qaLoading');
+const qaResult = document.getElementById('qaResult');
+
+qaInput.addEventListener('input', () => {
+  qaSendBtn.disabled = !currentTaskId || !qaInput.value.trim();
+  const len = qaInput.value.length;
+  if (qaCharCount) {
+    qaCharCount.textContent = len ? `${len}/500` : '';
+  }
+  qaInput.style.height = 'auto';
+  qaInput.style.height = Math.min(qaInput.scrollHeight, 100) + 'px';
+});
+
+qaInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!qaSendBtn.disabled) askAI();
+  }
+});
+
+qaSendBtn.addEventListener('click', askAI);
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  let safe = escapeHtml(text);
+  return safe
+    .replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/^(\s*)- \[ \] (.+)$/gm, '<div style="display:flex;align-items:flex-start;gap:8px;margin:4px 0;"><span style="color:#86868b">&#9744;</span><span>$2</span></div>')
+    .replace(/^(\s*)- \[x\] (.+)$/gmi, '<div style="display:flex;align-items:flex-start;gap:8px;margin:4px 0;"><span style="color:#0071e3">&#9745;</span><span>$2</span></div>')
+    .replace(/^(\s*)- (.+)$/gm, '<div style="display:flex;align-items:flex-start;gap:8px;margin:4px 0;"><span style="color:#0071e3;flex-shrink:0">&#8226;</span><span>$2</span></div>')
+    .replace(/^(\s*)(\d+)\.\s+(.+)$/gm, '<div style="display:flex;align-items:flex-start;gap:8px;margin:4px 0;"><span style="color:#0071e3;font-weight:600;flex-shrink:0">$2.</span><span>$3</span></div>')
+    .replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>')
+    .replace(/^---$/gm, '<hr>')
+    .replace(/\n{2,}/g, '\n')
+    .replace(/\n/g, '<br>');
+}
+
+function escapeHtml_prop(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function askAI() {
+  if (window._isAsking) return;
+
+  const question = qaInput.value.trim();
+  if (!question || !currentTaskId) {
+    qaSendBtn.disabled = !currentTaskId || !question;
+    return;
+  }
+
+  window._isAsking = true;
+  qaLoading.style.display = 'flex';
+  qaSendBtn.disabled = true;
+  qaInput.disabled = true;
+  qaInput.value = '';
+  if (qaCharCount) {
+    qaCharCount.textContent = '';
+  }
+  qaInput.style.height = 'auto';
+
+  try {
+    const resp = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: currentTaskId, question }),
+    });
+
+    const data = await resp.json().catch(() => ({}));
+
+    if (!resp.ok || data.error) {
+      throw new Error(data.error || `HTTP ${resp.status}`);
+    }
+
+    const answer = (data.answer || '').trim();
+    if (!answer) {
+      throw new Error('Empty response from AI, please try again.');
+    }
+
+    const itemId = 'qa-item-' + Date.now();
+    const newItem = document.createElement('div');
+    newItem.className = 'qa-item';
+    newItem.id = itemId;
+    newItem.innerHTML = `
+      <div class="qa-item-header" onclick="toggleQaItem('${itemId}')">
+        <div class="qa-item-q-text" id="${itemId}-q">Q&amp;A · ${escapeHtml(question)}</div>
+        <svg class="qa-item-toggle open" id="${itemId}-toggle" width="16" height="16" viewBox="0 0 24 24" fill="none">
+          <polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="qa-item-body open" id="${itemId}-body">
+        <div class="qa-answer-body">
+          <div class="qa-answer">${renderMarkdown(answer)}</div>
+        </div>
+      </div>
+    `;
+    qaResult.prepend(newItem);
+
+    const qText = document.getElementById(`${itemId}-q`);
+    if (qText) qText.classList.add('expanded');
+
+    const count = qaResult.querySelectorAll('.qa-item').length;
+    const qaBadge = document.getElementById('qaBadge');
+    if (qaBadge) {
+      qaBadge.textContent = count;
+      qaBadge.style.display = '';
+    }
+  } catch (err) {
+    console.error('[Ask AI]', err);
+    qaResult.innerHTML = `<div class="qa-answer" style="border-color:rgba(255,59,48,0.2);color:#ff3b30;">Error: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    window._isAsking = false;
+    qaLoading.style.display = 'none';
+    qaInput.disabled = false;
+    qaSendBtn.disabled = !currentTaskId || !qaInput.value.trim();
+  }
+}
+
+function toggleQaItem(itemId) {
+  const body = document.getElementById(itemId + '-body');
+  const toggle = document.getElementById(itemId + '-toggle');
+  const qText = document.getElementById(itemId + '-q');
+  const isOpen = body.classList.contains('open');
+
+  if (isOpen) {
+    body.classList.remove('open');
+    toggle.classList.remove('open');
+    qText.classList.remove('expanded');
+  } else {
+    body.classList.add('open');
+    toggle.classList.add('open');
+    qText.classList.add('expanded');
+  }
+}
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && readerModal.classList.contains('active')) {
