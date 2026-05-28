@@ -171,9 +171,9 @@
   .result-body::-webkit-scrollbar-track { background: transparent; }
   .result-body::-webkit-scrollbar-thumb { background: rgba(110, 110, 115, 0.28); border-radius: 999px; }
   .result-body:empty::before { content: 'Waiting for transcription...'; color: #8e8e93; }
-  /* 摘要卡片区 */
+/* 摘要体验区：AI Briefing / Knowledge Map */
   .summary-box {
-    background: rgba(255, 255, 255, 0.76);
+    background: rgba(255, 255, 255, 0.78);
     border: 1px solid rgba(255, 255, 255, 0.92);
     border-radius: 30px;
     overflow: hidden;
@@ -181,30 +181,342 @@
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
   }
-  .summary-grid { padding: 22px; min-height: 480px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
-  .summary-grid:empty::before { content: '等待摘要...'; color: #8e8e93; font-size: 14px; }
-  .summary-card {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.88) 0%, rgba(246, 248, 252, 0.96) 100%);
-    border: 1px solid rgba(15, 23, 42, 0.06);
-    border-radius: 24px;
-    overflow: hidden;
-    min-height: 240px;
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+  .summary-stage {
+    padding: 22px;
+    background:
+      radial-gradient(circle at 16% 0%, rgba(0, 113, 227, 0.08), transparent 30%),
+      radial-gradient(circle at 88% 12%, rgba(52, 199, 89, 0.08), transparent 28%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.68), rgba(246, 248, 252, 0.84));
   }
-  .summary-card.wide { grid-column: span 2; }
-  .summary-card.full { grid-column: 1 / -1; }
-  .summary-card-header {
+  .summary-stage.raw-mode .summary-workspace { display: none; }
+  .summary-stage.raw-mode .summary-raw-view { display: block; }
+  .summary-workspace {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.95fr) minmax(380px, 1.42fr) minmax(280px, 0.95fr);
+    grid-template-areas:
+      "hero map action"
+      "hero map action"
+      "learn learn learn";
+    gap: 18px;
+    align-items: stretch;
+  }
+  .summary-panel {
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.95);
+    border-radius: 26px;
+    box-shadow: 0 14px 38px rgba(15, 23, 42, 0.08);
+    overflow: hidden;
+    min-width: 0;
+  }
+  .summary-panel.hero-panel { grid-area: hero; }
+  .summary-panel.map-panel { grid-area: map; }
+  .summary-panel.action-panel { grid-area: action; }
+  .summary-panel.learning-panel { grid-area: learn; }
+  .summary-panel-head {
+    padding: 16px 18px 12px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 14px 16px;
-    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 249, 251, 0.88) 100%);
   }
-  .summary-card-title { font-size: 13px; font-weight: 700; color: #0071e3; letter-spacing: -0.01em; }
-  .summary-card-body { padding: 16px; font-size: 14px; line-height: 1.85; color: #1d1d1f; white-space: pre-wrap; word-break: break-word; }
+  .summary-kicker {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #0071e3;
+  }
+  .summary-panel-title {
+    margin-top: 4px;
+    font-size: 16px;
+    font-weight: 760;
+    letter-spacing: -0.02em;
+    color: #111827;
+  }
+  .summary-panel-subtitle {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #6e6e73;
+  }
+  .summary-panel-body { padding: 18px; }
+  .summary-hero-card {
+    border-radius: 24px;
+    padding: 22px;
+    background:
+      linear-gradient(145deg, rgba(0, 113, 227, 0.1), rgba(255, 255, 255, 0.72) 42%, rgba(255,255,255,0.9)),
+      radial-gradient(circle at top right, rgba(0, 113, 227, 0.15), transparent 34%);
+    border: 1px solid rgba(0, 113, 227, 0.14);
+    min-height: 210px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 18px;
+  }
+  .summary-hero-eyebrow {
+    display: inline-flex;
+    width: fit-content;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(0, 113, 227, 0.1);
+    color: #0071e3;
+    font-size: 11px;
+    font-weight: 800;
+  }
+  .summary-hero-title {
+    font-size: clamp(22px, 2.4vw, 34px);
+    line-height: 1.18;
+    letter-spacing: -0.045em;
+    font-weight: 820;
+    color: #0f172a;
+  }
+  .summary-hero-text {
+    font-size: 14px;
+    line-height: 1.78;
+    color: #374151;
+  }
+  .summary-flow {
+    margin-top: 16px;
+    display: grid;
+    gap: 10px;
+  }
+  .summary-flow-step {
+    position: relative;
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 10px;
+    align-items: flex-start;
+    padding: 12px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.68);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .summary-flow-step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 28px;
+    bottom: -11px;
+    width: 2px;
+    height: 12px;
+    background: rgba(0, 113, 227, 0.16);
+  }
+  .summary-flow-index {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 113, 227, 0.1);
+    color: #0071e3;
+    font-size: 12px;
+    font-weight: 800;
+  }
+  .summary-flow-title { font-size: 12px; font-weight: 760; color: #111827; margin-bottom: 4px; }
+  .summary-flow-text { font-size: 12.5px; line-height: 1.6; color: #4b5563; }
+  .knowledge-board {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .knowledge-hub {
+    grid-column: 1 / -1;
+    position: relative;
+    border-radius: 24px;
+    padding: 18px;
+    color: #fff;
+    background:
+      linear-gradient(135deg, #0a84ff 0%, #0071e3 48%, #155bd5 100%);
+    box-shadow: 0 18px 42px rgba(0, 113, 227, 0.24);
+    overflow: hidden;
+  }
+  .knowledge-hub::before {
+    content: '';
+    position: absolute;
+    inset: -40% -10% auto auto;
+    width: 240px;
+    height: 240px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.18);
+  }
+  .knowledge-hub-label { position: relative; font-size: 11px; font-weight: 800; opacity: 0.78; letter-spacing: 0.08em; text-transform: uppercase; }
+  .knowledge-hub-text { position: relative; margin-top: 8px; font-size: 17px; font-weight: 760; line-height: 1.55; letter-spacing: -0.02em; }
+  .knowledge-node {
+    position: relative;
+    border-radius: 22px;
+    padding: 15px;
+    min-height: 150px;
+    background: rgba(255, 255, 255, 0.78);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.055);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .knowledge-node:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(15, 23, 42, 0.1); }
+  .knowledge-node::before {
+    content: '';
+    position: absolute;
+    inset: 14px auto 14px 0;
+    width: 4px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #0a84ff, #34c759);
+  }
+  .knowledge-node-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 800;
+    color: #111827;
+    margin-bottom: 10px;
+  }
+  .knowledge-node-body {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #4b5563;
+  }
+  .summary-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.055);
+    color: #6b7280;
+    font-size: 10.5px;
+    font-weight: 760;
+    white-space: nowrap;
+  }
+  .decision-stack { display: grid; gap: 14px; }
+  .decision-card {
+    border-radius: 22px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.76);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+  }
+  .decision-card.action {
+    background: linear-gradient(180deg, rgba(236, 248, 255, 0.95), rgba(255, 255, 255, 0.82));
+    border-color: rgba(0, 113, 227, 0.13);
+  }
+  .decision-card.risk {
+    background: linear-gradient(180deg, rgba(255, 247, 237, 0.98), rgba(255, 255, 255, 0.86));
+    border-color: rgba(245, 158, 11, 0.19);
+  }
+  .decision-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 820;
+    color: #111827;
+    margin-bottom: 10px;
+  }
+  .decision-card.risk .decision-title { color: #b45309; }
+  .summary-list { display: grid; gap: 8px; }
+  .summary-list-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 9px;
+    align-items: flex-start;
+    font-size: 13px;
+    line-height: 1.62;
+    color: #374151;
+  }
+  .summary-list-icon {
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 113, 227, 0.11);
+    color: #0071e3;
+    font-size: 11px;
+    font-weight: 900;
+    margin-top: 1px;
+  }
+  .decision-card.risk .summary-list-icon {
+    background: rgba(245, 158, 11, 0.14);
+    color: #b45309;
+  }
+  .learning-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .learning-card {
+    border-radius: 22px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.74);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    min-height: 130px;
+  }
+  .learning-title { font-size: 13px; font-weight: 820; color: #111827; margin-bottom: 8px; }
+  .learning-body { font-size: 13px; line-height: 1.7; color: #4b5563; }
+  .summary-copy-mini {
+    opacity: 0;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 999px;
+    color: #0071e3;
+    background: rgba(0, 113, 227, 0.08);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+  }
+  .summary-panel:hover .summary-copy-mini,
+  .knowledge-node:hover .summary-copy-mini,
+  .decision-card:hover .summary-copy-mini,
+  .learning-card:hover .summary-copy-mini,
+  .summary-copy-mini.copied { opacity: 1; }
+  .summary-copy-mini:hover { transform: translateY(-1px); background: rgba(0, 113, 227, 0.14); }
+  .summary-empty-state {
+    display: grid;
+    place-items: center;
+    min-height: 260px;
+    color: #8e8e93;
+    font-size: 14px;
+    border-radius: 24px;
+    background: rgba(255,255,255,0.58);
+    border: 1px dashed rgba(15,23,42,0.1);
+  }
+  .summary-raw-view {
+    display: none;
+    min-height: 280px;
+    padding: 22px 24px;
+    border-radius: 24px;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+    font-size: 14px;
+    line-height: 1.88;
+    color: #1d1d1f;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   .summary-raw { display: none; }
+  .toggle-view-btn {
+    background: rgba(0, 113, 227, 0.07);
+    color: #0071e3;
+    border: 1px solid rgba(0, 113, 227, 0.14);
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .toggle-view-btn:hover { background: rgba(0, 113, 227, 0.12); transform: translateY(-1px); }
+  .toggle-view-btn.active { background: #0071e3; color: #fff; border-color: #0071e3; }
+  .summary-master-copy { opacity: 1; transform: none; }
   .section-label { font-size: 12px; color: #0071e3; font-weight: 700; margin-bottom: 8px; }
   .copy-btn {
     background: rgba(0, 113, 227, 0.08);
@@ -658,6 +970,30 @@
     .summary-grid { grid-template-columns: 1fr; }
     .summary-card.wide, .summary-card.full { grid-column: auto; }
   }
+
+  @media (max-width: 1320px) {
+    .summary-workspace {
+      grid-template-columns: 1fr 1fr;
+      grid-template-areas:
+        "hero hero"
+        "map action"
+        "learn learn";
+    }
+  }
+  @media (max-width: 980px) {
+    .summary-stage { padding: 16px; }
+    .summary-workspace {
+      grid-template-columns: 1fr;
+      grid-template-areas:
+        "hero"
+        "map"
+        "action"
+        "learn";
+    }
+    .knowledge-board { grid-template-columns: 1fr; }
+    .learning-grid { grid-template-columns: 1fr; }
+  }
+
 </style>
 </head>
 <body>
@@ -744,12 +1080,13 @@
       </div>
     </div>
 
-    <!-- 摘要单独一行 -->
+<!-- 摘要：AI Briefing / Knowledge Map -->
     <div class="summary-box">
       <div class="result-header" id="header-summary" onclick="toggleResultBox('summary')">
         <span class="result-title"><span class="icon">🧠</span>AI Summary</span>
         <div class="result-meta">
-          <button class="copy-btn" data-target="summaryText" title="Copy full summary" aria-label="Copy full summary" onclick="event.stopPropagation()">
+          <button class="toggle-view-btn" id="toggleViewBtn" onclick="event.stopPropagation(); toggleSummaryView()">Raw</button>
+          <button class="copy-btn summary-master-copy" data-target="summaryText" title="Copy full summary" aria-label="Copy full summary" onclick="event.stopPropagation()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <rect x="9" y="9" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8"/>
               <rect x="5" y="5" width="10" height="10" rx="2" stroke="currentColor" stroke-width="1.8" opacity="0.75"/>
@@ -762,12 +1099,15 @@
         </div>
       </div>
       <div class="result-body-wrap open" id="wrap-summary">
-        <div class="summary-grid" id="summaryCards"></div>
-        <div class="summary-raw" id="summaryText"></div>
+        <div class="summary-stage" id="summaryStage">
+          <div class="summary-workspace" id="summaryCards"></div>
+          <div class="summary-raw-view" id="summaryRawView"></div>
+          <div class="summary-raw" id="summaryText"></div>
+        </div>
       </div>
     </div>
 
-    <!-- Q&A 单独一行 -->
+        <!-- Q&A 单独一行 -->
     <div class="summary-box" style="margin-top: 20px;">
       <div class="result-header">
         <span class="result-title"><span class="icon">💬</span>Ask AI</span>
@@ -922,21 +1262,18 @@ function parseSummarySections(text) {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    const maybeTitle = trimmed.endsWith('：') ? trimmed.slice(0, -1) : '';
+    const title = trimmed.replace(/^#+\s*/, '').replace(/[：:]$/, '').trim();
 
-    if (SUMMARY_TITLES.includes(maybeTitle)) {
+    if (SUMMARY_TITLES.includes(title)) {
       if (current) sections.push(current);
-      current = { title: maybeTitle, lines: [] };
+      current = { title, lines: [] };
       continue;
     }
 
     if (!current) {
-      if (trimmed) {
-        current = { title: '摘要内容', lines: [line] };
-      }
+      if (trimmed) current = { title: '摘要内容', lines: [line] };
       continue;
     }
-
     current.lines.push(line);
   }
 
@@ -944,35 +1281,258 @@ function parseSummarySections(text) {
   return sections;
 }
 
-function getSummaryCardClass(title) {
-  if (['核心主题', '思考方式总结'].includes(title)) return 'summary-card';
-  if (['学习笔记', '方法论框架', '可执行清单'].includes(title)) return 'summary-card wide';
-  return 'summary-card';
+const SUMMARY_ORDER = [
+  '核心主题', '核心观点', '关键知识点', '方法论框架', '可复用原则', '适用场景',
+  '可执行清单', '风险提醒', '失效场景', '新手误区', '学习笔记', '思考方式总结', '摘要内容'
+];
+
+function getSectionMap(sections) {
+  const map = new Map();
+  sections.forEach((section) => {
+    const existing = map.get(section.title);
+    const content = section.lines.join('\n').trim();
+    if (!existing) map.set(section.title, content);
+    else map.set(section.title, [existing, content].filter(Boolean).join('\n'));
+  });
+  return map;
+}
+
+function cleanSummaryLine(line) {
+  return String(line || '')
+    .trim()
+    .replace(/^[-•*]\s*/, '')
+    .replace(/^\d+[\.、)]\s*/, '')
+    .replace(/^\[\s?\]\s*/, '')
+    .replace(/^\[x\]\s*/i, '')
+    .trim();
+}
+
+function getLines(content, max = 0) {
+  const lines = String(content || '')
+    .split('\n')
+    .map(cleanSummaryLine)
+    .filter(Boolean);
+  return max ? lines.slice(0, max) : lines;
+}
+
+function getContent(map, title) {
+  return map.get(title) || '';
+}
+
+function firstMeaningfulLine(content, fallback = '等待 AI 生成摘要') {
+  return getLines(content, 1)[0] || fallback;
+}
+
+function renderCopyButton(text, label = 'Copy') {
+  return `<button class="summary-copy-mini copy-btn" data-copy-text="${escapeHtml(text)}" title="${label}" aria-label="${label}">${getCopyIconMarkup(false)}</button>`;
+}
+
+function renderPlainBlock(content, max = 0) {
+  const lines = getLines(content, max);
+  if (!lines.length) return '<div class="summary-panel-subtitle">暂无内容</div>';
+  return lines.map(line => `<div>${escapeHtml(line)}</div>`).join('');
+}
+
+function renderList(content, icon = '✓', max = 0) {
+  const lines = getLines(content, max);
+  if (!lines.length) return '<div class="summary-panel-subtitle">暂无内容</div>';
+  return `<div class="summary-list">${lines.map(line => `
+    <div class="summary-list-item">
+      <span class="summary-list-icon">${escapeHtml(icon)}</span>
+      <span>${escapeHtml(line)}</span>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderFlowStep(index, title, content) {
+  if (!content) return '';
+  return `
+    <div class="summary-flow-step">
+      <div class="summary-flow-index">${index}</div>
+      <div>
+        <div class="summary-flow-title">${escapeHtml(title)}</div>
+        <div class="summary-flow-text">${renderPlainBlock(content, 2)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderKnowledgeNode(title, content, tag) {
+  if (!content) return '';
+  return `
+    <div class="knowledge-node">
+      <div class="knowledge-node-title">
+        <span>${escapeHtml(title)}</span>
+        <span class="summary-pill">${escapeHtml(tag)}</span>
+      </div>
+      <div class="knowledge-node-body">${renderPlainBlock(content, 4)}</div>
+      <div style="margin-top:12px;display:flex;justify-content:flex-end;">${renderCopyButton(content, 'Copy section')}</div>
+    </div>
+  `;
+}
+
+function renderDecisionCard(title, content, type, icon) {
+  if (!content) return '';
+  return `
+    <div class="decision-card ${type}">
+      <div class="decision-title">
+        <span>${escapeHtml(title)}</span>
+        ${renderCopyButton(content, 'Copy section')}
+      </div>
+      ${renderList(content, icon)}
+    </div>
+  `;
+}
+
+function renderLearningCard(title, content) {
+  if (!content) return '';
+  return `
+    <div class="learning-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div class="learning-title">${escapeHtml(title)}</div>
+        ${renderCopyButton(content, 'Copy section')}
+      </div>
+      <div class="learning-body">${renderPlainBlock(content, 5)}</div>
+    </div>
+  `;
 }
 
 function renderSummaryCards(text) {
   const sections = parseSummarySections(text);
+  const rawView = document.getElementById('summaryRawView');
+  const raw = summaryFullText || text || '';
+  if (rawView) rawView.textContent = raw;
 
   if (!sections.length) {
-    summaryCards.innerHTML = '';
+    summaryCards.innerHTML = '<div class="summary-empty-state">Waiting for summary...</div>';
     return;
   }
 
-  summaryCards.innerHTML = sections.map((section, index) => {
-    const content = section.lines.join('\n').trim() || '生成中...';
-    const escapedContent = escapeHtml(content).replace(/\n/g, '<br>');
-    const cardClass = getSummaryCardClass(section.title, index);
+  const map = getSectionMap(sections);
+  const coreTheme = getContent(map, '核心主题') || getContent(map, '摘要内容');
+  const coreView = getContent(map, '核心观点');
+  const knowledge = getContent(map, '关键知识点');
+  const method = getContent(map, '方法论框架');
+  const principles = getContent(map, '可复用原则');
+  const scenarios = getContent(map, '适用场景');
+  const actions = getContent(map, '可执行清单');
+  const risks = [getContent(map, '风险提醒'), getContent(map, '失效场景')].filter(Boolean).join('\n');
+  const mistakes = getContent(map, '新手误区');
+  const notes = getContent(map, '学习笔记');
+  const thinking = getContent(map, '思考方式总结');
 
-    return `
-      <div class="${cardClass}">
-        <div class="summary-card-header">
-          <div class="summary-card-title">${escapeHtml(section.title)}</div>
-          <button class="copy-btn" data-copy-text="${escapeHtml(content)}" title="Copy section" aria-label="Copy section">${getCopyIconMarkup(false)}</button>
+  const knownTitles = new Set(SUMMARY_ORDER);
+  const extras = sections
+    .filter(s => !knownTitles.has(s.title))
+    .map(s => renderLearningCard(s.title, s.lines.join('\n').trim()))
+    .join('');
+
+  const heroPanel = `
+    <section class="summary-panel hero-panel">
+      <div class="summary-panel-head">
+        <div>
+          <div class="summary-kicker">Conclusion Spine</div>
+          <div class="summary-panel-title">结论主线</div>
+          <div class="summary-panel-subtitle">先看主判断，再看它如何展开。</div>
         </div>
-        <div class="summary-card-body">${escapedContent}</div>
+        ${renderCopyButton(coreTheme, 'Copy thesis')}
       </div>
-    `;
-  }).join('');
+      <div class="summary-panel-body">
+        <div class="summary-hero-card">
+          <div>
+            <div class="summary-hero-eyebrow">AI Thesis</div>
+            <div class="summary-hero-title">${escapeHtml(firstMeaningfulLine(coreTheme, '正在提炼核心主题'))}</div>
+          </div>
+          <div class="summary-hero-text">${renderPlainBlock(coreTheme, 4)}</div>
+        </div>
+        <div class="summary-flow">
+          ${renderFlowStep('01', '核心观点', coreView)}
+          ${renderFlowStep('02', '方法论框架', method)}
+          ${renderFlowStep('03', '可复用原则', principles)}
+        </div>
+      </div>
+    </section>
+  `;
+
+  const hubText = firstMeaningfulLine(coreView || coreTheme || knowledge, '这里会显示这段内容的中心判断');
+  const mapPanel = `
+    <section class="summary-panel map-panel">
+      <div class="summary-panel-head">
+        <div>
+          <div class="summary-kicker">Knowledge Map</div>
+          <div class="summary-panel-title">知识地图</div>
+          <div class="summary-panel-subtitle">把内容拆成概念、方法、原则和适用边界。</div>
+        </div>
+      </div>
+      <div class="summary-panel-body">
+        <div class="knowledge-board">
+          <div class="knowledge-hub">
+            <div class="knowledge-hub-label">Central Idea</div>
+            <div class="knowledge-hub-text">${escapeHtml(hubText)}</div>
+          </div>
+          ${renderKnowledgeNode('关键知识点', knowledge, 'Know')}
+          ${renderKnowledgeNode('方法论框架', method, 'Method')}
+          ${renderKnowledgeNode('可复用原则', principles, 'Principle')}
+          ${renderKnowledgeNode('适用场景', scenarios, 'Context')}
+        </div>
+      </div>
+    </section>
+  `;
+
+  const actionPanel = `
+    <section class="summary-panel action-panel">
+      <div class="summary-panel-head">
+        <div>
+          <div class="summary-kicker">Decision Board</div>
+          <div class="summary-panel-title">行动与风险</div>
+          <div class="summary-panel-subtitle">把“知道了”转换成“下一步怎么做”。</div>
+        </div>
+      </div>
+      <div class="summary-panel-body">
+        <div class="decision-stack">
+          ${renderDecisionCard('可执行清单', actions || coreView, 'action', '✓')}
+          ${renderDecisionCard('风险 / 失效场景', risks, 'risk', '!')}
+          ${renderDecisionCard('新手误区', mistakes, 'risk', '×')}
+        </div>
+      </div>
+    </section>
+  `;
+
+  const learningItems = [
+    renderLearningCard('学习笔记', notes),
+    renderLearningCard('思考方式总结', thinking),
+    extras
+  ].filter(Boolean).join('');
+
+  const learningPanel = learningItems ? `
+    <section class="summary-panel learning-panel">
+      <div class="summary-panel-head">
+        <div>
+          <div class="summary-kicker">Reflection Layer</div>
+          <div class="summary-panel-title">学习沉淀</div>
+          <div class="summary-panel-subtitle">适合复盘、二次整理和导出到笔记。</div>
+        </div>
+      </div>
+      <div class="summary-panel-body">
+        <div class="learning-grid">${learningItems}</div>
+      </div>
+    </section>
+  ` : '';
+
+  summaryCards.innerHTML = heroPanel + mapPanel + actionPanel + learningPanel;
+}
+
+let isRawView = false;
+function toggleSummaryView() {
+  isRawView = !isRawView;
+  const stage = document.getElementById('summaryStage');
+  const btn = document.getElementById('toggleViewBtn');
+  if (!stage) return;
+  stage.classList.toggle('raw-mode', isRawView);
+  if (btn) {
+    btn.textContent = isRawView ? 'Cards' : 'Raw';
+    btn.classList.toggle('active', isRawView);
+  }
 }
 
 async function uploadFile(file) {
@@ -1429,24 +1989,26 @@ document.addEventListener('keydown', (e) => {
 
 // ========== 复制按钮功能（动态创建）==========
 document.addEventListener('click', (e) => {
-  if (e.target.classList.contains('copy-btn')) {
-    const copyText = e.target.dataset.copyText;
-    const targetId = e.target.dataset.target;
-    const el = targetId ? document.getElementById(targetId) : null;
-    const text = copyText || (el ? el.textContent : '');
+  const btn = e.target.closest('.copy-btn');
+  if (!btn) return;
 
-    if (text) {
-      navigator.clipboard.writeText(text).then(() => {
-        e.target.innerHTML = getCopyIconMarkup(true);
-        e.target.classList.add('copied');
-        setTimeout(() => {
-          e.target.innerHTML = getCopyIconMarkup(false);
-          e.target.classList.remove('copied');
-        }, 1500);
-      });
-    }
+  const copyText = btn.dataset.copyText;
+  const targetId = btn.dataset.target;
+  const el = targetId ? document.getElementById(targetId) : null;
+  const text = copyText || (el ? el.textContent : '');
+
+  if (text) {
+    navigator.clipboard.writeText(text).then(() => {
+      btn.innerHTML = getCopyIconMarkup(true);
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.innerHTML = getCopyIconMarkup(false);
+        btn.classList.remove('copied');
+      }, 1500);
+    });
   }
 });
 </script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v833ccba57c9e4d2798f2e76cebdd09a11778172276447" integrity="sha512-57MDmcccJXYtNnH+ZiBwzC4jb2rvgVCEokYN+L/nLlmO8rfYT/gIpW2A569iJ/3b+0UEasghjuZH/ma3wIs/EQ==" data-cf-beacon='{"version":"2024.11.0","token":"7939e04a4baf43c8b86a560f74aac60e","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
 </body>
 </html>
