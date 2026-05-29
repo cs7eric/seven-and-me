@@ -39,15 +39,6 @@ export default function HomePage() {
           <Sparkles className="size-3.5" />
           Application Hub
         </div>
-        <div className="space-y-2">
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-            Choose a workspace
-          </h1>
-          <p className="max-w-3xl text-sm leading-7 text-muted-foreground">
-            这里作为应用总入口，承接多个独立工作区。每个 application 都保持统一的
-            sidebar 风格，但在内容语义上对应各自的业务场景。
-          </p>
-        </div>
       </div>
 
       <div className="grid auto-rows-min gap-4 md:grid-cols-3">
@@ -80,7 +71,7 @@ export default function HomePage() {
         })}
       </div>
 
-      <div className="flex-1 bg-muted/35 p-6">
+      <div className="flex-1 bg-muted/35 rounded-2xl border border-border/25 p-6">
         <div className="mx-auto flex h-full max-w-5xl flex-col justify-between gap-8">
           <div className="space-y-4">
             <div className="inline-flex rounded-full bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground">

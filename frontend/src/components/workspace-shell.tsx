@@ -32,7 +32,7 @@ export function WorkspaceShell({
     <SidebarProvider>
       <AppSidebar className="border-sidebar-border/30" variant="inset" />
       <SidebarInset className="md:m-0 md:rounded-none md:border-0 md:border-l md:border-border/30 md:shadow-none">
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border/20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border/75 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="flex items-center gap-3 px-4">
             <SidebarTrigger />
             <Separator orientation="vertical" className="mr-1 h-4 bg-border/40" />
