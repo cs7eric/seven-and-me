@@ -1,5 +1,4 @@
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Link } from "react-router-dom";
 import type { Phase, SSEEvent } from "../../lib/types";
 import { uploadFile, createSSEConnection, askQuestion, exportMarkdown } from "../../lib/api";
 import { STEPS } from "./constants";
@@ -10,6 +9,7 @@ import { StepBar } from "./components/StepBar";
 import { AskSection } from "./components/AskSection";
 import { FloatingAskBar } from "./components/FloatingAskBar";
 import { ReaderModal } from "./components/ReaderModal";
+import { WorkspaceShell } from "@/components/workspace-shell";
 
 interface QaItem {
   id: string;
@@ -277,37 +277,12 @@ export default function Mp4ToWordPage() {
   const showError = phase === "error";
 
   return (
-    <div className="container">
-      <style>{QA_STYLE_FIX}</style>
-      <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: "12px" }}>
-        <Link
-          to="/"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "8px",
-            borderRadius: "999px",
-            padding: "10px 14px",
-            background: "rgba(255,255,255,0.72)",
-            border: "1px solid rgba(15,23,42,0.08)",
-            color: "#111827",
-            textDecoration: "none",
-            fontSize: "13px",
-            fontWeight: 600,
-            boxShadow: "0 8px 24px rgba(15,23,42,0.06)",
-          }}
-        >
-          <span>←</span>
-          <span>Back Home</span>
-        </Link>
-      </div>
-      <h1>MP4 to Text</h1>
-      <p className="subtitle">
-        Upload video, transcribe automatically, polish with AI, and generate a clean
-        summary for trading and investing content.
-      </p>
+    <WorkspaceShell sectionLabel="MP4 to Word" pageTitle="Workspace">
+      <div className="container">
+        <style>{QA_STYLE_FIX}</style>
+        
 
-      <StepBar steps={STEPS} currentStep={currentStep} />
+        <StepBar steps={STEPS} currentStep={currentStep} />
 
       {phase === "idle" && (
         <div
@@ -532,5 +507,6 @@ export default function Mp4ToWordPage() {
 
       <ReaderModal show={showReader} title={readerTitle} text={readerText} onClose={() => setShowReader(false)} />
     </div>
+  </WorkspaceShell>
   );
 }
