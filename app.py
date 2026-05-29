@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 from urllib.parse import quote
 from flask import Flask, render_template, request, jsonify, Response, send_from_directory
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from dotenv import load_dotenv
@@ -16,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 load_dotenv()
 
 app = Flask(__name__, static_folder='static')
+CORS(app)
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 * 1024
 UPLOAD_FOLDER = Path(__file__).parent / 'uploads'
 OUTPUT_FOLDER = Path(__file__).parent / 'outputs'
