@@ -11,6 +11,11 @@ import { AskSection } from "./components/AskSection";
 import { FloatingAskBar } from "./components/FloatingAskBar";
 import { ReaderModal } from "./components/ReaderModal";
 import { WorkspaceShell } from "@/components/workspace-shell";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
+import { BookOpen, Code2, Copy, Download, ExternalLink } from "lucide-react";
 
 interface QaItem {
   id: string;
@@ -61,6 +66,17 @@ function formatMediaDuration(value?: number) {
   return [m, s].map((part) => String(part).padStart(2, "0")).join(":");
 }
 
+function compactUrl(value: string) {
+  if (!value) return "--";
+  try {
+    const url = new URL(value);
+    const tail = url.pathname.split("/").filter(Boolean).pop() || "";
+    return `${url.hostname}${tail ? ` / ${tail.slice(0, 36)}` : ""}`;
+  } catch {
+    return value.length > 56 ? `${value.slice(0, 56)}...` : value;
+  }
+}
+
 function ProgressCard({
   title,
   description,
@@ -79,40 +95,53 @@ function ProgressCard({
   speed?: number;
 }) {
   const percent = Math.max(0, Math.min(100, Math.round(progress.progress || 0)));
+  const status = percent >= 100 ? "Done" : progress.phase || "Running";
 
   return (
-    <div className="result-box" style={{ minWidth: 0 }}>
-      <div className="result-header">
-        <span className="result-title">{title}</span>
-        <div className="result-meta">
-          <span className="char-count">{percent}%</span>
+    <Card className="overflow-hidden border-white/70 bg-white/75 shadow-[0_24px_70px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+      <CardHeader className="gap-3 pb-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0 space-y-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <span className="inline-flex size-8 items-center justify-center rounded-full bg-slate-950 text-xs text-white">
+                {title.slice(0, 1)}
+              </span>
+              {title}
+            </CardTitle>
+            <CardDescription className="leading-6">{description}</CardDescription>
+          </div>
+          <Badge variant={percent >= 100 ? "default" : "secondary"}>{status}</Badge>
         </div>
-      </div>
-      <div className="result-body" style={{ minHeight: 0 }}>
-        <p style={{ marginBottom: 14 }}>{description}</p>
-        <div className="progress-bar" style={{ marginBottom: 14 }}>
-          <div className="progress-fill" style={{ width: `${percent}%` }} />
-        </div>
-        <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-          <div>
-            <div className="char-count">Transferred</div>
-            <div>{formatBytes(transferred)}</div>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="space-y-2">
+          <div className="flex items-end justify-between">
+            <span className="text-3xl font-semibold tracking-tight text-slate-950">{percent}%</span>
+            <span className="text-xs text-muted-foreground">{formatBytes(transferred)} / {formatBytes(total)}</span>
           </div>
-          <div>
-            <div className="char-count">Total</div>
-            <div>{formatBytes(total)}</div>
-          </div>
-          <div>
-            <div className="char-count">ETA</div>
-            <div>{formatDurationSeconds(eta)}</div>
-          </div>
-          <div>
-            <div className="char-count">Speed</div>
-            <div>{speed ? `${formatBytes(speed)}/s` : "--"}</div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-slate-200/70">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500 transition-all duration-300"
+              style={{ width: `${percent}%` }}
+            />
           </div>
         </div>
-      </div>
-    </div>
+        <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50/80 p-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Speed</div>
+            <div className="mt-1 text-sm font-medium text-slate-900">{speed ? `${formatBytes(speed)}/s` : "--"}</div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">ETA</div>
+            <div className="mt-1 text-sm font-medium text-slate-900">{formatDurationSeconds(eta)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Total</div>
+            <div className="mt-1 text-sm font-medium text-slate-900">{formatBytes(total)}</div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -120,6 +149,8 @@ export default function Mp4ToWordPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const esRef = useRef<EventSource | null>(null);
   const remoteStartKeyRef = useRef("");
+  const transcriptTargetRef = useRef("");
+  const transcriptFrameRef = useRef<number | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTaskId = searchParams.get("task") || "";
 
@@ -141,6 +172,7 @@ export default function Mp4ToWordPage() {
 
   const [phase, setPhase] = useState<Phase>(initialTaskId || remoteDraft ? "converting" : "idle");
   const [transcript, setTranscript] = useState("");
+  const [displayedTranscript, setDisplayedTranscript] = useState("");
   const [polished, setPolished] = useState("");
   const [summary, setSummary] = useState("");
   const [taskId, setTaskId] = useState(initialTaskId);
@@ -174,6 +206,12 @@ export default function Mp4ToWordPage() {
   const resetProcessingState = useCallback((nextPhase: Phase) => {
     setPhase(nextPhase);
     setTranscript("");
+    setDisplayedTranscript("");
+    transcriptTargetRef.current = "";
+    if (transcriptFrameRef.current) {
+      cancelAnimationFrame(transcriptFrameRef.current);
+      transcriptFrameRef.current = null;
+    }
     setPolished("");
     setSummary("");
     setError("");
@@ -185,9 +223,40 @@ export default function Mp4ToWordPage() {
     setIntakeProgress({ progress: 0, phase: "pending" });
   }, []);
 
+  const animateTranscriptTo = useCallback((nextText: string) => {
+    setTranscript(nextText);
+    transcriptTargetRef.current = nextText;
+
+    if (transcriptFrameRef.current) return;
+
+    const tick = () => {
+      setDisplayedTranscript((current) => {
+        const target = transcriptTargetRef.current;
+        if (current === target) {
+          transcriptFrameRef.current = null;
+          return current;
+        }
+
+        if (!target.startsWith(current)) {
+          return target;
+        }
+
+        const remaining = target.length - current.length;
+        const step = Math.max(1, Math.min(18, Math.ceil(remaining / 8)));
+        return target.slice(0, current.length + step);
+      });
+
+      if (transcriptFrameRef.current !== null) {
+        transcriptFrameRef.current = requestAnimationFrame(tick);
+      }
+    };
+
+    transcriptFrameRef.current = requestAnimationFrame(tick);
+  }, []);
+
   const applyTaskSnapshot = useCallback((snapshot: Awaited<ReturnType<typeof fetchTaskSnapshot>>) => {
     const status = snapshot.status as Phase;
-    setTranscript(snapshot.transcript || "");
+    animateTranscriptTo(snapshot.transcript || "");
     setPolished(snapshot.polished || "");
     setSummary(snapshot.summary || "");
     setRemoteFileName(snapshot.file_name || "");
@@ -210,7 +279,7 @@ export default function Mp4ToWordPage() {
     if (["transcribing", "polishing", "summarizing", "done", "error"].includes(String(snapshot.status))) {
       setPhase(status);
     }
-  }, []);
+  }, [animateTranscriptTo]);
 
   const refreshTaskSnapshot = useCallback(async (id: string) => {
     try {
@@ -338,7 +407,7 @@ export default function Mp4ToWordPage() {
             setPhase("transcribing");
             break;
           case "chunk":
-            setTranscript(event.text || "");
+            animateTranscriptTo(event.text || "");
             setPhase("transcribing");
             break;
           case "transcribe_done":
@@ -388,7 +457,7 @@ export default function Mp4ToWordPage() {
     });
 
     esRef.current = es;
-  }, [remoteMeta, refreshTaskSnapshot, setSearchParams]);
+  }, [animateTranscriptTo, remoteMeta, refreshTaskSnapshot, setSearchParams]);
 
   const startRemoteWorkflow = useCallback(async () => {
     if (!remoteDraft) return;
@@ -598,10 +667,13 @@ export default function Mp4ToWordPage() {
       if (esRef.current) {
         esRef.current.close();
       }
+      if (transcriptFrameRef.current) {
+        cancelAnimationFrame(transcriptFrameRef.current);
+      }
     };
   }, []);
 
-  const transcriptHtml = `<pre>${transcript}</pre>`;
+  const transcriptHtml = `<pre>${displayedTranscript}</pre>`;
   const polishedHtml = `<pre>${polished}</pre>`;
   const summaryHtml = buildSummaryCards(summary);
 
@@ -627,66 +699,88 @@ export default function Mp4ToWordPage() {
         {error && <div className="error">{error}</div>}
 
         {remoteDraft && (
-          <div className="result-box" style={{ marginBottom: 20 }}>
-            <div className="result-header">
-              <span className="result-title">Remote Parse Intake</span>
-              <div className="result-meta">
-                <span className="char-count">{taskId || "creating task..."}</span>
-              </div>
-            </div>
-            <div className="result-body" style={{ minHeight: 0 }}>
-              <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                <div>
-                  <div className="char-count">Title</div>
-                  <div>{remoteDraft.title}</div>
-                </div>
-                <div>
-                  <div className="char-count">Platform</div>
-                  <div>{remoteDraft.platform}</div>
-                </div>
-                <div>
-                  <div className="char-count">Type</div>
-                  <div>{remoteDraft.noteType}</div>
-                </div>
-                <div>
-                  <div className="char-count">Duration</div>
-                  <div>{formatMediaDuration(remoteDraft.duration)}</div>
-                </div>
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <div className="char-count">Source</div>
-                  <div style={{ wordBreak: "break-all" }}>{remoteDraft.sourceUrl}</div>
-                </div>
-                {remoteFileName && (
-                  <div>
-                    <div className="char-count">Resolved File</div>
-                    <div>{remoteFileName}</div>
+          <Card className="mb-5 overflow-hidden border-white/70 bg-gradient-to-br from-white via-slate-50 to-sky-50/80 shadow-[0_24px_80px_rgba(15,23,42,0.10)]">
+            <CardHeader className="pb-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">Remote Parse Intake</Badge>
+                    <Badge variant="outline">{remoteDraft.platform}</Badge>
+                    <Badge variant="outline">{remoteDraft.noteType || "video"}</Badge>
                   </div>
-                )}
+                  <CardTitle className="max-w-3xl truncate text-2xl tracking-tight">{remoteDraft.title}</CardTitle>
+                  <CardDescription>资源已接管，页面会自动完成下载、上传与 MP4 to Word 处理。</CardDescription>
+                </div>
+                <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3 text-right shadow-sm">
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Task</div>
+                  <div className="mt-1 max-w-[180px] truncate font-mono text-xs text-slate-700">{taskId || "creating..."}</div>
+                </div>
               </div>
-            </div>
-          </div>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl bg-white/70 p-4 shadow-sm">
+                  <div className="text-xs text-muted-foreground">Duration</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-950">{formatMediaDuration(remoteDraft.duration)}</div>
+                </div>
+                <div className="rounded-2xl bg-white/70 p-4 shadow-sm">
+                  <div className="text-xs text-muted-foreground">File</div>
+                  <div className="mt-1 truncate text-sm font-medium text-slate-950">{remoteFileName || "Resolving..."}</div>
+                </div>
+                <div className="rounded-2xl bg-white/70 p-4 shadow-sm">
+                  <div className="text-xs text-muted-foreground">Mode</div>
+                  <div className="mt-1 text-sm font-medium text-slate-950">Browser first, server fallback</div>
+                </div>
+              </div>
+              <Separator />
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-white">
+                <div className="min-w-0">
+                  <div className="text-xs text-white/55">Source</div>
+                  <div className="max-w-[min(760px,70vw)] truncate text-sm font-medium" title={remoteDraft.sourceUrl}>
+                    {compactUrl(remoteDraft.sourceUrl)}
+                  </div>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button size="icon-sm" variant="secondary" title="Copy source" aria-label="Copy source" onClick={() => handleCopyText(remoteDraft.sourceUrl)}>
+                    <Copy className="size-4" />
+                  </Button>
+                  <Button size="icon-sm" variant="secondary" title="Open source" aria-label="Open source" onClick={() => window.open(remoteDraft.sourceUrl, "_blank", "noopener,noreferrer")}>
+                    <ExternalLink className="size-4" />
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
-        <div
-          className="upload-box"
+        <Card
+          className="mb-5 cursor-pointer overflow-hidden border-dashed border-slate-300/80 bg-white/70 shadow-[0_20px_60px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:border-sky-300 hover:bg-sky-50/40 hover:shadow-[0_24px_80px_rgba(14,165,233,0.12)]"
           onClick={() => fileInputRef.current?.click()}
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
         >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/*,audio/*"
-            style={{ display: "none" }}
-            onChange={handleFileChange}
-          />
-          <div className="upload-icon">🎧</div>
-          <div className="upload-text">Drop your file here, or click to browse</div>
-          <div className="upload-hint">Supports MP4, MP3, WAV, M4A</div>
-        </div>
+          <CardContent className="flex flex-col items-center justify-center px-6 py-10 text-center">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*,audio/*"
+              style={{ display: "none" }}
+              onChange={handleFileChange}
+            />
+            <div className="mb-4 inline-flex size-14 items-center justify-center rounded-2xl bg-slate-950 text-2xl text-white shadow-lg shadow-slate-950/15">🎧</div>
+            <div className="text-lg font-semibold tracking-tight text-slate-950">Drop your file here, or click to browse</div>
+            <div className="mt-2 text-sm text-muted-foreground">Supports MP4, MP3, WAV, M4A. Local upload and remote intake are independent flows.</div>
+            <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <Badge variant="secondary">Local Upload</Badge>
+              <Badge variant="outline">Audio Extract</Badge>
+              <Badge variant="outline">AI Polish</Badge>
+              <Badge variant="outline">Summary</Badge>
+            </div>
+          </CardContent>
+        </Card>
 
         {showProcessingPanel && (
-          <div style={{ display: "grid", gap: 20, gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", marginBottom: 20 }}>
+          <div className="mb-5 grid gap-5 lg:grid-cols-2">
             {remoteDraft ? (
               <ProgressCard
                 title="Download"
@@ -733,16 +827,20 @@ export default function Mp4ToWordPage() {
                     <span className="icon">📝</span>Transcript
                   </span>
                   <div className="result-meta">
-                    <span className="char-count">{transcript.length} chars</span>
-                    <button
-                      className="copy-btn"
+                    <Badge variant="secondary">{transcript.length} chars</Badge>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      title="Copy transcript"
+                      aria-label="Copy transcript"
+                      className="rounded-full"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleCopyText(transcript);
                       }}
                     >
-                      Copy
-                    </button>
+                      <Copy className="size-4" />
+                    </Button>
                   </div>
                 </div>
                 <div className={`result-body-wrap ${collapsed.transcript ? "collapsed" : "open"}`}>
@@ -756,25 +854,33 @@ export default function Mp4ToWordPage() {
                     <span className="icon">✨</span>AI Polish
                   </span>
                   <div className="result-meta">
-                    <span className="char-count">{polished.length} chars</span>
-                    <button
-                      className="expand-btn"
+                    <Badge variant="secondary">{polished.length} chars</Badge>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      title="Read polish"
+                      aria-label="Read polish"
+                      className="rounded-full"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleOpenReader(polished, "AI Polish");
                       }}
                     >
-                      Read
-                    </button>
-                    <button
-                      className="copy-btn"
+                      <BookOpen className="size-4" />
+                    </Button>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      title="Copy polish"
+                      aria-label="Copy polish"
+                      className="rounded-full"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleCopyText(polished);
                       }}
                     >
-                      Copy
-                    </button>
+                      <Copy className="size-4" />
+                    </Button>
                   </div>
                 </div>
                 <div className={`result-body-wrap ${collapsed.polished ? "collapsed" : "open"}`}>
@@ -789,34 +895,46 @@ export default function Mp4ToWordPage() {
                   <span className="icon">🧠</span>AI Summary
                 </span>
                 <div className="result-meta">
-                  <button
-                    className={`toggle-view-btn ${summaryRawMode ? "active" : ""}`}
+                  <Button
+                    size="icon-sm"
+                    variant={summaryRawMode ? "default" : "ghost"}
+                    title="Toggle raw summary"
+                    aria-label="Toggle raw summary"
+                    className="rounded-full"
                     onClick={(e) => {
                       e.stopPropagation();
                       setSummaryRawMode((prev) => !prev);
                     }}
                   >
-                    Raw
-                  </button>
-                  <button
-                    className="copy-btn"
+                    <Code2 className="size-4" />
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title="Copy summary"
+                    aria-label="Copy summary"
+                    className="rounded-full"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleCopyText(summary);
                     }}
                   >
-                    Copy
-                  </button>
-                  <button
-                    className="export-btn"
+                    <Copy className="size-4" />
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title="Export markdown"
+                    aria-label="Export markdown"
+                    className="rounded-full"
                     disabled={phase !== "done"}
                     onClick={(e) => {
                       e.stopPropagation();
                       void handleExport();
                     }}
                   >
-                    Export MD
-                  </button>
+                    <Download className="size-4" />
+                  </Button>
                 </div>
               </div>
               <div className={`result-body-wrap ${collapsed.summary ? "collapsed" : "open"}`}>
