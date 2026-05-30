@@ -1,5 +1,6 @@
 import type { Phase, SSEEvent, QAResponse, TransferProgress } from "./types";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
+import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace } from "@/views/stock-chart/lib/types";
 
 const API_BASE = "http://localhost:5000";
 const DOWNLOADER_API_BASE = "https://downloader-api.bhwa233.com";
@@ -174,6 +175,86 @@ export async function fetchTaskSnapshot(taskId: string): Promise<TaskSnapshot> {
     throw new Error((data && "error" in data && data.error) || "获取任务状态失败");
   }
 
+  return data;
+}
+
+export async function searchStockChart(query: string): Promise<StockSearchItem[]> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/search?q=${encodeURIComponent(query)}`);
+  const data = (await res.json().catch(() => null)) as { items?: StockSearchItem[] } | null;
+  if (!res.ok || !data) throw new Error("搜索股票失败");
+  return data.items || [];
+}
+
+export async function fetchStockKlines(params: {
+  targetType: StockTargetType;
+  symbol: string;
+  name?: string;
+  period: StockPeriod;
+  adjust: StockAdjust;
+}): Promise<{ symbol: string; target_type: StockTargetType; period: StockPeriod; adjust: StockAdjust; items: StockKlineBar[] }> {
+  const query = new URLSearchParams({
+    target_type: params.targetType,
+    symbol: params.symbol,
+    name: params.name || params.symbol,
+    period: params.period,
+    adjust: params.adjust,
+  });
+  const res = await fetch(`${API_BASE}/api/stock-chart/klines?${query.toString()}`);
+  const data = (await res.json().catch(() => null)) as { symbol: string; target_type: StockTargetType; period: StockPeriod; adjust: StockAdjust; items: StockKlineBar[] } | null;
+  if (!res.ok || !data) throw new Error("获取K线失败");
+  return data;
+}
+
+export async function fetchStockWorkspace(targetType: StockTargetType, symbol: string, name?: string): Promise<StockWorkspace> {
+  const query = new URLSearchParams({ target_type: targetType, symbol, name: name || symbol });
+  const res = await fetch(`${API_BASE}/api/stock-chart/workspace?${query.toString()}`);
+  const data = (await res.json().catch(() => null)) as StockWorkspace | null;
+  if (!res.ok || !data) throw new Error("获取图表工作区失败");
+  return data;
+}
+
+export async function saveStockWorkspace(payload: Omit<StockWorkspace, "id" | "updated_at"> & { name?: string }): Promise<StockWorkspace> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/workspace`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => null)) as StockWorkspace | null;
+  if (!res.ok || !data) throw new Error("保存图表工作区失败");
+  return data;
+}
+
+export async function listStockAnnotations(targetType: StockTargetType, symbol: string, period: StockPeriod): Promise<StockAnnotation[]> {
+  const query = new URLSearchParams({ target_type: targetType, symbol, period });
+  const res = await fetch(`${API_BASE}/api/stock-chart/annotations?${query.toString()}`);
+  const data = (await res.json().catch(() => null)) as { items?: StockAnnotation[] } | null;
+  if (!res.ok || !data) throw new Error("获取标记失败");
+  return data.items || [];
+}
+
+export async function createStockAnnotation(payload: {
+  target_type: StockTargetType;
+  symbol: string;
+  period: StockPeriod;
+  overlay_type: string;
+  points: Array<{ timestamp: number; value: number }>;
+  styles?: Record<string, unknown>;
+  text?: string;
+}): Promise<StockAnnotation> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/annotations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = (await res.json().catch(() => null)) as StockAnnotation | null;
+  if (!res.ok || !data) throw new Error("创建标记失败");
+  return data;
+}
+
+export async function fetchStockAuction(symbol: string): Promise<StockAuctionSnapshot> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/auction?symbol=${encodeURIComponent(symbol)}`);
+  const data = (await res.json().catch(() => null)) as StockAuctionSnapshot | null;
+  if (!res.ok || !data) throw new Error("获取竞价数据失败");
   return data;
 }
 

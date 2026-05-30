@@ -1,0 +1,40 @@
+{
+  "items": [
+    {
+      "id": "anno-1780139678243",
+      "overlay_type": "segment",
+      "points": [
+        {
+          "timestamp": 1778428800000,
+          "value": 17.67
+        },
+        {
+          "timestamp": 1780070400000,
+          "value": 19.49
+        }
+      ],
+      "styles": {},
+      "text": "趋势标记",
+      "created_at": "2026-05-30T19:14:38.243678",
+      "updated_at": "2026-05-30T19:14:38.243685"
+    },
+    {
+      "id": "anno-1780139677589",
+      "overlay_type": "segment",
+      "points": [
+        {
+          "timestamp": 1778428800000,
+          "value": 17.67
+        },
+        {
+          "timestamp": 1780070400000,
+          "value": 19.49
+        }
+      ],
+      "styles": {},
+      "text": "趋势标记",
+      "created_at": "2026-05-30T19:14:37.589669",
+      "updated_at": "2026-05-30T19:14:37.589678"
+    }
+  ]
+}

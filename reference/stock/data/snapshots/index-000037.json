@@ -1,0 +1,16 @@
+{
+  "id": "index-000037",
+  "symbol": "000037",
+  "target_type": "index",
+  "period": "5m",
+  "adjust": "qfq",
+  "indicators": [
+    "MA",
+    "BOLL",
+    "MACD",
+    "AMOUNT"
+  ],
+  "drawing_tool": null,
+  "show_auction_panel": true,
+  "updated_at": "2026-05-30T22:01:22.511078"
+}

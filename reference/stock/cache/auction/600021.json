@@ -1,0 +1,30 @@
+{
+  "symbol": "600021",
+  "trade_date": "2026-05-29",
+  "opening": {
+    "time": "09:25:00",
+    "price": 21.0,
+    "volume": 2392556,
+    "amount": 523532.0,
+    "matchPrice": 22.28,
+    "unmatchedBuyVolume": 2422,
+    "unmatchedSellVolume": 3441,
+    "gapRate": -0.85,
+    "auctionVolumeRatio": 1.0,
+    "unmatchedDelta": -1019,
+    "strengthLabel": "偏弱低开"
+  },
+  "closing": {
+    "time": "16:14:11",
+    "price": 22.28,
+    "volume": 2392556,
+    "amount": 523532.0,
+    "matchPrice": 22.28,
+    "unmatchedBuyVolume": 2422,
+    "unmatchedSellVolume": 3441,
+    "gapRate": 5.19,
+    "auctionVolumeRatio": 1.0,
+    "unmatchedDelta": -1019,
+    "strengthLabel": "中性"
+  }
+}

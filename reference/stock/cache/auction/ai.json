@@ -1,0 +1,10 @@
+{
+  "symbol": "ai",
+  "trade_date": "2026-05-30",
+  "price": 10.56,
+  "volume": 560000,
+  "amount": 5913600,
+  "matchPrice": 10.58,
+  "unmatchedBuyVolume": 320000,
+  "unmatchedSellVolume": 120000
+}

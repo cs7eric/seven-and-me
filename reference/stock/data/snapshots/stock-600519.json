@@ -1,0 +1,19 @@
+{
+  "id": "stock-600519",
+  "symbol": "600519",
+  "target_type": "stock",
+  "period": "1d",
+  "adjust": "qfq",
+  "indicators": [
+    "MA",
+    "EMA",
+    "BOLL",
+    "MACD",
+    "VOL",
+    "AMOUNT",
+    "VOLUME_RATIO"
+  ],
+  "drawing_tool": null,
+  "show_auction_panel": true,
+  "updated_at": "2026-05-30T19:43:25.775036"
+}

@@ -1,0 +1,22 @@
+{
+  "symbol": "300750",
+  "trade_date": "2026-05-29",
+  "opening": {
+    "time": "09:25:00",
+    "price": 423.0,
+    "volume": 498119,
+    "amount": 2113903.0,
+    "matchPrice": 424.0,
+    "unmatchedBuyVolume": 25,
+    "unmatchedSellVolume": 708
+  },
+  "closing": {
+    "time": "16:14:00",
+    "price": 424.0,
+    "volume": 498119,
+    "amount": 2113903.0,
+    "matchPrice": 424.0,
+    "unmatchedBuyVolume": 25,
+    "unmatchedSellVolume": 708
+  }
+}

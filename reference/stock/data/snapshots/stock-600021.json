@@ -1,0 +1,16 @@
+{
+  "id": "stock-600021",
+  "symbol": "600021",
+  "target_type": "stock",
+  "period": "1d",
+  "adjust": "none",
+  "indicators": [
+    "MA",
+    "BOLL",
+    "MACD",
+    "AMOUNT"
+  ],
+  "drawing_tool": null,
+  "show_auction_panel": true,
+  "updated_at": "2026-05-30T22:25:15.784866"
+}

@@ -1,0 +1,19 @@
+{
+  "id": "sector-ai",
+  "symbol": "ai",
+  "target_type": "sector",
+  "period": "1d",
+  "adjust": "qfq",
+  "indicators": [
+    "MA",
+    "EMA",
+    "BOLL",
+    "MACD",
+    "VOL",
+    "AMOUNT",
+    "VOLUME_RATIO"
+  ],
+  "drawing_tool": null,
+  "show_auction_panel": true,
+  "updated_at": "2026-05-30T19:43:41.038717"
+}

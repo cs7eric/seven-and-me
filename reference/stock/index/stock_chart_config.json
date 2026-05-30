@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "kline": {
+    "minute_provider": "mootdx",
+    "daily_provider": "tencent",
+    "weekly_provider": "tencent",
+    "fallbacks": {
+      "minute": ["mootdx", "sina", "eastmoney"],
+      "daily": ["tencent", "eastmoney"],
+      "weekly": ["tencent", "eastmoney"]
+    },
+    "mootdx": {
+      "servers": [
+        ["110.41.147.114", 7709],
+        ["8.129.13.54", 7709],
+        ["124.70.176.52", 7709]
+      ],
+      "timeout": 10,
+      "minute_adjust_mode": "none_only"
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "symbol": "000001",
+  "trade_date": "2026-05-29",
+  "opening": {
+    "time": "09:25:00",
+    "price": 10.65,
+    "volume": 1399368,
+    "amount": 151569.0,
+    "matchPrice": 10.93,
+    "unmatchedBuyVolume": 1232,
+    "unmatchedSellVolume": 12481,
+    "gapRate": -0.09,
+    "auctionVolumeRatio": 1.0,
+    "unmatchedDelta": -11249,
+    "strengthLabel": "偏弱低开"
+  },
+  "closing": {
+    "time": "16:14:54",
+    "price": 10.93,
+    "volume": 1399368,
+    "amount": 151569.0,
+    "matchPrice": 10.93,
+    "unmatchedBuyVolume": 1232,
+    "unmatchedSellVolume": 12481,
+    "gapRate": 2.53,
+    "auctionVolumeRatio": 1.0,
+    "unmatchedDelta": -11249,
+    "strengthLabel": "中性"
+  }
+}

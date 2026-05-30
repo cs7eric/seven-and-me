@@ -1,0 +1,17 @@
+{
+  "id": "index-000001",
+  "symbol": "000001",
+  "target_type": "index",
+  "period": "5m",
+  "adjust": "none",
+  "indicators": [
+    "MA",
+    "BOLL",
+    "MACD",
+    "AMOUNT",
+    "EXPMA"
+  ],
+  "drawing_tool": null,
+  "show_auction_panel": true,
+  "updated_at": "2026-05-30T22:48:00.865645"
+}

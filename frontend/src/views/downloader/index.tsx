@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Check, Copy, ExternalLink, Loader2, Send, Video } from "lucide-react"
+import { Loader2, Send, Video } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 
 import { WorkspaceShell } from "@/components/workspace-shell"
@@ -7,83 +7,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
 import type { DownloaderParseData, RemoteParsePayload } from "@/lib/api"
 import { parseDownloaderUrl } from "@/lib/api"
-
-function formatDuration(seconds?: number) {
-  if (!seconds || Number.isNaN(seconds)) return "-"
-  const total = Math.max(0, Math.floor(seconds))
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-
-  if (h > 0) {
-    return [h, m, s].map((value, index) => (index === 0 ? String(value) : String(value).padStart(2, "0"))).join(":")
-  }
-
-  return [m, s].map((value) => String(value).padStart(2, "0")).join(":")
-}
-
-function summarizeUrl(value: string) {
-  try {
-    const parsed = new URL(value)
-    const name = parsed.pathname.split("/").filter(Boolean).pop() || parsed.hostname
-    return `${parsed.hostname} / ${name}`
-  } catch {
-    return value
-  }
-}
-
-function LinkActionRow({
-  label,
-  value,
-  copied,
-  onCopy,
-}: {
-  label: string
-  value: string | null | undefined
-  copied: boolean
-  onCopy: (value: string) => void
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md bg-muted/25 px-3 py-2.5">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-foreground">{label}</div>
-        <div className="truncate text-xs text-muted-foreground">
-          {value ? summarizeUrl(value) : "当前没有可用链接"}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Button type="button" variant="ghost" size="sm" disabled={!value} onClick={() => value && onCopy(value)}>
-          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-          {copied ? "已复制" : "Copy"}
-        </Button>
-        <Button asChild size="sm" disabled={!value}>
-          <a href={value || "#"} target="_blank" rel="noreferrer">
-            <ExternalLink className="size-4" />
-            Open
-          </a>
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function LoadingState() {
-  return (
-    <div className="space-y-4">
-      <div className="space-y-3">
-        <Skeleton className="h-4 w-20" />
-        <Skeleton className="h-8 w-2/3" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-5/6" />
-        <Skeleton className="h-11 w-full rounded-md" />
-        <Skeleton className="h-11 w-full rounded-md" />
-      </div>
-    </div>
-  )
-}
+import { LinkActionRow } from "./components/link-action-row"
+import { LoadingState } from "./components/loading-state"
+import { formatDuration } from "./lib/format"
 
 export default function DownloaderPage() {
   const navigate = useNavigate()
@@ -185,14 +113,14 @@ export default function DownloaderPage() {
   return (
     <WorkspaceShell sectionLabel="Downloader" pageTitle="Link Parser">
       <div className="mx-auto w-full max-w-[1400px]">
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
           <div className="hidden lg:block" />
 
-          <div className="lg:col-span-3 flex flex-col gap-4">
+          <div className="flex flex-col gap-4 lg:col-span-3">
             <Card className="shrink-0 border-border/30 shadow-none">
-              <CardHeader className="p-4 pb-2 space-y-1.5">
-                <h1 className="text-2xl text-center font-semibold tracking-tight">Downloader</h1>
-                <p className="text-xs sm:text-[13px] leading-relaxed text-foreground/60 text-center break-words">
+              <CardHeader className="space-y-1.5 p-4 pb-2">
+                <h1 className="text-center text-2xl font-semibold tracking-tight">Downloader</h1>
+                <p className="break-words text-center text-xs leading-relaxed text-foreground/60 sm:text-[13px]">
                   输入链接，直接拿到解析后的下载地址。
                 </p>
               </CardHeader>
@@ -210,14 +138,14 @@ export default function DownloaderPage() {
                       <Button type="button" variant="outline" className="flex-1 border-border/30" onClick={handlePaste}>
                         粘贴链接
                       </Button>
-                      <Button type="submit" className="flex-1 flex items-center justify-center gap-2" disabled={loading || !url.trim()}>
+                      <Button type="submit" className="flex flex-1 items-center justify-center gap-2" disabled={loading || !url.trim()}>
                         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                         {loading ? "解析中..." : "解析链接"}
                       </Button>
                     </div>
                   </div>
 
-                  {error ? <p className="text-sm text-destructive text-center">{error}</p> : null}
+                  {error ? <p className="text-center text-sm text-destructive">{error}</p> : null}
                 </form>
               </CardContent>
             </Card>
@@ -229,7 +157,7 @@ export default function DownloaderPage() {
                   {result ? <Badge variant="secondary">{result.platform}</Badge> : null}
                 </div>
                 {result ? (
-                  <p className="line-clamp-2 text-[13px] leading-snug text-foreground/80 break-words">
+                  <p className="line-clamp-2 break-words text-[13px] leading-snug text-foreground/80">
                     {result.title}
                     {result.duration != null && (
                       <span className="ml-2 text-xs text-foreground/70">({formatDuration(result.duration)})</span>

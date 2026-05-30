@@ -1,0 +1,19 @@
+{
+  "id": "index-000300",
+  "symbol": "000300",
+  "target_type": "index",
+  "period": "1d",
+  "adjust": "qfq",
+  "indicators": [
+    "MA",
+    "EMA",
+    "VOL",
+    "BOLL",
+    "MACD",
+    "AMOUNT",
+    "VOLUME_RATIO"
+  ],
+  "drawing_tool": null,
+  "show_auction_panel": true,
+  "updated_at": "2026-05-30T19:53:25.195572"
+}

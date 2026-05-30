@@ -1,0 +1,25 @@
+{
+  "type": "stock_chart",
+  "version": 1,
+  "updated_at": "2026-05-30T22:50:43.778323",
+  "items": [
+    {
+      "id": "stock-000001",
+      "target_type": "stock",
+      "symbol": "000001",
+      "name": "平安银行",
+      "workspace_file": "stock/data/snapshots/stock-000001.json",
+      "annotation_file": "stock/data/annotations/stock-000001-1d.json",
+      "updated_at": "2026-05-30T22:50:43.778323"
+    },
+    {
+      "id": "index-000001",
+      "target_type": "index",
+      "symbol": "000001",
+      "name": "上证指数",
+      "workspace_file": "stock/data/snapshots/index-000001.json",
+      "annotation_file": "stock/data/annotations/index-000001-1d.json",
+      "updated_at": "2026-05-30T22:48:00.864350"
+    }
+  ]
+}

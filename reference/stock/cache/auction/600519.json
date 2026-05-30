@@ -1,0 +1,22 @@
+{
+  "symbol": "600519",
+  "trade_date": "2026-05-29",
+  "opening": {
+    "time": "09:25:00",
+    "price": 1270.6,
+    "volume": 76478,
+    "amount": 1003739.0,
+    "matchPrice": 1326.0,
+    "unmatchedBuyVolume": 1,
+    "unmatchedSellVolume": 4
+  },
+  "closing": {
+    "time": "16:14:23",
+    "price": 1326.0,
+    "volume": 76478,
+    "amount": 1003739.0,
+    "matchPrice": 1326.0,
+    "unmatchedBuyVolume": 1,
+    "unmatchedSellVolume": 4
+  }
+}
