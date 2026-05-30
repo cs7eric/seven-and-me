@@ -1,21 +1,22 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Phase, PostMetadata, SSEEvent, TransferProgress } from "../../lib/types";
-import { askQuestion, createSSEConnection, exportMarkdown, fetchTaskSnapshot, sendDownloaderResultToParse, uploadFile, uploadFileWithProgress } from "../../lib/api";
-import { STEPS } from "./constants";
+import { askQuestion, createSSEConnection, exportMarkdown, fetchTaskSnapshot, saveMP4History, sendDownloaderResultToParse, uploadFile, uploadFileWithProgress } from "../../lib/api";
 import { QA_STYLE_FIX } from "./styles";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
-import { StepBar } from "./components/StepBar";
 import { AskSection } from "./components/AskSection";
 import { FloatingAskBar } from "./components/FloatingAskBar";
 import { ReaderModal } from "./components/ReaderModal";
 import { WorkspaceShell } from "@/components/workspace-shell";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, Code2, Copy, Download, ExternalLink } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { AlertCircle, BookOpen, Captions, CheckCircle2, Code2, Copy, Download, ExternalLink, FileAudio, FileText, Info, ListChecks, Sparkles, UploadCloud } from "lucide-react";
 
 interface QaItem {
   id: string;
@@ -77,6 +78,19 @@ function compactUrl(value: string) {
   }
 }
 
+function TextSkeletonBlock({ rows = 8 }: { rows?: number }) {
+  return (
+    <div className="space-y-3 p-1">
+      {Array.from({ length: rows }).map((_, index) => (
+        <Skeleton
+          key={index}
+          className={`h-4 ${index % 4 === 3 ? "w-2/3" : index % 3 === 2 ? "w-4/5" : "w-full"}`}
+        />
+      ))}
+    </div>
+  );
+}
+
 function ProgressCard({
   title,
   description,
@@ -119,12 +133,7 @@ function ProgressCard({
             <span className="text-3xl font-semibold tracking-tight text-slate-950">{percent}%</span>
             <span className="text-xs text-muted-foreground">{formatBytes(transferred)} / {formatBytes(total)}</span>
           </div>
-          <div className="h-2.5 overflow-hidden rounded-full bg-slate-200/70">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500 transition-all duration-300"
-              style={{ width: `${percent}%` }}
-            />
-          </div>
+          <Progress value={percent} className="h-2.5" />
         </div>
         <div className="grid grid-cols-3 gap-3 rounded-2xl bg-slate-50/80 p-3">
           <div>
@@ -184,6 +193,8 @@ export default function Mp4ToWordPage() {
   const [readerText, setReaderText] = useState("");
   const [readerTitle, setReaderTitle] = useState("");
   const [summaryRawMode, setSummaryRawMode] = useState(false);
+  const [historySaving, setHistorySaving] = useState(false);
+  const [historyMessage, setHistoryMessage] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapsedQaItems, setCollapsedQaItems] = useState<Record<string, boolean>>({});
   const [remoteStarting, setRemoteStarting] = useState(false);
@@ -219,6 +230,7 @@ export default function Mp4ToWordPage() {
     setCollapsed({});
     setCollapsedQaItems({});
     setSummaryRawMode(false);
+    setHistoryMessage("");
     setDownloadProgress({ progress: 0, phase: "pending" });
     setIntakeProgress({ progress: 0, phase: "pending" });
   }, []);
@@ -563,6 +575,20 @@ export default function Mp4ToWordPage() {
     }
   }, [taskId, phase]);
 
+  const handleSaveHistory = useCallback(async () => {
+    if (!taskId || phase !== "done" || historySaving) return;
+    setHistorySaving(true);
+    setHistoryMessage("");
+    try {
+      const record = await saveMP4History(taskId);
+      setHistoryMessage(`已保存历史记录：${record.title}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存历史记录失败");
+    } finally {
+      setHistorySaving(false);
+    }
+  }, [historySaving, phase, taskId]);
+
   const handleQASubmit = useCallback(async () => {
     if (!taskId || !qaInput.trim() || qaLoading) return;
     setQaLoading(true);
@@ -683,20 +709,161 @@ export default function Mp4ToWordPage() {
     phase === "summarizing" ||
     phase === "transcribing";
   const showProcessingPanel = phase === "converting" || phase === "transcribing";
+  const activeAlert = (() => {
+    if (error) {
+      return {
+        variant: "destructive" as const,
+        icon: <AlertCircle className="size-4" />,
+        title: "Workflow needs attention",
+        description: error,
+      };
+    }
+
+    if (phase === "done") {
+      return {
+        variant: "default" as const,
+        icon: <CheckCircle2 className="size-4" />,
+        title: "Workflow completed",
+        description: "Transcript, polish and summary are ready. You can copy, read or export the result.",
+      };
+    }
+
+    if (remoteDraft && phase === "converting") {
+      return {
+        variant: "default" as const,
+        icon: <Info className="size-4" />,
+        title: "Remote resource is being prepared",
+        description: "The page is downloading the parsed video first, then uploading it to MP4 to Word automatically.",
+      };
+    }
+
+    if (phase === "transcribing") {
+      return {
+        variant: "default" as const,
+        icon: <Info className="size-4" />,
+        title: "Transcription is streaming",
+        description: "Transcript will render progressively while the backend keeps processing the media.",
+      };
+    }
+
+    if (phase === "polishing" || phase === "summarizing") {
+      return {
+        variant: "default" as const,
+        icon: <Info className="size-4" />,
+        title: phase === "polishing" ? "AI polish is running" : "AI summary is running",
+        description: "The transcript has been captured and AI post-processing is now updating the result panels.",
+      };
+    }
+
+    return null;
+  })();
+
+  const processProgress = (() => {
+    if (phase === "idle") return 0;
+    if (phase === "converting") {
+      const downloadPart = remoteDraft ? Math.min(downloadProgress.progress || 0, 100) * 0.22 : 12;
+      const ingestPart = Math.min(intakeProgress.progress || 0, 100) * 0.18;
+      return Math.round(Math.max(10, Math.min(38, downloadPart + ingestPart + 8)));
+    }
+    if (phase === "transcribing") return transcript ? 58 : 45;
+    if (phase === "polishing") return 74;
+    if (phase === "summarizing") return 88;
+    if (phase === "done") return 100;
+    return 100;
+  })();
+
+  const workflowSteps = [
+    { label: "Upload", description: "Input source", icon: UploadCloud },
+    { label: "Convert", description: "Audio ready", icon: FileAudio },
+    { label: "Transcribe", description: "Text stream", icon: Captions },
+    { label: "Polish", description: "AI rewrite", icon: Sparkles },
+    { label: "Summary", description: "Final notes", icon: ListChecks },
+  ];
 
   return (
     <WorkspaceShell sectionLabel="MP4 to Word" pageTitle="Workspace">
       <div className="container">
         <style>{QA_STYLE_FIX}</style>
-        <h1>MP4 to Text</h1>
-        <p className="subtitle">
-          Upload video, transcribe automatically, polish with AI, and generate a clean
-          summary for trading and investing content.
-        </p>
+        <Card className="mb-5 overflow-hidden border-white/70 bg-gradient-to-br from-white via-slate-50 to-indigo-50/70 shadow-[0_24px_90px_rgba(15,23,42,0.10)]">
+          <CardContent className="space-y-6 p-6 sm:p-8">
+            <div className="flex flex-wrap items-start justify-between gap-5">
+              <div className="max-w-3xl space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">MP4 to Text</Badge>
+                  <Badge variant="outline">AI Workspace</Badge>
+                </div>
+                <div>
+                  <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">MP4 to Text</h1>
+                  <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+                    Upload video, transcribe automatically, polish with AI, and generate a clean summary for trading and investing content.
+                  </p>
+                </div>
+              </div>
+              <div className="min-w-[180px] rounded-2xl border border-white/70 bg-white/75 px-4 py-3 text-right shadow-sm">
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Overall Process</div>
+                <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{processProgress}%</div>
+              </div>
+            </div>
 
-        <StepBar steps={STEPS} currentStep={currentStep} />
+            <div className="space-y-3">
+              <Progress value={processProgress} className="h-2" />
+              <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 shadow-sm">
+                <div className="flex items-center gap-0 overflow-x-auto pb-1">
+                  {workflowSteps.map((step, index) => {
+                    const Icon = step.icon;
+                    const active = index === currentStep;
+                    const completed = index < currentStep || phase === "done";
+                    const pending = !active && !completed;
+                    return (
+                      <div key={step.label} className="flex min-w-[150px] flex-1 items-center">
+                        <div
+                          className={`relative flex min-w-[126px] items-center gap-3 rounded-2xl border px-3 py-3 transition ${
+                            active
+                              ? "border-slate-900 bg-slate-950 text-white shadow-lg shadow-slate-950/10"
+                              : completed
+                                ? "border-slate-200 bg-white text-slate-900"
+                                : "border-slate-100 bg-slate-50/80 text-slate-400"
+                          }`}
+                        >
+                          <div
+                            className={`flex size-9 shrink-0 items-center justify-center rounded-xl border ${
+                              active
+                                ? "border-white/20 bg-white/10"
+                                : completed
+                                  ? "border-slate-200 bg-slate-50"
+                                  : "border-slate-200 bg-white"
+                            }`}
+                          >
+                            {completed ? <CheckCircle2 className="size-4" /> : <Icon className="size-4" />}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold">{step.label}</div>
+                            <div className={`mt-0.5 truncate text-[11px] ${active ? "text-white/65" : pending ? "text-slate-400" : "text-slate-500"}`}>
+                              {step.description}
+                            </div>
+                          </div>
+                        </div>
+                        {index < workflowSteps.length - 1 && (
+                          <div className="relative h-px min-w-8 flex-1 bg-slate-200">
+                            <div className={`absolute inset-y-0 left-0 ${completed ? "w-full bg-slate-950" : "w-0 bg-slate-950"}`} />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
-        {error && <div className="error">{error}</div>}
+        {activeAlert && (
+          <Alert variant={activeAlert.variant} className="mb-5 border-white/70 bg-white/80 shadow-[0_14px_40px_rgba(15,23,42,0.06)] backdrop-blur">
+            {activeAlert.icon}
+            <AlertTitle>{activeAlert.title}</AlertTitle>
+            <AlertDescription>{activeAlert.description}</AlertDescription>
+          </Alert>
+        )}
 
         {remoteDraft && (
           <Card className="mb-5 overflow-hidden border-white/70 bg-gradient-to-br from-white via-slate-50 to-sky-50/80 shadow-[0_24px_80px_rgba(15,23,42,0.10)]">
@@ -844,7 +1011,9 @@ export default function Mp4ToWordPage() {
                   </div>
                 </div>
                 <div className={`result-body-wrap ${collapsed.transcript ? "collapsed" : "open"}`}>
-                  <div className="result-body" dangerouslySetInnerHTML={{ __html: transcriptHtml }} />
+                  <div className="result-body">
+                    {displayedTranscript ? <div dangerouslySetInnerHTML={{ __html: transcriptHtml }} /> : <TextSkeletonBlock rows={10} />}
+                  </div>
                 </div>
               </div>
 
@@ -884,7 +1053,9 @@ export default function Mp4ToWordPage() {
                   </div>
                 </div>
                 <div className={`result-body-wrap ${collapsed.polished ? "collapsed" : "open"}`}>
-                  <div className="result-body" dangerouslySetInnerHTML={{ __html: polishedHtml }} />
+                  <div className="result-body">
+                    {polished ? <div dangerouslySetInnerHTML={{ __html: polishedHtml }} /> : <TextSkeletonBlock rows={10} />}
+                  </div>
                 </div>
               </div>
             </div>
@@ -935,14 +1106,34 @@ export default function Mp4ToWordPage() {
                   >
                     <Download className="size-4" />
                   </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title="Export history"
+                    aria-label="Export history"
+                    className="rounded-full"
+                    disabled={phase !== "done" || historySaving}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void handleSaveHistory();
+                    }}
+                  >
+                    <FileText className="size-4" />
+                  </Button>
                 </div>
               </div>
               <div className={`result-body-wrap ${collapsed.summary ? "collapsed" : "open"}`}>
-                <div className={`summary-stage ${summaryRawMode ? "raw-mode" : ""}`}>
-                  <div className="summary-workspace" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
-                  <div className="summary-raw-view">{summary}</div>
-                  <div className="summary-raw">{summary}</div>
-                </div>
+                {summary ? (
+                  <div className={`summary-stage ${summaryRawMode ? "raw-mode" : ""}`}>
+                    <div className="summary-workspace" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
+                    <div className="summary-raw-view">{summary}</div>
+                    <div className="summary-raw">{summary}</div>
+                  </div>
+                ) : (
+                  <div className="result-body">
+                    <TextSkeletonBlock rows={8} />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -954,6 +1145,14 @@ export default function Mp4ToWordPage() {
               onToggleItem={toggleQaItemCollapse}
             />
           </div>
+        )}
+
+        {historyMessage && (
+          <Alert className="mb-5 border-emerald-200 bg-emerald-50 text-emerald-900">
+            <CheckCircle2 className="size-4" />
+            <AlertTitle>History exported</AlertTitle>
+            <AlertDescription>{historyMessage}</AlertDescription>
+          </Alert>
         )}
 
         <FloatingAskBar

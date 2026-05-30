@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-30T16:41:17.376293",
+  "types": {
+    "mp4_parse": {
+      "title": "MP4 Parse History",
+      "index_file": "parse/index/index.json",
+      "data_dir": "parse/data",
+      "count": 1
+    }
+  }
+}

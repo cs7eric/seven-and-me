@@ -37,6 +37,17 @@ DOWNLOAD_HEADERS = {
 }
 _tasks = {}
 
+REFERENCE_FOLDER = Path(__file__).parent / 'reference'
+REFERENCE_INDEX_FILE = REFERENCE_FOLDER / 'index.json'
+MP4_REFERENCE_FOLDER = REFERENCE_FOLDER / 'parse'
+MP4_REFERENCE_DATA_FOLDER = MP4_REFERENCE_FOLDER / 'data'
+MP4_REFERENCE_INDEX_FOLDER = MP4_REFERENCE_FOLDER / 'index'
+MP4_REFERENCE_TYPE_INDEX = MP4_REFERENCE_INDEX_FOLDER / 'index.json'
+
+REFERENCE_FOLDER.mkdir(exist_ok=True)
+MP4_REFERENCE_DATA_FOLDER.mkdir(parents=True, exist_ok=True)
+MP4_REFERENCE_INDEX_FOLDER.mkdir(parents=True, exist_ok=True)
+
 API_KEY = os.getenv("MINIMAX_API_KEY")
 GROUP_ID = os.getenv("MINIMAX_GROUP_ID")
 
@@ -45,6 +56,154 @@ from polisher import TextPolisher
 
 _transcriber = None
 _polisher = None
+
+
+def read_json_file(path: Path, default):
+    if not path.exists() or path.stat().st_size == 0:
+        return default
+    try:
+        with path.open('r', encoding='utf-8') as file:
+            return json.load(file)
+    except Exception:
+        return default
+
+
+def write_json_file(path: Path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('w', encoding='utf-8') as file:
+        json.dump(data, file, ensure_ascii=False, indent=2)
+
+
+def ensure_reference_index_files():
+    if not REFERENCE_INDEX_FILE.exists() or REFERENCE_INDEX_FILE.stat().st_size == 0:
+        write_json_file(REFERENCE_INDEX_FILE, {
+            "version": 1,
+            "updated_at": None,
+            "types": {
+                "mp4_parse": {
+                    "title": "MP4 Parse History",
+                    "index_file": str(MP4_REFERENCE_TYPE_INDEX.relative_to(REFERENCE_FOLDER)).replace('\\', '/'),
+                    "data_dir": str(MP4_REFERENCE_DATA_FOLDER.relative_to(REFERENCE_FOLDER)).replace('\\', '/'),
+                    "count": 0,
+                }
+            }
+        })
+
+    if not MP4_REFERENCE_TYPE_INDEX.exists() or MP4_REFERENCE_TYPE_INDEX.stat().st_size == 0:
+        write_json_file(MP4_REFERENCE_TYPE_INDEX, {
+            "type": "mp4_parse",
+            "version": 1,
+            "updated_at": None,
+            "items": []
+        })
+
+
+def build_task_snapshot(task_id: str, task: dict) -> dict:
+    return {
+        "task_id": task_id,
+        "status": task.get("status"),
+        "transcript": task.get("transcript", ""),
+        "polished": task.get("polished", ""),
+        "summary": task.get("summary", ""),
+        "metadata": task.get("metadata", {}),
+        "file_name": task.get("file_name", ""),
+        "error": task.get("error"),
+        "download_progress": task.get("download_progress", {}),
+        "intake_progress": task.get("intake_progress", {}),
+        "qa_items": task.get("qa_items", []),
+    }
+
+
+def export_task_to_reference(task_id: str) -> dict:
+    task = _tasks.get(task_id)
+    if not task:
+        raise ValueError("Task not found")
+    if task.get("status") != "done":
+        raise ValueError("Task is not completed yet")
+
+    ensure_reference_index_files()
+
+    snapshot = build_task_snapshot(task_id, task)
+    metadata = snapshot.get("metadata") or {}
+    title = str(metadata.get("title") or snapshot.get("file_name") or task_id).strip() or task_id
+    created_at = datetime.now().isoformat()
+    history_id = f"mp4-{task_id}"
+    record_file = MP4_REFERENCE_DATA_FOLDER / f"{history_id}.json"
+
+    record_payload = {
+        "id": history_id,
+        "type": "mp4_parse",
+        "version": 1,
+        "created_at": created_at,
+        "updated_at": created_at,
+        "title": title,
+        "task": snapshot,
+    }
+    write_json_file(record_file, record_payload)
+
+    type_index = read_json_file(MP4_REFERENCE_TYPE_INDEX, {
+        "type": "mp4_parse",
+        "version": 1,
+        "updated_at": None,
+        "items": []
+    })
+    items = [item for item in type_index.get("items", []) if item.get("id") != history_id]
+    items.insert(0, {
+        "id": history_id,
+        "title": title,
+        "created_at": created_at,
+        "task_id": task_id,
+        "status": snapshot.get("status"),
+        "file_name": snapshot.get("file_name"),
+        "data_file": str(record_file.relative_to(REFERENCE_FOLDER)).replace('\\', '/'),
+    })
+    type_index["items"] = items
+    type_index["updated_at"] = created_at
+    write_json_file(MP4_REFERENCE_TYPE_INDEX, type_index)
+
+    root_index = read_json_file(REFERENCE_INDEX_FILE, {
+        "version": 1,
+        "updated_at": None,
+        "types": {}
+    })
+    root_index.setdefault("types", {})["mp4_parse"] = {
+        "title": "MP4 Parse History",
+        "index_file": str(MP4_REFERENCE_TYPE_INDEX.relative_to(REFERENCE_FOLDER)).replace('\\', '/'),
+        "data_dir": str(MP4_REFERENCE_DATA_FOLDER.relative_to(REFERENCE_FOLDER)).replace('\\', '/'),
+        "count": len(items),
+    }
+    root_index["updated_at"] = created_at
+    write_json_file(REFERENCE_INDEX_FILE, root_index)
+
+    return {
+        "id": history_id,
+        "title": title,
+        "created_at": created_at,
+        "data_file": str(record_file.relative_to(REFERENCE_FOLDER)).replace('\\', '/'),
+    }
+
+
+def load_reference_history_list() -> list[dict]:
+    ensure_reference_index_files()
+    type_index = read_json_file(MP4_REFERENCE_TYPE_INDEX, {
+        "type": "mp4_parse",
+        "version": 1,
+        "updated_at": None,
+        "items": []
+    })
+    return type_index.get("items", [])
+
+
+def load_reference_history_detail(history_id: str) -> dict | None:
+    items = load_reference_history_list()
+    item = next((entry for entry in items if entry.get("id") == history_id), None)
+    if not item:
+        return None
+    data_file = item.get("data_file")
+    if not data_file:
+        return None
+    record_file = REFERENCE_FOLDER / data_file
+    return read_json_file(record_file, None)
 
 
 def sanitize_filename(name: str) -> str:
@@ -560,6 +719,35 @@ def output_file(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
 
+@app.route('/api/reference/mp4-history', methods=['POST'])
+def save_mp4_history():
+    data = request.get_json() or {}
+    task_id = data.get("task_id")
+    if not task_id:
+        return jsonify({"error": "Task ID is required"}), 400
+
+    try:
+        result = export_task_to_reference(task_id)
+        return jsonify(result)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"保存历史记录失败: {e}"}), 500
+
+
+@app.route('/api/reference/mp4-history')
+def list_mp4_history():
+    return jsonify({"items": load_reference_history_list()})
+
+
+@app.route('/api/reference/mp4-history/<history_id>')
+def get_mp4_history(history_id):
+    detail = load_reference_history_detail(history_id)
+    if not detail:
+        return jsonify({"error": "History record not found"}), 404
+    return jsonify(detail)
+
+
 @app.route('/api/export-markdown/<task_id>')
 def export_markdown(task_id):
     task = _tasks.get(task_id)
@@ -613,6 +801,12 @@ def ask_about_content():
 
     polisher = get_polisher()
     answer = polisher.ask_about_content(question, polished, summary)
+    task.setdefault("qa_items", []).insert(0, {
+        "id": f"qa-{int(time.time() * 1000)}",
+        "question": question,
+        "answer": answer,
+        "created_at": datetime.now().isoformat(),
+    })
     return jsonify({"answer": answer})
 
 if __name__ == '__main__':

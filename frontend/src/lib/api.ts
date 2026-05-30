@@ -1,4 +1,5 @@
 import type { Phase, SSEEvent, QAResponse, TransferProgress } from "./types";
+import type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
 
 const API_BASE = "http://localhost:5000";
 const DOWNLOADER_API_BASE = "https://downloader-api.bhwa233.com";
@@ -236,6 +237,38 @@ export async function parseDownloaderUrl(url: string): Promise<DownloaderParseDa
   }
 
   return data.data;
+}
+
+export async function saveMP4History(taskId: string): Promise<MP4HistoryListItem> {
+  const res = await fetch(`${API_BASE}/api/reference/mp4-history`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task_id: taskId }),
+  });
+
+  const data = (await res.json().catch(() => null)) as MP4HistoryListItem | { error?: string } | null;
+  if (!res.ok || !data || !("id" in data)) {
+    throw new Error((data && "error" in data && data.error) || "保存历史记录失败");
+  }
+  return data;
+}
+
+export async function listMP4History(): Promise<MP4HistoryListItem[]> {
+  const res = await fetch(`${API_BASE}/api/reference/mp4-history`, { cache: "no-store" });
+  const data = (await res.json().catch(() => null)) as { items?: MP4HistoryListItem[] } | null;
+  if (!res.ok || !data) {
+    throw new Error("获取历史记录失败");
+  }
+  return data.items || [];
+}
+
+export async function getMP4History(id: string): Promise<MP4HistoryRecord> {
+  const res = await fetch(`${API_BASE}/api/reference/mp4-history/${id}`, { cache: "no-store" });
+  const data = (await res.json().catch(() => null)) as MP4HistoryRecord | { error?: string } | null;
+  if (!res.ok || !data || !("task" in data)) {
+    throw new Error((data && "error" in data && data.error) || "获取历史详情失败");
+  }
+  return data;
 }
 
 export async function sendDownloaderResultToParse(payload: RemoteParsePayload): Promise<{ task_id: string; file_name: string }> {

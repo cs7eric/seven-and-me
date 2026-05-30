@@ -60,6 +60,10 @@ const data = {
           title: "Open Workspace",
           url: "/mp4-to-word",
         },
+        {
+          title: "History Records",
+          url: "/mp4-to-word/history",
+        },
       ],
     },
     {
@@ -83,6 +87,11 @@ const data = {
     {
       name: "MP4 to Word",
       url: "/mp4-to-word",
+      icon: FileText,
+    },
+    {
+      name: "MP4 History",
+      url: "/mp4-to-word/history",
       icon: FileText,
     },
     {
