@@ -1,7 +1,8 @@
 interface QaItem {
   id: string;
   question: string;
-  answerHtml: string;
+  answerHtml?: string;
+  loading?: boolean;
 }
 
 interface AskSectionProps {
@@ -10,6 +11,7 @@ interface AskSectionProps {
   collapsedQaItems: Record<string, boolean>;
   onToggleSection: () => void;
   onToggleItem: (id: string) => void;
+  onFollowupClick?: (question: string) => void;
 }
 
 export function AskSection({
@@ -18,6 +20,7 @@ export function AskSection({
   collapsedQaItems,
   onToggleSection,
   onToggleItem,
+  onFollowupClick,
 }: AskSectionProps) {
   return (
     <div className="qa-section">
@@ -74,10 +77,29 @@ export function AskSection({
                     </div>
                     <div className={`qa-item-body ${isCollapsed ? "" : "open"}`}>
                       <div className="qa-answer-body">
-                        <div
-                          className="qa-answer"
-                          dangerouslySetInnerHTML={{ __html: item.answerHtml }}
-                        />
+                        {item.loading ? (
+                          <div className="space-y-3 p-1">
+                            <div className="h-4 w-1/2 animate-pulse rounded bg-slate-200" />
+                            <div className="h-4 w-full animate-pulse rounded bg-slate-200" />
+                            <div className="h-4 w-4/5 animate-pulse rounded bg-slate-200" />
+                            <div className="h-4 w-3/5 animate-pulse rounded bg-slate-200" />
+                          </div>
+                        ) : (
+                          <div
+                            className="qa-answer"
+                            onClick={(event) => {
+                              const target = event.target as HTMLElement | null;
+                              const button = target?.closest(".qa-followup-chip") as HTMLElement | null;
+                              const followup = button?.getAttribute("data-followup")?.trim();
+                              if (followup) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                onFollowupClick?.(followup);
+                              }
+                            }}
+                            dangerouslySetInnerHTML={{ __html: item.answerHtml || "" }}
+                          />
+                        )}
                       </div>
                     </div>
                   </div>

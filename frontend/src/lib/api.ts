@@ -275,6 +275,19 @@ export async function reorderMP4History(orderedIds: string[]): Promise<MP4Histor
   return data.items || [];
 }
 
+export async function askHistoryQuestion(historyId: string, question: string): Promise<{ id: string; question: string; answer: string; created_at: string }> {
+  const res = await fetch(`${API_BASE}/api/reference/mp4-history/${historyId}/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  const data = (await res.json().catch(() => null)) as { item?: { id: string; question: string; answer: string; created_at: string }; error?: string } | null;
+  if (!res.ok || !data?.item) {
+    throw new Error((data && data.error) || "历史记录 Ask AI 失败");
+  }
+  return data.item;
+}
+
 export async function getMP4History(id: string): Promise<MP4HistoryRecord> {
   const res = await fetch(`${API_BASE}/api/reference/mp4-history/${id}`, { cache: "no-store" });
   const data = (await res.json().catch(() => null)) as MP4HistoryRecord | { error?: string } | null;

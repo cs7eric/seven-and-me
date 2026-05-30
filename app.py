@@ -777,6 +777,40 @@ def get_mp4_history(history_id):
     return jsonify(detail)
 
 
+@app.route('/api/reference/mp4-history/<history_id>/ask', methods=['POST'])
+def ask_mp4_history(history_id):
+    detail = load_reference_history_detail(history_id)
+    if not detail:
+        return jsonify({"error": "History record not found"}), 404
+
+    data = request.get_json() or {}
+    question = str(data.get("question", "")).strip()
+    if not question:
+        return jsonify({"error": "Question cannot be empty"}), 400
+
+    task = detail.get("task") or {}
+    polished = str(task.get("polished") or "").strip()
+    summary = str(task.get("summary") or "").strip()
+    if not polished and not summary:
+        return jsonify({"error": "No content available for Q&A"}), 400
+
+    polisher = get_polisher()
+    answer = polisher.ask_about_content(question, polished, summary)
+    qa_item = {
+        "id": f"qa-{int(time.time() * 1000)}",
+        "question": question,
+        "answer": answer,
+        "created_at": datetime.now().isoformat(),
+    }
+    task.setdefault("qa_items", []).insert(0, qa_item)
+    detail["task"] = task
+    detail["updated_at"] = datetime.now().isoformat()
+
+    record_file = MP4_REFERENCE_DATA_FOLDER / f"{history_id}.json"
+    write_json_file(record_file, detail)
+    return jsonify({"item": qa_item})
+
+
 @app.route('/api/export-markdown/<task_id>')
 def export_markdown(task_id):
     task = _tasks.get(task_id)

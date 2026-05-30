@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, FileText, Search } from "lucide-react";
-import { getMP4History, listMP4History } from "@/lib/api";
+import { askHistoryQuestion, getMP4History, listMP4History } from "@/lib/api";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "@/lib/history-types";
 import { MP4HistoryDataTable } from "@/components/mp4-history-data-table";
 import { WorkspaceShell } from "@/components/workspace-shell";
@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
 import { AskSection } from "./components/AskSection";
+import { FloatingAskBar } from "./components/FloatingAskBar";
 import { QA_STYLE_FIX } from "./styles";
 
 function formatDate(value?: string) {
@@ -28,14 +29,29 @@ function DetailPanel({ html, text }: { html: string; text: string }) {
   );
 }
 
-function AskHistoryPanel({ qaItems }: { qaItems: Array<{ id: string; question: string; answerHtml: string }> }) {
+function AskHistoryPanel({
+  qaItems,
+  collapsed,
+  collapsedQaItems,
+  onToggleSection,
+  onToggleItem,
+  onFollowupClick,
+}: {
+  qaItems: Array<{ id: string; question: string; answerHtml?: string; loading?: boolean }>;
+  collapsed: boolean;
+  collapsedQaItems: Record<string, boolean>;
+  onToggleSection: () => void;
+  onToggleItem: (id: string) => void;
+  onFollowupClick: (question: string) => void;
+}) {
   return (
     <AskSection
       qaItems={qaItems}
-      collapsed={false}
-      collapsedQaItems={{}}
-      onToggleSection={() => undefined}
-      onToggleItem={() => undefined}
+      collapsed={collapsed}
+      collapsedQaItems={collapsedQaItems}
+      onToggleSection={onToggleSection}
+      onToggleItem={onToggleItem}
+      onFollowupClick={onFollowupClick}
     />
   );
 }
@@ -46,21 +62,90 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
   const polishedHtml = `<pre>${task.polished || ""}</pre>`;
   const summaryHtml = buildSummaryCards(task.summary || "");
   const metadata = task.metadata || {};
-  const qaItems = useMemo(
-    () =>
-      (task.qa_items || []).map((item) => ({
+  const [qaItems, setQaItems] = useState<Array<{ id: string; question: string; answerHtml?: string; loading?: boolean }>>(() =>
+    (task.qa_items || []).map((item) => ({
+      id: item.id,
+      question: item.question,
+      answerHtml: renderQaAnswer(item.answer, item.question),
+    }))
+  );
+  const [activeView, setActiveView] = useState<"transcript" | "polished" | "summary" | "ask">("summary");
+  const [collapsedAsk, setCollapsedAsk] = useState(false);
+  const [collapsedQaItems, setCollapsedQaItems] = useState<Record<string, boolean>>({});
+  const [askInput, setAskInput] = useState("");
+  const [askLoading, setAskLoading] = useState(false);
+  const [askSuccess, setAskSuccess] = useState("");
+
+  const handleToggleQaItem = useCallback((id: string) => {
+    setCollapsedQaItems((prev) => ({ ...prev, [id]: !prev[id] }));
+  }, []);
+
+  const handleAsk = useCallback(async (prefilledQuestion?: string) => {
+    const question = (prefilledQuestion ?? askInput).trim();
+    if (!question || askLoading) return;
+
+    const tempId = `temp-${Date.now()}`;
+    setAskSuccess("");
+    setActiveView("ask");
+    setCollapsedAsk(false);
+    setQaItems((prev) => [{ id: tempId, question, loading: true }, ...prev]);
+    setAskLoading(true);
+    setAskInput("");
+
+    try {
+      const item = await askHistoryQuestion(record.id, question);
+      setQaItems((prev) => prev.map((qa) => qa.id === tempId ? {
         id: item.id,
         question: item.question,
         answerHtml: renderQaAnswer(item.answer, item.question),
-      })),
-    [task.qa_items]
-  );
-  const [activeView, setActiveView] = useState<"transcript" | "polished" | "summary" | "ask">("summary");
+      } : qa));
+      setAskSuccess("Ask AI 已生成并保存到当前历史记录。");
+    } catch (e) {
+      setQaItems((prev) => prev.filter((qa) => qa.id !== tempId));
+      throw e;
+    } finally {
+      setAskLoading(false);
+    }
+  }, [askInput, askLoading, record.id]);
+
+  const handleFollowupAsk = useCallback((question: string) => {
+    setAskInput(question);
+    setActiveView("ask");
+    setCollapsedAsk(false);
+    setTimeout(() => {
+      void (async () => {
+        try {
+          await handleAsk(question);
+        } catch {
+          return;
+        }
+      })();
+    }, 0);
+  }, [handleAsk]);
 
   const detailContent = useMemo(() => {
     if (activeView === "transcript") return <DetailPanel html={transcriptHtml} text={task.transcript || ""} />;
     if (activeView === "polished") return <DetailPanel html={polishedHtml} text={task.polished || ""} />;
-    if (activeView === "ask") return <AskHistoryPanel qaItems={qaItems} />;
+    if (activeView === "ask") {
+      return (
+        <div className="space-y-4">
+          {askSuccess ? (
+            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
+              <AlertTitle>Success</AlertTitle>
+              <AlertDescription>{askSuccess}</AlertDescription>
+            </Alert>
+          ) : null}
+          <AskHistoryPanel
+            qaItems={qaItems}
+            collapsed={collapsedAsk}
+            collapsedQaItems={collapsedQaItems}
+            onToggleSection={() => setCollapsedAsk((prev) => !prev)}
+            onToggleItem={handleToggleQaItem}
+            onFollowupClick={handleFollowupAsk}
+          />
+        </div>
+      );
+    }
     return (
       <div className="overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
         <div className="summary-stage">
@@ -68,7 +153,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
         </div>
       </div>
     );
-  }, [activeView, polishedHtml, qaItems, summaryHtml, task.polished, task.transcript, transcriptHtml]);
+  }, [activeView, askInput, askLoading, askSuccess, collapsedAsk, collapsedQaItems, handleAsk, handleToggleQaItem, polishedHtml, qaItems, summaryHtml, task.polished, task.transcript, transcriptHtml]);
 
   return (
     <div className="space-y-5">
@@ -150,6 +235,20 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
         </div>
         {detailContent}
       </div>
+
+      <FloatingAskBar
+        visible={true}
+        qaInput={askInput}
+        qaLoading={askLoading}
+        taskId={record.id}
+        onChange={setAskInput}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            void handleAsk().catch(() => undefined);
+          }
+        }}
+      />
     </div>
   );
 }

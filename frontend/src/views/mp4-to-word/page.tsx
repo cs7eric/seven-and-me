@@ -589,16 +589,17 @@ export default function Mp4ToWordPage() {
     }
   }, [historySaving, phase, taskId]);
 
-  const handleQASubmit = useCallback(async () => {
-    if (!taskId || !qaInput.trim() || qaLoading) return;
+  const handleQASubmit = useCallback(async (prefilledQuestion?: string) => {
+    const question = (prefilledQuestion ?? qaInput).trim();
+    if (!taskId || !question || qaLoading) return;
     setQaLoading(true);
     try {
-      const answer = await askQuestion(taskId, qaInput.trim());
+      const answer = await askQuestion(taskId, question);
       const id = `qa-item-${Date.now()}`;
       const newItem: QaItem = {
         id,
-        question: qaInput.trim(),
-        answerHtml: renderQaAnswer(answer, qaInput.trim()),
+        question,
+        answerHtml: renderQaAnswer(answer, question),
       };
       setQaItems((prev) => [newItem, ...prev]);
       setCollapsedQaItems((prev) => ({ ...prev, [id]: false }));
@@ -621,8 +622,8 @@ export default function Mp4ToWordPage() {
   );
 
   const handleQAChipClick = useCallback((prompt: string) => {
-    setQaInput(prompt);
-  }, []);
+    void handleQASubmit(prompt);
+  }, [handleQASubmit]);
 
   const handleCopyText = useCallback((text: string) => {
     navigator.clipboard.writeText(text);
