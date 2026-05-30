@@ -206,6 +206,25 @@ def load_reference_history_detail(history_id: str) -> dict | None:
     return read_json_file(record_file, None)
 
 
+def reorder_reference_history_items(ordered_ids: list[str]) -> list[dict]:
+    ensure_reference_index_files()
+    type_index = read_json_file(MP4_REFERENCE_TYPE_INDEX, {
+        "type": "mp4_parse",
+        "version": 1,
+        "updated_at": None,
+        "items": []
+    })
+    items = type_index.get("items", [])
+    item_map = {item.get("id"): item for item in items}
+    reordered = [item_map[item_id] for item_id in ordered_ids if item_id in item_map]
+    remaining = [item for item in items if item.get("id") not in ordered_ids]
+    final_items = reordered + remaining
+    type_index["items"] = final_items
+    type_index["updated_at"] = datetime.now().isoformat()
+    write_json_file(MP4_REFERENCE_TYPE_INDEX, type_index)
+    return final_items
+
+
 def sanitize_filename(name: str) -> str:
     safe = "".join(ch for ch in name if ch.isprintable() and ch not in ('<', '>', ':', '"', '/', '\\', '|', '?', '*')).strip()
     safe = safe.replace(" ", "-")
@@ -738,6 +757,16 @@ def save_mp4_history():
 @app.route('/api/reference/mp4-history')
 def list_mp4_history():
     return jsonify({"items": load_reference_history_list()})
+
+
+@app.route('/api/reference/mp4-history/reorder', methods=['POST'])
+def reorder_mp4_history():
+    data = request.get_json() or {}
+    ordered_ids = data.get("ordered_ids") or []
+    if not isinstance(ordered_ids, list):
+        return jsonify({"error": "ordered_ids must be a list"}), 400
+    items = reorder_reference_history_items([str(item_id) for item_id in ordered_ids])
+    return jsonify({"items": items})
 
 
 @app.route('/api/reference/mp4-history/<history_id>')

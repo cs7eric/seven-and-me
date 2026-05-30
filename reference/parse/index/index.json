@@ -1,8 +1,17 @@
 {
   "type": "mp4_parse",
   "version": 1,
-  "updated_at": "2026-05-30T16:41:17.376293",
+  "updated_at": "2026-05-30T17:09:38.925558",
   "items": [
+    {
+      "id": "mp4-90701d42-fdcc-4b1e-9b2e-4e3ceeaa8567",
+      "title": "龙头战法深度解析：连板高度的奥秘",
+      "created_at": "2026-05-30T17:09:38.925558",
+      "task_id": "90701d42-fdcc-4b1e-9b2e-4e3ceeaa8567",
+      "status": "done",
+      "file_name": "playback-video.mp4",
+      "data_file": "parse/data/mp4-90701d42-fdcc-4b1e-9b2e-4e3ceeaa8567.json"
+    },
     {
       "id": "mp4-0ad899e0-936a-44cf-9cb3-097569b2271c",
       "title": "顶级龙头选手的情绪周期交易模式",
