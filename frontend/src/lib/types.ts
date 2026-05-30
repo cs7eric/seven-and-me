@@ -15,8 +15,23 @@ export interface PostMetadata {
   tags: string[];
 }
 
+export interface TransferProgress {
+  phase?: string;
+  progress?: number;
+  downloaded_bytes?: number;
+  total_bytes?: number;
+  processed_bytes?: number;
+  eta_seconds?: number | null;
+  speed_bytes_per_sec?: number;
+}
+
 export interface SSEEvent {
   type:
+    | "download_start"
+    | "download_progress"
+    | "download_done"
+    | "ingest_progress"
+    | "ingest_done"
     | "transcribe_start"
     | "chunk"
     | "transcribe_done"
@@ -37,6 +52,13 @@ export interface SSEEvent {
   task_id?: string;
   error?: string;
   progress?: number;
+  file_name?: string;
+  downloaded_bytes?: number;
+  total_bytes?: number;
+  processed_bytes?: number;
+  eta_seconds?: number | null;
+  speed_bytes_per_sec?: number;
+  phase?: string;
 }
 
 export interface QAResponse {

@@ -261,14 +261,24 @@
 
   .result-body {
     padding: 22px 22px 24px;
-    min-height: 600px;
-    max-height: 900px;
+    min-height: 420px;
+    max-height: 620px;
     overflow-y: auto;
+    overflow-x: hidden;
     font-size: 15px;
     line-height: 1.92;
     color: #1d1d1f;
     white-space: pre-wrap;
     word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .result-body pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    font: inherit;
   }
 
   .result-body::-webkit-scrollbar { width: 6px; }
