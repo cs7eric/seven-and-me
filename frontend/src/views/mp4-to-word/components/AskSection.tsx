@@ -5,6 +5,21 @@ interface QaItem {
   loading?: boolean;
 }
 
+function AskAnswerSkeleton() {
+  return (
+    <div className="space-y-3 p-1">
+      <div className="flex items-center gap-2">
+        <div className="h-4 w-24 animate-pulse rounded bg-slate-200" />
+        <div className="h-4 w-16 animate-pulse rounded bg-slate-100" />
+      </div>
+      <div className="h-4 w-full animate-pulse rounded bg-slate-200" />
+      <div className="h-4 w-11/12 animate-pulse rounded bg-slate-200" />
+      <div className="h-4 w-4/5 animate-pulse rounded bg-slate-200" />
+      <div className="h-4 w-3/5 animate-pulse rounded bg-slate-100" />
+    </div>
+  );
+}
+
 interface AskSectionProps {
   qaItems: QaItem[];
   collapsed: boolean;
@@ -57,7 +72,10 @@ export function AskSection({
                   <div key={item.id} className="qa-item">
                     <div className="qa-item-header" onClick={() => onToggleItem(item.id)}>
                       <div className={`qa-item-q-text ${isCollapsed ? "" : "expanded"}`}>
-                        {item.question}
+                        <div className="flex items-center gap-2">
+                          <span>{item.question}</span>
+                          {item.loading ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">Loading</span> : null}
+                        </div>
                       </div>
                       <svg
                         className={`qa-item-toggle ${isCollapsed ? "" : "open"}`}
@@ -78,12 +96,7 @@ export function AskSection({
                     <div className={`qa-item-body ${isCollapsed ? "" : "open"}`}>
                       <div className="qa-answer-body">
                         {item.loading ? (
-                          <div className="space-y-3 p-1">
-                            <div className="h-4 w-1/2 animate-pulse rounded bg-slate-200" />
-                            <div className="h-4 w-full animate-pulse rounded bg-slate-200" />
-                            <div className="h-4 w-4/5 animate-pulse rounded bg-slate-200" />
-                            <div className="h-4 w-3/5 animate-pulse rounded bg-slate-200" />
-                          </div>
+                          <AskAnswerSkeleton />
                         ) : (
                           <div
                             className="qa-answer"

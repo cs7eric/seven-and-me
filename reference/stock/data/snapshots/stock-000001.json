@@ -2,7 +2,7 @@
   "id": "stock-000001",
   "symbol": "000001",
   "target_type": "stock",
-  "period": "15m",
+  "period": "5m",
   "adjust": "none",
   "indicators": [
     "MA",
@@ -12,5 +12,5 @@
   ],
   "drawing_tool": null,
   "show_auction_panel": true,
-  "updated_at": "2026-05-30T22:50:43.779582"
+  "updated_at": "2026-05-31T00:58:51.613656"
 }

@@ -1,8 +1,18 @@
 {
   "type": "mp4_parse",
   "version": 1,
-  "updated_at": "2026-05-30T17:09:38.925558",
+  "updated_at": "2026-05-31T00:37:02.542882",
   "items": [
+    {
+      "id": "mp4-8c775f20-e2b6-4583-9302-d1690f7efc82",
+      "title": "从爆仓到亿级：我的情绪周期悟道之路",
+      "created_at": "2026-05-31T00:37:02.542882",
+      "updated_at": "2026-05-31T00:37:02.542882",
+      "task_id": "8c775f20-e2b6-4583-9302-d1690f7efc82",
+      "status": "done",
+      "file_name": "第一人称解读92科比情绪周期四象图心法 #92科比.mp4",
+      "data_file": "parse/data/mp4-8c775f20-e2b6-4583-9302-d1690f7efc82.json"
+    },
     {
       "id": "mp4-90701d42-fdcc-4b1e-9b2e-4e3ceeaa8567",
       "title": "龙头战法深度解析：连板高度的奥秘",

@@ -356,6 +356,17 @@ export async function reorderMP4History(orderedIds: string[]): Promise<MP4Histor
   return data.items || [];
 }
 
+export async function deleteMP4History(historyId: string): Promise<{ id: string; title?: string }> {
+  const res = await fetch(`${API_BASE}/api/reference/mp4-history/${historyId}`, {
+    method: "DELETE",
+  });
+  const data = (await res.json().catch(() => null)) as { id?: string; title?: string; error?: string } | null;
+  if (!res.ok || !data?.id) {
+    throw new Error((data && data.error) || "删除历史记录失败");
+  }
+  return { id: data.id, title: data.title };
+}
+
 export async function askHistoryQuestion(historyId: string, question: string): Promise<{ id: string; question: string; answer: string; created_at: string }> {
   const res = await fetch(`${API_BASE}/api/reference/mp4-history/${historyId}/ask`, {
     method: "POST",

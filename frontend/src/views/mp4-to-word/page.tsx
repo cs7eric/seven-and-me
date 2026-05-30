@@ -2,6 +2,7 @@ import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Phase, PostMetadata, SSEEvent, TransferProgress } from "../../lib/types";
 import { askQuestion, createSSEConnection, exportMarkdown, fetchTaskSnapshot, saveMP4History, sendDownloaderResultToParse, uploadFile, uploadFileWithProgress } from "../../lib/api";
+import { toast } from "sonner";
 import { QA_STYLE_FIX } from "./styles";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
@@ -21,7 +22,8 @@ import { AlertCircle, BookOpen, Captions, CheckCircle2, Code2, Copy, Download, E
 interface QaItem {
   id: string;
   question: string;
-  answerHtml: string;
+  answerHtml?: string;
+  loading?: boolean;
 }
 
 interface RemoteTaskDraft {
@@ -194,7 +196,6 @@ export default function Mp4ToWordPage() {
   const [readerTitle, setReaderTitle] = useState("");
   const [summaryRawMode, setSummaryRawMode] = useState(false);
   const [historySaving, setHistorySaving] = useState(false);
-  const [historyMessage, setHistoryMessage] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapsedQaItems, setCollapsedQaItems] = useState<Record<string, boolean>>({});
   const [remoteStarting, setRemoteStarting] = useState(false);
@@ -230,7 +231,6 @@ export default function Mp4ToWordPage() {
     setCollapsed({});
     setCollapsedQaItems({});
     setSummaryRawMode(false);
-    setHistoryMessage("");
     setDownloadProgress({ progress: 0, phase: "pending" });
     setIntakeProgress({ progress: 0, phase: "pending" });
   }, []);
@@ -578,10 +578,9 @@ export default function Mp4ToWordPage() {
   const handleSaveHistory = useCallback(async () => {
     if (!taskId || phase !== "done" || historySaving) return;
     setHistorySaving(true);
-    setHistoryMessage("");
     try {
       const record = await saveMP4History(taskId);
-      setHistoryMessage(`已保存历史记录：${record.title}`);
+      toast.success(`已保存历史记录：${record.title}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存历史记录失败");
     } finally {
@@ -592,19 +591,25 @@ export default function Mp4ToWordPage() {
   const handleQASubmit = useCallback(async (prefilledQuestion?: string) => {
     const question = (prefilledQuestion ?? qaInput).trim();
     if (!taskId || !question || qaLoading) return;
+
+    const tempId = `qa-item-${Date.now()}`;
     setQaLoading(true);
+    setQaInput("");
+    setCollapsed((prev) => ({ ...prev, ask: false }));
+    setCollapsedQaItems((prev) => ({ ...prev, [tempId]: false }));
+    setQaItems((prev) => [{ id: tempId, question, loading: true }, ...prev]);
+    toast.success("Ask AI 已发送");
+
     try {
       const answer = await askQuestion(taskId, question);
-      const id = `qa-item-${Date.now()}`;
-      const newItem: QaItem = {
-        id,
+      const resolvedItem: QaItem = {
+        id: tempId,
         question,
         answerHtml: renderQaAnswer(answer, question),
       };
-      setQaItems((prev) => [newItem, ...prev]);
-      setCollapsedQaItems((prev) => ({ ...prev, [id]: false }));
-      setQaInput("");
+      setQaItems((prev) => prev.map((item) => (item.id === tempId ? resolvedItem : item)));
     } catch {
+      setQaItems((prev) => prev.filter((item) => item.id !== tempId));
       setError("Q&A request failed");
     } finally {
       setQaLoading(false);
@@ -1144,16 +1149,9 @@ export default function Mp4ToWordPage() {
               collapsedQaItems={collapsedQaItems}
               onToggleSection={() => toggleCollapse("ask")}
               onToggleItem={toggleQaItemCollapse}
+              onFollowupClick={handleQAChipClick}
             />
           </div>
-        )}
-
-        {historyMessage && (
-          <Alert className="mb-5 border-emerald-200 bg-emerald-50 text-emerald-900">
-            <CheckCircle2 className="size-4" />
-            <AlertTitle>History exported</AlertTitle>
-            <AlertDescription>{historyMessage}</AlertDescription>
-          </Alert>
         )}
 
         <FloatingAskBar

@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { toast } from "sonner";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
 import { AskSection } from "./components/AskSection";
@@ -74,7 +75,6 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
   const [collapsedQaItems, setCollapsedQaItems] = useState<Record<string, boolean>>({});
   const [askInput, setAskInput] = useState("");
   const [askLoading, setAskLoading] = useState(false);
-  const [askSuccess, setAskSuccess] = useState("");
 
   const handleToggleQaItem = useCallback((id: string) => {
     setCollapsedQaItems((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -85,12 +85,13 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
     if (!question || askLoading) return;
 
     const tempId = `temp-${Date.now()}`;
-    setAskSuccess("");
     setActiveView("ask");
     setCollapsedAsk(false);
+    setCollapsedQaItems((prev) => ({ ...prev, [tempId]: false }));
     setQaItems((prev) => [{ id: tempId, question, loading: true }, ...prev]);
     setAskLoading(true);
     setAskInput("");
+    toast.success("Ask AI 已发送");
 
     try {
       const item = await askHistoryQuestion(record.id, question);
@@ -99,7 +100,6 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
         question: item.question,
         answerHtml: renderQaAnswer(item.answer, item.question),
       } : qa));
-      setAskSuccess("Ask AI 已生成并保存到当前历史记录。");
     } catch (e) {
       setQaItems((prev) => prev.filter((qa) => qa.id !== tempId));
       throw e;
@@ -109,18 +109,9 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
   }, [askInput, askLoading, record.id]);
 
   const handleFollowupAsk = useCallback((question: string) => {
-    setAskInput(question);
     setActiveView("ask");
     setCollapsedAsk(false);
-    setTimeout(() => {
-      void (async () => {
-        try {
-          await handleAsk(question);
-        } catch {
-          return;
-        }
-      })();
-    }, 0);
+    void handleAsk(question).catch(() => undefined);
   }, [handleAsk]);
 
   const detailContent = useMemo(() => {
@@ -129,12 +120,6 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
     if (activeView === "ask") {
       return (
         <div className="space-y-4">
-          {askSuccess ? (
-            <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
-              <AlertTitle>Success</AlertTitle>
-              <AlertDescription>{askSuccess}</AlertDescription>
-            </Alert>
-          ) : null}
           <AskHistoryPanel
             qaItems={qaItems}
             collapsed={collapsedAsk}
@@ -153,7 +138,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
         </div>
       </div>
     );
-  }, [activeView, askInput, askLoading, askSuccess, collapsedAsk, collapsedQaItems, handleAsk, handleToggleQaItem, polishedHtml, qaItems, summaryHtml, task.polished, task.transcript, transcriptHtml]);
+  }, [activeView, collapsedAsk, collapsedQaItems, handleToggleQaItem, polishedHtml, qaItems, summaryHtml, task.polished, task.transcript, transcriptHtml]);
 
   return (
     <div className="space-y-5">

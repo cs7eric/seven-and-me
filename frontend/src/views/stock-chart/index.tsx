@@ -49,10 +49,11 @@ export default function StockChartPage() {
 
   useEffect(() => {
     let active = true
-    setError("")
 
     void (async () => {
       try {
+        if (!active) return
+        setError("")
         const [workspace, klineResult, annotationResult, auctionResult] = await Promise.all([
           fetchStockWorkspace(targetType, symbol, name),
           fetchStockKlines({ targetType, symbol, name, period, adjust }),

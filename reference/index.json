@@ -1,12 +1,18 @@
 {
   "version": 1,
-  "updated_at": "2026-05-30T22:50:43.778323",
+  "updated_at": "2026-05-31T00:37:02.542882",
   "types": {
     "stock_chart": {
       "title": "Stock Chart Workspace",
       "index_file": "stock/index/index.json",
       "data_dir": "stock/data",
       "count": 2
+    },
+    "mp4_parse": {
+      "title": "MP4 Parse History",
+      "index_file": "parse/index/index.json",
+      "data_dir": "parse/data",
+      "count": 3
     }
   }
 }

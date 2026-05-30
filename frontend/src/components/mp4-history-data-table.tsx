@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   closestCenter,
   DndContext,
@@ -32,8 +32,8 @@ import {
   type VisibilityState,
   type Row,
 } from "@tanstack/react-table";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, GripVertical, MoreHorizontal } from "lucide-react";
-import { reorderMP4History } from "@/lib/api";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Eye, GripVertical, MoreHorizontal, Trash2 } from "lucide-react";
+import { deleteMP4History, reorderMP4History } from "@/lib/api";
 import type { MP4HistoryListItem } from "@/lib/history-types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 import {
   Select,
   SelectContent,
@@ -83,7 +84,8 @@ function DragHandle({ id }: { id: string }) {
   );
 }
 
-const columns: ColumnDef<MP4HistoryListItem>[] = [
+function getColumns(onDelete: (item: MP4HistoryListItem) => void): ColumnDef<MP4HistoryListItem>[] {
+  return [
   {
     id: "drag",
     header: () => null,
@@ -141,11 +143,19 @@ const columns: ColumnDef<MP4HistoryListItem>[] = [
               View detail
             </Link>
           </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-red-600 focus:text-red-600"
+            onClick={() => onDelete(row.original)}
+          >
+            <Trash2 className="size-4" />
+            Delete
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     ),
   },
-];
+  ];
+}
 
 function DraggableRow({ row }: { row: Row<MP4HistoryListItem> }) {
   const { transform, transition, setNodeRef, isDragging } = useSortable({ id: row.original.id });
@@ -165,6 +175,7 @@ function DraggableRow({ row }: { row: Row<MP4HistoryListItem> }) {
 }
 
 export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryListItem[] }) {
+  const navigate = useNavigate();
   const [data, setData] = React.useState(() => initialData);
   const [sorting, setSorting] = React.useState<SortingState>([{ id: "created_at", desc: true }]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
@@ -177,6 +188,19 @@ export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryLis
 
   const dataIds = React.useMemo<UniqueIdentifier[]>(() => data.map((item) => item.id), [data]);
   const sensors = useSensors(useSensor(MouseSensor), useSensor(TouchSensor), useSensor(KeyboardSensor));
+
+  async function handleDelete(item: MP4HistoryListItem) {
+    try {
+      const deleted = await deleteMP4History(item.id);
+      setData((prev) => prev.filter((entry) => entry.id !== item.id));
+      toast.success(`已删除历史记录：${deleted.title || item.title}`);
+      navigate("/mp4-to-word/history", { replace: true });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "删除历史记录失败");
+    }
+  }
+
+  const columns = React.useMemo(() => getColumns(handleDelete), []);
 
   const table = useReactTable({
     data,
