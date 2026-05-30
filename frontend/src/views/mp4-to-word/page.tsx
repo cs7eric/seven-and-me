@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Phase, PostMetadata, SSEEvent, TransferProgress } from "../../lib/types";
-import { askQuestion, createSSEConnection, exportMarkdown, fetchTaskSnapshot, sendDownloaderResultToParse, uploadFile } from "../../lib/api";
+import { askQuestion, createSSEConnection, exportMarkdown, fetchTaskSnapshot, sendDownloaderResultToParse, uploadFile, uploadFileWithProgress } from "../../lib/api";
 import { STEPS } from "./constants";
 import { QA_STYLE_FIX } from "./styles";
 import { buildSummaryCards } from "./lib/summary-renderer";
@@ -119,6 +119,7 @@ function ProgressCard({
 export default function Mp4ToWordPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const esRef = useRef<EventSource | null>(null);
+  const remoteStartKeyRef = useRef("");
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTaskId = searchParams.get("task") || "";
 
@@ -219,6 +220,55 @@ export default function Mp4ToWordPage() {
       return;
     }
   }, [applyTaskSnapshot]);
+
+  const downloadRemoteFileInBrowser = useCallback(async (draft: RemoteTaskDraft): Promise<File> => {
+    const response = await fetch(draft.downloadUrl, { cache: "no-store" });
+    if (!response.ok || !response.body) {
+      throw new Error("浏览器下载远程文件失败");
+    }
+
+    const totalBytes = Number(response.headers.get("Content-Length") || 0);
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let downloadedBytes = 0;
+    const startedAt = Date.now();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      chunks.push(value);
+      downloadedBytes += value.byteLength;
+      const elapsed = Math.max((Date.now() - startedAt) / 1000, 0.001);
+      const speed = downloadedBytes / elapsed;
+      const progress = totalBytes ? Math.round((downloadedBytes / totalBytes) * 100) : Math.min(95, Math.round(downloadedBytes / (4 * 1024 * 1024)));
+
+      setDownloadProgress({
+        phase: "browser-downloading",
+        progress,
+        downloaded_bytes: downloadedBytes,
+        total_bytes: totalBytes,
+        eta_seconds: totalBytes && speed > 0 ? Math.round((totalBytes - downloadedBytes) / speed) : null,
+        speed_bytes_per_sec: Math.round(speed),
+      });
+    }
+
+    const blob = new Blob(chunks.map((chunk) => chunk.slice().buffer), { type: response.headers.get("Content-Type") || "video/mp4" });
+    const safeTitle = draft.title.replace(/[\\/:*?"<>|]/g, "_").trim() || "remote-video";
+    const fileName = /\.[a-z0-9]{2,6}$/i.test(safeTitle) ? safeTitle : `${safeTitle}.mp4`;
+
+    setDownloadProgress({
+      phase: "done",
+      progress: 100,
+      downloaded_bytes: blob.size,
+      total_bytes: totalBytes || blob.size,
+      eta_seconds: 0,
+      speed_bytes_per_sec: 0,
+    });
+
+    return new File([blob], fileName, { type: blob.type || "video/mp4" });
+  }, []);
 
   const startTaskMonitoring = useCallback((id: string) => {
     setTaskId(id);
@@ -341,7 +391,10 @@ export default function Mp4ToWordPage() {
   }, [remoteMeta, refreshTaskSnapshot, setSearchParams]);
 
   const startRemoteWorkflow = useCallback(async () => {
-    if (!remoteDraft || remoteStarting) return;
+    if (!remoteDraft) return;
+    const remoteStartKey = `${remoteDraft.downloadUrl}|${remoteDraft.title}|${remoteDraft.sourceUrl}`;
+    if (remoteStarting || remoteStartKeyRef.current === remoteStartKey) return;
+    remoteStartKeyRef.current = remoteStartKey;
     setRemoteStarting(true);
     resetProcessingState("converting");
     setRemoteMeta({
@@ -351,29 +404,38 @@ export default function Mp4ToWordPage() {
     });
 
     try {
-      const workflow = await sendDownloaderResultToParse({
-        downloadUrl: remoteDraft.downloadUrl,
-        title: remoteDraft.title,
-        sourceUrl: remoteDraft.sourceUrl,
-        metadata: {
-          title: remoteDraft.title,
-          platform: remoteDraft.platform,
-          duration: remoteDraft.duration,
-          noteType: remoteDraft.noteType,
-          download_audio_url: remoteDraft.audioUrl,
-          original_url: remoteDraft.sourceUrl,
-        },
+      const file = await downloadRemoteFileInBrowser(remoteDraft);
+      setRemoteFileName(file.name);
+      const id = await uploadFileWithProgress(file, (progress) => {
+        setIntakeProgress(progress);
       });
+      startTaskMonitoring(id);
+    } catch {
+      try {
+        const workflow = await sendDownloaderResultToParse({
+          downloadUrl: remoteDraft.downloadUrl,
+          title: remoteDraft.title,
+          sourceUrl: remoteDraft.sourceUrl,
+          metadata: {
+            title: remoteDraft.title,
+            platform: remoteDraft.platform,
+            duration: remoteDraft.duration,
+            noteType: remoteDraft.noteType,
+            download_audio_url: remoteDraft.audioUrl,
+            original_url: remoteDraft.sourceUrl,
+          },
+        });
 
-      setRemoteFileName(workflow.file_name);
-      startTaskMonitoring(workflow.task_id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setPhase("error");
+        setRemoteFileName(workflow.file_name);
+        startTaskMonitoring(workflow.task_id);
+      } catch (fallbackError) {
+        setError(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+        setPhase("error");
+      }
     } finally {
       setRemoteStarting(false);
     }
-  }, [remoteDraft, remoteStarting, resetProcessingState, startTaskMonitoring]);
+  }, [downloadRemoteFileInBrowser, remoteDraft, remoteStarting, resetProcessingState, startTaskMonitoring]);
 
   const toggleCollapse = useCallback((name: string) => {
     setCollapsed((prev) => ({ ...prev, [name]: !prev[name] }));
@@ -385,6 +447,7 @@ export default function Mp4ToWordPage() {
 
   const handleFileSelected = useCallback(async (file: File) => {
     setSearchParams({});
+    remoteStartKeyRef.current = "";
     resetProcessingState("converting");
     setTaskId("");
     setRemoteMeta(null);
@@ -401,6 +464,7 @@ export default function Mp4ToWordPage() {
 
   const handleRetryRemote = useCallback(() => {
     if (!remoteDraft) return;
+    remoteStartKeyRef.current = "";
     startRemoteWorkflow();
   }, [remoteDraft, startRemoteWorkflow]);
 
@@ -635,8 +699,8 @@ export default function Mp4ToWordPage() {
               />
             ) : null}
             <ProgressCard
-              title={remoteDraft ? "Ingest" : "Processing"}
-              description={remoteDraft ? "下载完成后会自动进入 MP4 to Word 处理模块，无需二次点击。" : "本地文件已上传，正在转换音频并接入转写流程。"}
+              title={remoteDraft ? "Upload / Fallback Ingest" : "Processing"}
+              description={remoteDraft ? "优先由浏览器下载后上传到 MP4 to Word；如果浏览器受 CORS 限制，会自动回退到后端接管。" : "本地文件已上传，正在转换音频并接入转写流程。"}
               progress={remoteDraft ? intakeProgress : { ...intakeProgress, progress: Math.max(intakeProgress.progress || 0, phase === "transcribing" ? 100 : 15) }}
               transferred={remoteDraft ? intakeProgress.processed_bytes || 0 : intakeProgress.processed_bytes || 0}
               total={remoteDraft ? intakeProgress.total_bytes || 0 : intakeProgress.total_bytes || 0}

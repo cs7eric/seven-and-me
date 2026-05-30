@@ -85,6 +85,50 @@ export async function uploadFile(file: File): Promise<string> {
   return data.task_id as string;
 }
 
+export function uploadFileWithProgress(file: File, onProgress: (progress: TransferProgress) => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const xhr = new XMLHttpRequest();
+    const startedAt = Date.now();
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      const elapsed = Math.max((Date.now() - startedAt) / 1000, 0.001);
+      const speed = event.loaded / elapsed;
+      onProgress({
+        phase: "uploading",
+        progress: Math.round((event.loaded / event.total) * 100),
+        processed_bytes: event.loaded,
+        total_bytes: event.total,
+        eta_seconds: speed > 0 ? Math.round((event.total - event.loaded) / speed) : null,
+        speed_bytes_per_sec: Math.round(speed),
+      });
+    };
+
+    xhr.onload = () => {
+      const data = JSON.parse(xhr.responseText || "{}");
+      if (xhr.status >= 200 && xhr.status < 300 && data.task_id) {
+        onProgress({
+          phase: "done",
+          progress: 100,
+          processed_bytes: file.size,
+          total_bytes: file.size,
+          eta_seconds: 0,
+        });
+        resolve(data.task_id);
+        return;
+      }
+      reject(new Error(data.error || "上传失败"));
+    };
+
+    xhr.onerror = () => reject(new Error("上传失败"));
+    xhr.open("POST", `${API_BASE}/api/transcribe`);
+    xhr.send(formData);
+  });
+}
+
 export function createSSEConnection(
   taskId: string,
   callbacks: {
