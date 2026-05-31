@@ -17,6 +17,9 @@ const CHART_PERIOD_MAP: Record<StockPeriod, { type: "minute" | "day" | "week"; s
 const MAIN_PANE_ID = "candle_pane"
 const AMOUNT_PANE_ID = "amount_pane"
 const MACD_PANE_ID = "macd_pane"
+const STOCK_UP_COLOR = "#dc2626"
+const STOCK_DOWN_COLOR = "#16a34a"
+const STOCK_NEUTRAL_COLOR = "#94a3b8"
 
 function buildMainPaneContent(indicators: string[], maLines: number[]) {
   const content: Array<string | { name: string; shortName: string; calcParams?: number[] }> = []
@@ -114,6 +117,26 @@ export function ChartPanel({
           show: true,
           horizontal: { show: true },
           vertical: { show: true },
+        },
+        candle: {
+          bar: {
+            upColor: STOCK_UP_COLOR,
+            downColor: STOCK_DOWN_COLOR,
+            noChangeColor: STOCK_NEUTRAL_COLOR,
+            upBorderColor: STOCK_UP_COLOR,
+            downBorderColor: STOCK_DOWN_COLOR,
+            noChangeBorderColor: STOCK_NEUTRAL_COLOR,
+            upWickColor: STOCK_UP_COLOR,
+            downWickColor: STOCK_DOWN_COLOR,
+            noChangeWickColor: STOCK_NEUTRAL_COLOR,
+          },
+          priceMark: {
+            last: {
+              upColor: STOCK_UP_COLOR,
+              downColor: STOCK_DOWN_COLOR,
+              noChangeColor: STOCK_NEUTRAL_COLOR,
+            },
+          },
         },
         crosshair: {
           horizontal: { line: { size: 1 } },

@@ -41,6 +41,12 @@ export interface StockAnnotation {
   updated_at: string
 }
 
+export interface StockAuctionPriceRange {
+  low: number
+  high: number
+  spread: number
+}
+
 export interface StockAuctionPhaseSnapshot {
   price?: number
   volume?: number
@@ -53,6 +59,35 @@ export interface StockAuctionPhaseSnapshot {
   auctionVolumeRatio?: number
   unmatchedDelta?: number
   strengthLabel?: string
+  anchorExact?: boolean
+  anchorSource?: string
+  anchorTargetTime?: string
+  priceRange?: StockAuctionPriceRange | null
+  recentPriceTrend?: string
+  recentPriceChange?: number | null
+  recentVolumeDelta?: number | null
+  directionStability?: string
+  directionFlipCount?: number
+  dominantDirection?: string
+  imbalancePressure?: number | null
+  dataConfidence?: string
+}
+
+export interface StockAuctionPoint {
+  time_label: string
+  price?: number
+  matched_volume?: number
+  unmatched_volume?: number
+  unmatched_direction_raw?: number
+  matched_amount_estimated?: number
+}
+
+export interface StockAuctionDetails {
+  quote?: Record<string, unknown>
+  auction0925?: Record<string, unknown>
+  openingPoints?: StockAuctionPoint[]
+  closingPoints?: StockAuctionPoint[]
+  allPoints?: StockAuctionPoint[]
 }
 
 export interface StockAuctionSnapshot {
@@ -60,4 +95,5 @@ export interface StockAuctionSnapshot {
   trade_date: string
   opening?: StockAuctionPhaseSnapshot
   closing?: StockAuctionPhaseSnapshot
+  details?: StockAuctionDetails
 }

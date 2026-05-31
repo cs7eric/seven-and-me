@@ -1,8 +1,62 @@
 {
   "type": "stock_chart_workspaces",
   "version": 1,
-  "updated_at": "2026-05-31T00:59:19.728794",
+  "updated_at": "2026-05-31T14:25:27.396584",
   "items": [
+    {
+      "id": "stock-600162",
+      "target_type": "stock",
+      "symbol": "600162",
+      "name": "香江控股",
+      "data_file": "stock/data/snapshots/stock-600162.json",
+      "created_at": "2026-05-31T14:14:10.549338",
+      "updated_at": "2026-05-31T14:25:27.396584"
+    },
+    {
+      "id": "stock-002617",
+      "target_type": "stock",
+      "symbol": "002617",
+      "name": "露笑科技",
+      "data_file": "stock/data/snapshots/stock-002617.json",
+      "created_at": "2026-05-31T11:42:40.509350",
+      "updated_at": "2026-05-31T11:44:51.583347"
+    },
+    {
+      "id": "stock-600863",
+      "target_type": "stock",
+      "symbol": "600863",
+      "name": "华能蒙电",
+      "data_file": "stock/data/snapshots/stock-600863.json",
+      "created_at": "2026-05-31T11:35:04.380397",
+      "updated_at": "2026-05-31T11:35:09.356983"
+    },
+    {
+      "id": "stock-000636",
+      "target_type": "stock",
+      "symbol": "000636",
+      "name": "风华高科",
+      "data_file": "stock/data/snapshots/stock-000636.json",
+      "created_at": "2026-05-31T11:21:36.028343",
+      "updated_at": "2026-05-31T11:21:57.977427"
+    },
+    {
+      "id": "stock-600578",
+      "target_type": "stock",
+      "symbol": "600578",
+      "name": "京能电力",
+      "data_file": "stock/data/snapshots/stock-600578.json",
+      "created_at": "2026-05-31T11:20:43.096817",
+      "updated_at": "2026-05-31T11:20:44.520875"
+    },
+    {
+      "id": "stock-600021",
+      "target_type": "stock",
+      "symbol": "600021",
+      "name": "上海电力",
+      "data_file": "stock/data/snapshots/stock-600021.json",
+      "created_at": "2026-05-31T01:41:44.719477",
+      "updated_at": "2026-05-31T11:18:14.104880"
+    },
     {
       "id": "index-000001",
       "target_type": "index",
@@ -19,7 +73,7 @@
       "name": "平安银行",
       "data_file": "stock/data/snapshots/stock-000001.json",
       "created_at": "2026-05-30T23:25:01.373907",
-      "updated_at": "2026-05-31T00:58:51.612736"
+      "updated_at": "2026-05-31T14:04:03.813042"
     }
   ]
 }
