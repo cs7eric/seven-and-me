@@ -7,6 +7,9 @@ import {
   deleteStockAnnotation,
   fetchStockAuction,
   fetchStockKlines,
+  fetchMarketBreadth,
+  fetchMarketBreadthSeries,
+  fetchStockMeta,
   fetchStockWorkspace,
   listStockAnnotations,
   saveStockWorkspace,
@@ -23,9 +26,61 @@ import { IndicatorToolbar } from "./components/indicator-toolbar"
 import { AuctionPanel } from "./components/auction-panel"
 import { TechnicalIndicatorPanel } from "./components/technical-indicator-panel"
 import { useStockChartStore } from "./lib/store"
-import type { StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSignalPoint } from "./lib/types"
+import type { StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSignalPoint, StockTargetType } from "./lib/types"
+import type { StockMeta, MarketBreadth, MarketBreadthSeries } from "./lib/indicator-utils"
 
 const BS_PERSIST_PERIOD = "all"
+
+const INDEX_KLINE_SYMBOLS: Record<string, string> = {
+  "上证指数": "000001",
+  "上证50": "000016",
+  "沪深300": "000300",
+  "中证500": "000905",
+  "中证1000": "000852",
+  "中证2000": "932000",
+  "创业板指": "399006",
+  "科创50": "000688",
+}
+
+function loadContextIndexBars(params: {
+  period: StockPeriod
+  adjust: string
+  sector?: { symbol: string; label: string } | null
+}): Promise<PromiseSettledResult<{ label: string; items: StockKlineBar[] }>[] > {
+  const entries: Array<{ label: string; symbol: string; targetType: StockTargetType }> = Object.entries(INDEX_KLINE_SYMBOLS)
+    .map(([label, symbol]) => ({ label, symbol, targetType: "index" }))
+
+  if (params.sector?.symbol) {
+    entries.push({
+      label: params.sector.label,
+      symbol: params.sector.symbol,
+      targetType: /^\d+$/.test(params.sector.symbol) ? "index" : "sector",
+    })
+  }
+
+  return Promise.allSettled(
+    entries.map(async ({ label, symbol, targetType }) => {
+      const res = await fetchStockKlines({
+        targetType,
+        symbol,
+        name: label,
+        period: params.period,
+        adjust: params.adjust as "none" | "qfq" | "hfq",
+      })
+      return { label, items: res.items }
+    }),
+  )
+}
+
+function settledBarsToMap(results: PromiseSettledResult<{ label: string; items: StockKlineBar[] }>[]) {
+  const map: Record<string, StockKlineBar[]> = {}
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      map[r.value.label] = r.value.items
+    }
+  }
+  return map
+}
 
 function annotationToSignal(annotation: StockAnnotation): StockSignalPoint | null {
   if (annotation.overlay_type !== "bs_point") return null
@@ -91,6 +146,10 @@ export default function StockChartPage() {
   const [bars, setBars] = useState<StockKlineBar[]>([])
   const [annotations, setAnnotations] = useState<StockAnnotation[]>([])
   const [auction, setAuction] = useState<StockAuctionSnapshot | null>(null)
+  const [indexBarsMap, setIndexBarsMap] = useState<Record<string, StockKlineBar[]>>({})
+  const [stockMeta, setStockMeta] = useState<StockMeta | null>(null)
+  const [breadth, setBreadth] = useState<MarketBreadth | null>(null)
+  const [breadthSeries, setBreadthSeries] = useState<MarketBreadthSeries>([])
   const [showBsPoints, setShowBsPoints] = useState(true)
   const [manualSignalMode, setManualSignalMode] = useState<"B" | "S" | null>(null)
   const [manualSignals, setManualSignals] = useState<StockSignalPoint[]>([])
@@ -122,6 +181,50 @@ export default function StockChartPage() {
         setAnnotations(annotationResult)
         setManualSignals(sharedSignalAnnotations.map(annotationToSignal).filter((item): item is StockSignalPoint => Boolean(item)))
         setAuction(auctionResult)
+
+        fetchStockMeta({ targetType, symbol }).then((meta) => {
+          if (!active) return
+
+          const sectorSymbol = meta.sectorIndexSymbol || meta.industry || null
+          const sectorLabel = meta.sectorIndexName || sectorSymbol
+          setStockMeta({
+            marketCap: meta.circMarketCap || null,
+            capStyle: meta.capStyle,
+            sectorIndexSymbol: sectorLabel,
+          })
+
+          void loadContextIndexBars({
+            period,
+            adjust,
+            sector: sectorSymbol ? { symbol: sectorSymbol, label: sectorLabel || sectorSymbol } : null,
+          }).then((results) => {
+            if (!active) return
+            setIndexBarsMap(settledBarsToMap(results))
+          })
+        }).catch(() => {
+          if (!active) return
+          setStockMeta(null)
+
+          void loadContextIndexBars({ period, adjust }).then((results) => {
+            if (!active) return
+            setIndexBarsMap(settledBarsToMap(results))
+          })
+        })
+
+        fetchMarketBreadth().then((b) => {
+          if (!active) return
+          setBreadth(b)
+        }).catch(() => {
+          setBreadth(null)
+        })
+
+        fetchMarketBreadthSeries().then((series) => {
+          if (!active) return
+          setBreadthSeries(series)
+        }).catch(() => {
+          setBreadthSeries([])
+        })
+
         await saveStockWorkspace({
           symbol,
           name,
@@ -137,6 +240,9 @@ export default function StockChartPage() {
         setBars([])
         setAnnotations([])
         setAuction(null)
+        setIndexBarsMap({})
+        setStockMeta(null)
+        setBreadth(null)
         setError(err instanceof Error ? err.message : "加载 stock chart 失败")
       }
     })()
@@ -349,7 +455,7 @@ export default function StockChartPage() {
           </TabsContent>
 
           <TabsContent value="ma-support" className="mt-0">
-            <TechnicalIndicatorPanel bars={bars} />
+            <TechnicalIndicatorPanel bars={bars} indexBarsMap={indexBarsMap} stockMeta={stockMeta} breadth={breadth} breadthSeries={breadthSeries} />
           </TabsContent>
 
           <TabsContent value="fund-flow" className="mt-0">

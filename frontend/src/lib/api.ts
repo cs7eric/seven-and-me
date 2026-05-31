@@ -266,6 +266,97 @@ export async function fetchStockAuction(symbol: string): Promise<StockAuctionSna
   return data;
 }
 
+export interface StockMetaResponse {
+  symbol: string
+  name: string
+  totalMarketCap: number
+  circMarketCap: number
+  industry: string
+  capStyle: "large" | "mid" | "small" | "micro" | null
+  sectorIndexSymbol?: string | null
+  sectorIndexName?: string | null
+}
+
+export async function fetchStockMeta(params: {
+  targetType: StockTargetType
+  symbol: string
+}): Promise<StockMetaResponse> {
+  const query = new URLSearchParams({
+    target_type: params.targetType,
+    symbol: params.symbol,
+  })
+  const res = await fetch(`${API_BASE}/api/stock-chart/stock-meta?${query.toString()}`)
+  const data = (await res.json().catch(() => null)) as StockMetaResponse | null
+  if (!res.ok || !data) throw new Error("获取股票元数据失败")
+  return data
+}
+
+export async function fetchMarketBreadth(): Promise<{
+  upCount: number | null
+  downCount: number | null
+  limitUpCount: number | null
+  limitDownCount: number | null
+  breakRate: number | null
+  maxLianBan: number | null
+  yesterdayLimitUpReturn: number | null
+  totalTurnover: number | null
+  downOver5Count: number | null
+  new20HighCount: number | null
+  new20LowCount: number | null
+}> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/market-breadth`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取市场情绪数据失败")
+  return {
+    upCount: (data.upCount as number) ?? null,
+    downCount: (data.downCount as number) ?? null,
+    limitUpCount: (data.limitUpCount as number) ?? null,
+    limitDownCount: (data.limitDownCount as number) ?? null,
+    breakRate: (data.breakRate as number) ?? null,
+    maxLianBan: (data.maxLianBan as number) ?? null,
+    yesterdayLimitUpReturn: (data.yesterdayLimitUpReturn as number) ?? null,
+    totalTurnover: (data.totalTurnover as number) ?? null,
+    downOver5Count: (data.downOver5Count as number) ?? null,
+    new20HighCount: (data.new20HighCount as number) ?? null,
+    new20LowCount: (data.new20LowCount as number) ?? null,
+  }
+}
+
+export async function fetchMarketBreadthSeries(): Promise<Array<{
+  upCount: number | null
+  downCount: number | null
+  limitUpCount: number | null
+  limitDownCount: number | null
+  totalCount: number | null
+  breakRate: number | null
+  maxLianBan: number | null
+  yesterdayLimitUpReturn: number | null
+  totalTurnover: number | null
+  downOver5Count: number | null
+  new20HighCount: number | null
+  new20LowCount: number | null
+  date: string
+}>> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/market-breadth-series`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取市场情绪序列数据失败")
+  return ((data.items as Array<Record<string, unknown>>) ?? []).map((item) => ({
+    upCount: (item.upCount as number) ?? null,
+    downCount: (item.downCount as number) ?? null,
+    limitUpCount: (item.limitUpCount as number) ?? null,
+    limitDownCount: (item.limitDownCount as number) ?? null,
+    totalCount: (item.totalCount as number) ?? null,
+    breakRate: (item.breakRate as number) ?? null,
+    maxLianBan: (item.maxLianBan as number) ?? null,
+    yesterdayLimitUpReturn: (item.yesterdayLimitUpReturn as number) ?? null,
+    totalTurnover: (item.totalTurnover as number) ?? null,
+    downOver5Count: (item.downOver5Count as number) ?? null,
+    new20HighCount: (item.new20HighCount as number) ?? null,
+    new20LowCount: (item.new20LowCount as number) ?? null,
+    date: String(item.date ?? ""),
+  }))
+}
+
 export async function askQuestion(
   taskId: string,
   question: string

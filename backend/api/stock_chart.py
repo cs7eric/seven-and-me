@@ -2,6 +2,8 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
+from backend.adapters.market.eastmoney import fetch_stock_meta, fetch_market_breadth
+from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
 from backend.repositories.stock.workspace_repo import stock_kline_cache_file
 from backend.services.stock.auction_service import fetch_stock_auction
 from backend.services.stock.kline_service import resolve_stock_klines
@@ -14,13 +16,13 @@ from backend.services.stock.workspace_service import (
     remove_stock_annotation,
     update_stock_annotation,
 )
-from backend.utils.json_io import write_json_file
+from backend.utils.json_io import read_json_file, write_json_file
 
 stock_chart_bp = Blueprint('stock_chart', __name__)
 
 
 def sample_stock_klines(symbol: str, period: str) -> list[dict]:
-    from app import sample_stock_klines as app_sample_stock_klines
+    from backend.services.stock.sample_data_service import sample_stock_klines as app_sample_stock_klines
     return app_sample_stock_klines(symbol, period)
 
 
@@ -105,3 +107,76 @@ def delete_stock_chart_annotation(annotation_id):
 def stock_chart_auction():
     symbol = str(request.args.get('symbol', '000001')).strip() or '000001'
     return jsonify(fetch_stock_auction(symbol))
+
+
+@stock_chart_bp.route('/api/stock-chart/stock-meta')
+def stock_chart_meta():
+    target_type = str(request.args.get('target_type', 'stock')).strip() or 'stock'
+    symbol = str(request.args.get('symbol', '000001')).strip() or '000001'
+    try:
+        return jsonify(fetch_stock_meta(target_type, symbol))
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'symbol': symbol, 'capStyle': None, 'sectorIndexSymbol': None, 'sectorIndexName': None}), 200
+
+
+_BREADTH_CACHE_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'latest.json'
+_BREADTH_SERIES_CACHE_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'series.json'
+_BREADTH_CACHE_TTL_SEC = 60
+_MAX_SERIES_DAYS = 120
+
+
+@stock_chart_bp.route('/api/stock-chart/market-breadth')
+def stock_chart_breadth():
+    now_ts = datetime.now().timestamp()
+    cached = read_json_file(_BREADTH_CACHE_FILE, None)
+    if cached and isinstance(cached, dict) and cached.get('cachedAt'):
+        age = now_ts - cached['cachedAt']
+        if age < _BREADTH_CACHE_TTL_SEC:
+            return jsonify(cached)
+
+    try:
+        raw = fetch_market_breadth()
+        payload = {
+            'upCount': raw.get('upCount', 0),
+            'downCount': raw.get('downCount', 0),
+            'limitUpCount': raw.get('limitUpCount', 0),
+            'limitDownCount': raw.get('limitDownCount', 0),
+            'totalCount': raw.get('totalCount', 0),
+            'breakRate': raw.get('breakRate'),
+            'maxLianBan': raw.get('maxLianBan'),
+            'yesterdayLimitUpReturn': raw.get('yesterdayLimitUpReturn'),
+            'totalTurnover': raw.get('totalTurnover'),
+            'downOver5Count': raw.get('downOver5Count'),
+            'new20HighCount': raw.get('new20HighCount'),
+            'new20LowCount': raw.get('new20LowCount'),
+            'source': raw.get('source'),
+            'cachedAt': now_ts,
+            'date': datetime.now().strftime('%Y-%m-%d'),
+        }
+
+        series = read_json_file(_BREADTH_SERIES_CACHE_FILE, [])
+        if not isinstance(series, list):
+            series = []
+        existing_dates = {item.get('date') for item in series if isinstance(item, dict)}
+        if payload['date'] not in existing_dates:
+            series.append(payload)
+        series.sort(key=lambda x: str(x.get('date', '')))
+        series = series[-_MAX_SERIES_DAYS:]
+        _BREADTH_SERIES_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        write_json_file(_BREADTH_SERIES_CACHE_FILE, series)
+
+        _BREADTH_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        write_json_file(_BREADTH_CACHE_FILE, payload)
+        return jsonify(payload)
+    except Exception as exc:
+        if cached:
+            return jsonify(cached)
+        return jsonify({'error': str(exc), 'cachedAt': None}), 502
+
+
+@stock_chart_bp.route('/api/stock-chart/market-breadth-series')
+def stock_chart_breadth_series():
+    series = read_json_file(_BREADTH_SERIES_CACHE_FILE, [])
+    if not series:
+        return jsonify({'items': []})
+    return jsonify({'items': series})

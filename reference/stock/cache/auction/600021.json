@@ -1,6 +1,6 @@
 {
   "symbol": "600021",
-  "trade_date": "2026-05-31",
+  "trade_date": "2026-06-01",
   "opening": {
     "time": "09:24:59",
     "price": 21.0,
@@ -139,7 +139,7 @@
     },
     "auction0925": {
       "code": "sh600021",
-      "trading_date": "2026-05-31",
+      "trading_date": "2026-06-01",
       "has_auction_0925": false,
       "price": null,
       "price_milli": null,

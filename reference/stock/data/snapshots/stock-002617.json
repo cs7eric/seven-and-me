@@ -2,8 +2,8 @@
   "id": "stock-002617",
   "symbol": "002617",
   "target_type": "stock",
-  "period": "5m",
-  "adjust": "none",
+  "period": "1d",
+  "adjust": "qfq",
   "indicators": [
     "MA",
     "BOLL",
@@ -12,5 +12,5 @@
   ],
   "drawing_tool": null,
   "show_auction_panel": true,
-  "updated_at": "2026-05-31T11:44:51.584390"
+  "updated_at": "2026-06-01T00:15:29.416668"
 }

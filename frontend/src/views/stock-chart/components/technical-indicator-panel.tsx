@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import type { StockKlineBar } from "../lib/types"
-import { analyzeTrend, getRatioLevel, type SignalCard, type TrendAnalysis, type ScoreLevel, type SignalDirection } from "../lib/indicator-utils"
+import { analyzeTrend, analyzeFullContext, getRatioLevel, type SignalCard, type TrendAnalysis, type ScoreLevel, type SignalDirection, type MarketBreadth, type MarketBreadthSeries, type StockMeta } from "../lib/indicator-utils"
 
 function formatPct(value: number | null): string {
   if (value == null) return "—"
@@ -225,6 +225,106 @@ function CompositeScoreCard({ analysis }: { analysis: TrendAnalysis }) {
         <span className={`font-medium ${matrixLabel.includes("理想") ? "text-emerald-600" : matrixLabel.includes("最差") ? "text-red-500" : matrixLabel.includes("危险") ? "text-amber-500" : "text-slate-600"}`}>
           {matrixLabel}
         </span>
+      </div>
+    </div>
+  )
+}
+
+function MarketEnvCard({
+  title, subtitle, score, level, desc, details, emptyText, hasData, scoreColor,
+}: {
+  title: string
+  subtitle: string
+  score: number
+  level: string
+  desc: string
+  details: Array<{ label: string; score: number; max: number; desc: string }>
+  emptyText: string
+  hasData: boolean
+  scoreColor: string
+}) {
+  if (!hasData) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium text-slate-500">{title}</div>
+            <div className="text-xs text-slate-400">{subtitle}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-lg font-bold tabular-nums text-slate-300">—</div>
+            <div className="text-xs text-slate-400">数据不足</div>
+          </div>
+        </div>
+        <div className="text-xs text-slate-400">{emptyText}</div>
+      </div>
+    )
+  }
+
+  const bg = score >= 80 ? "border-emerald-100 bg-emerald-50/50" : score >= 65 ? "border-emerald-50 bg-white" : score >= 50 ? "border-amber-100 bg-amber-50/50" : "border-slate-200 bg-slate-50/50"
+
+  return (
+    <div className={`rounded-xl border p-4 ${bg}`}>
+      <div className="mb-2 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-medium text-slate-700">{title}</div>
+          <div className="text-xs text-slate-400">{subtitle}</div>
+        </div>
+        <div className="text-right">
+          <div className={`text-xl font-bold tabular-nums ${scoreColor}`}>{score}</div>
+          <div className="text-xs text-slate-400">/ 100 · {level}</div>
+        </div>
+      </div>
+      <div className="mb-2 text-xs text-slate-500">{desc}</div>
+      {details.length > 0 && (
+        <div className="space-y-1 rounded-lg bg-white/70 p-2.5">
+          {details.filter((d) => d.max > 0).map((d) => (
+            <ScoreBar key={d.label} score={d.score} max={d.max} label={d.label} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FinalOpportunityCard({ analysis }: { analysis: TrendAnalysis }) {
+  if (!analysis.finalOpportunityScore || !analysis.marketContext) return null
+
+  const fs = analysis.finalOpportunityScore
+
+  const color = fs.finalOpportunityScore >= 80 ? "text-emerald-600" : fs.finalOpportunityScore >= 65 ? "text-emerald-500" : fs.finalOpportunityScore >= 50 ? "text-amber-500" : fs.finalOpportunityScore >= 35 ? "text-orange-500" : "text-red-500"
+  const bg = fs.finalOpportunityScore >= 80 ? "border-emerald-300 bg-gradient-to-br from-emerald-50 to-white" : fs.finalOpportunityScore >= 65 ? "border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-white" : fs.finalOpportunityScore >= 50 ? "border-amber-200 bg-gradient-to-br from-amber-50/50 to-white" : fs.finalOpportunityScore >= 35 ? "border-orange-200 bg-gradient-to-br from-orange-50/50 to-white" : "border-red-200 bg-gradient-to-br from-red-50/50 to-white"
+
+  return (
+    <div className={`rounded-xl border p-5 ${bg}`}>
+      <div className="mb-3 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-slate-700">综合机会评分</div>
+          <div className="text-xs text-slate-400">五维加权 × 风险折扣</div>
+        </div>
+        <div className="text-right">
+          <div className={`text-3xl font-bold tabular-nums ${color}`}>{fs.finalOpportunityScore}</div>
+          <div className="text-xs text-slate-400">/ 100 · {fs.level}</div>
+        </div>
+      </div>
+
+      <div className="mb-3 space-y-1.5 text-xs">
+        <div className="flex items-center justify-between rounded bg-white/70 px-3 py-1.5">
+          <span className="text-slate-500">机会基础分</span>
+          <span className="font-bold tabular-nums text-slate-700">{fs.opportunityBaseScore}</span>
+        </div>
+        <div className="flex items-center justify-between rounded bg-white/70 px-3 py-1.5">
+          <span className="text-slate-500">风险折扣</span>
+          <span className="font-bold tabular-nums text-slate-700">×{fs.riskDiscount.toFixed(2)}</span>
+        </div>
+        <div className="flex items-center justify-between rounded bg-white/70 px-3 py-1.5">
+          <span className="text-slate-500">权重公式</span>
+          <span className="tabular-nums text-slate-500">技术{Math.round(fs.technicalWeight * 100)}% + 指数{Math.round(fs.indexWeight * 100)}% + 行业{Math.round(fs.industryWeight * 100)}% + 风格{Math.round(fs.styleWeight * 100)}% + 情绪{Math.round(fs.sentimentWeight * 100)}%</span>
+        </div>
+      </div>
+
+      <div className="rounded-lg bg-white/70 px-3 py-2.5 text-sm leading-relaxed text-slate-600">
+        {fs.decision}
       </div>
     </div>
   )
@@ -840,11 +940,26 @@ function BacktestSection({ analysis }: { analysis: TrendAnalysis }) {
   )
 }
 
-export function TechnicalIndicatorPanel({ bars }: { bars: StockKlineBar[] }) {
+export function TechnicalIndicatorPanel({
+  bars,
+  indexBarsMap,
+  breadth,
+  breadthSeries,
+  stockMeta,
+}: {
+  bars: StockKlineBar[]
+  indexBarsMap?: Record<string, StockKlineBar[]> | null
+  breadth?: MarketBreadth | null
+  breadthSeries?: MarketBreadthSeries | null
+  stockMeta?: StockMeta | null
+}) {
   const analysis = useMemo(() => {
     if (bars.length === 0) return null
+    if (indexBarsMap || breadth || stockMeta) {
+      return analyzeFullContext(bars, indexBarsMap ?? null, breadth ?? null, breadthSeries ?? null, stockMeta ?? null)
+    }
     return analyzeTrend(bars)
-  }, [bars])
+  }, [bars, indexBarsMap, breadth, breadthSeries, stockMeta])
 
   if (!analysis) {
     return (
@@ -880,6 +995,70 @@ export function TechnicalIndicatorPanel({ bars }: { bars: StockKlineBar[] }) {
           <RiskScoreCard analysis={analysis} />
           <CompositeScoreCard analysis={analysis} />
         </div>
+
+        {analysis.marketContext && (
+          <>
+            <div className="flex items-center gap-2">
+              <IconActivity className="size-4 text-blue-500" />
+              <span className="text-sm font-medium text-slate-700">市场环境评估</span>
+              {analysis.marketContext.hasIndexData || analysis.marketContext.hasSentimentData ? null : (
+                <Badge variant="outline" className="text-xs text-slate-400">数据待接入</Badge>
+              )}
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              <MarketEnvCard
+                title="指数环境"
+                subtitle="大盘是否支持做多"
+                score={analysis.marketContext.indexEnvironmentScore}
+                level={analysis.marketContext.indexEnvState}
+                desc={analysis.marketContext.indexEnvDesc}
+                details={analysis.marketContext.indexEnvDetail}
+                emptyText="接入指数K线数据后可评估大盘环境"
+                hasData={analysis.marketContext.hasIndexData}
+                scoreColor="text-blue-600"
+              />
+              <MarketEnvCard
+                title="市场情绪"
+                subtitle="赚钱效应强不强"
+                score={analysis.marketContext.marketSentimentScore}
+                level={analysis.marketContext.sentimentState}
+                desc={analysis.marketContext.sentimentDesc}
+                details={analysis.marketContext.sentimentDetail}
+                emptyText="接入涨跌家数、涨停跌停等数据后可评估市场情绪"
+                hasData={analysis.marketContext.hasSentimentData}
+                scoreColor="text-purple-600"
+              />
+              <MarketEnvCard
+                title="风格匹配"
+                subtitle="当前风格是否适合该股"
+                score={analysis.marketContext.styleMatchScore}
+                level={analysis.marketContext.styleMatchState}
+                desc={analysis.marketContext.styleMatchDesc}
+                details={analysis.marketContext.styleMatchDetail}
+                emptyText="补充股票市值分类后可评估风格匹配度"
+                hasData={analysis.marketContext.hasStyleData}
+                scoreColor="text-indigo-600"
+              />
+            </div>
+            <MarketEnvCard
+              title="行业强弱"
+              subtitle="所属行业是否跑赢大盘"
+              score={analysis.marketContext.industryStrengthScore}
+              level={analysis.marketContext.industryStrengthDetail.length > 0 ? analysis.marketContext.industryStrengthDetail[0].label : "行业中性"}
+              desc={analysis.marketContext.industryStrengthDetail.length > 0 ? analysis.marketContext.industryStrengthDetail[0].desc : "行业相对强弱评估"}
+              details={analysis.marketContext.industryStrengthDetail}
+              emptyText="补充行业指数数据后可评估行业强弱"
+              hasData={analysis.marketContext.hasIndustryData}
+              scoreColor="text-teal-600"
+            />
+          </>
+        )}
+
+        {analysis.finalOpportunityScore && (
+          <>
+            <FinalOpportunityCard analysis={analysis} />
+          </>
+        )}
 
         <Separator />
 

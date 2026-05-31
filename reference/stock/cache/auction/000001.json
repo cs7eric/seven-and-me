@@ -1,6 +1,6 @@
 {
   "symbol": "000001",
-  "trade_date": "2026-05-31",
+  "trade_date": "2026-06-01",
   "opening": {
     "time": "09:24:57",
     "price": 10.65,
@@ -139,7 +139,7 @@
     },
     "auction0925": {
       "code": "sz000001",
-      "trading_date": "2026-05-31",
+      "trading_date": "2026-06-01",
       "has_auction_0925": false,
       "price": null,
       "price_milli": null,

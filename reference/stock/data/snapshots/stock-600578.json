@@ -2,8 +2,8 @@
   "id": "stock-600578",
   "symbol": "600578",
   "target_type": "stock",
-  "period": "5m",
-  "adjust": "none",
+  "period": "1d",
+  "adjust": "qfq",
   "indicators": [
     "MA",
     "BOLL",
@@ -12,5 +12,5 @@
   ],
   "drawing_tool": null,
   "show_auction_panel": true,
-  "updated_at": "2026-05-31T11:20:44.526109"
+  "updated_at": "2026-05-31T18:07:30.900714"
 }
