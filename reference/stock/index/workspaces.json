@@ -1,8 +1,17 @@
 {
   "type": "stock_chart_workspaces",
   "version": 1,
-  "updated_at": "2026-05-31T16:26:03.614223",
+  "updated_at": "2026-05-31T18:00:56.442435",
   "items": [
+    {
+      "id": "stock-600415",
+      "target_type": "stock",
+      "symbol": "600415",
+      "name": "小商品城",
+      "data_file": "stock/data/snapshots/stock-600415.json",
+      "created_at": "2026-05-31T17:40:10.686926",
+      "updated_at": "2026-05-31T17:40:12.102499"
+    },
     {
       "id": "stock-600162",
       "target_type": "stock",
@@ -37,7 +46,7 @@
       "name": "风华高科",
       "data_file": "stock/data/snapshots/stock-000636.json",
       "created_at": "2026-05-31T11:21:36.028343",
-      "updated_at": "2026-05-31T11:21:57.977427"
+      "updated_at": "2026-05-31T17:39:09.414328"
     },
     {
       "id": "stock-600578",
@@ -55,7 +64,7 @@
       "name": "上海电力",
       "data_file": "stock/data/snapshots/stock-600021.json",
       "created_at": "2026-05-31T01:41:44.719477",
-      "updated_at": "2026-05-31T11:18:14.104880"
+      "updated_at": "2026-05-31T18:00:56.442435"
     },
     {
       "id": "index-000001",
@@ -73,7 +82,7 @@
       "name": "平安银行",
       "data_file": "stock/data/snapshots/stock-000001.json",
       "created_at": "2026-05-30T23:25:01.373907",
-      "updated_at": "2026-05-31T16:26:03.614223"
+      "updated_at": "2026-05-31T18:00:20.304130"
     }
   ]
 }

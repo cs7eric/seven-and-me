@@ -1,5 +1,6 @@
 import {
   AudioWaveform,
+  ComputerIcon,
   Download,
   FileText,
   GalleryVerticalEnd,
@@ -100,6 +101,11 @@ export const sidebarConfig = {
       name: "Stock Review",
       url: "/stock-review",
       icon: LineChart,
+    },
+    {
+      name: "Knowledge Base",
+      url: "/knowledge-base",
+      icon: ComputerIcon,
     },
   ],
 }

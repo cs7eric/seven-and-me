@@ -15,7 +15,20 @@
     "strengthLabel": "偏强高开",
     "anchorExact": false,
     "anchorSource": "openingPoints-last-before-0925",
-    "anchorTargetTime": "09:25:00"
+    "anchorTargetTime": "09:25:00",
+    "priceRange": {
+      "low": 51.48,
+      "high": 53.5,
+      "spread": 2.02
+    },
+    "recentPriceTrend": "下行",
+    "recentPriceChange": -0.4,
+    "recentVolumeDelta": 2786,
+    "directionStability": "方向轻微切换",
+    "directionFlipCount": 1,
+    "dominantDirection": "卖方占优",
+    "imbalancePressure": 0.045,
+    "dataConfidence": "中"
   },
   "closing": {
     "time": "14:59:51",
@@ -31,7 +44,20 @@
     "strengthLabel": "尾盘偏强",
     "anchorExact": false,
     "anchorSource": "closingPoints-last-before-1500",
-    "anchorTargetTime": "15:00:00"
+    "anchorTargetTime": "15:00:00",
+    "priceRange": {
+      "low": 53.2,
+      "high": 53.2,
+      "spread": 0.0
+    },
+    "recentPriceTrend": "走平",
+    "recentPriceChange": 0.0,
+    "recentVolumeDelta": 1149,
+    "directionStability": "方向稳定",
+    "directionFlipCount": 0,
+    "dominantDirection": "卖方占优",
+    "imbalancePressure": 0.2494,
+    "dataConfidence": "中"
   },
   "details": {
     "quote": {

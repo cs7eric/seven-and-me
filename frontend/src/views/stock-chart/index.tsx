@@ -21,6 +21,7 @@ import { ChartPanel } from "./components/chart-panel"
 import { SymbolSearch } from "./components/symbol-search"
 import { IndicatorToolbar } from "./components/indicator-toolbar"
 import { AuctionPanel } from "./components/auction-panel"
+import { TechnicalIndicatorPanel } from "./components/technical-indicator-panel"
 import { useStockChartStore } from "./lib/store"
 import type { StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSignalPoint } from "./lib/types"
 
@@ -332,13 +333,13 @@ export default function StockChartPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="auction">集合竞价</SelectItem>
-                <SelectItem value="ma-support">均线支持</SelectItem>
+                <SelectItem value="ma-support">技术指标</SelectItem>
                 <SelectItem value="fund-flow">资金</SelectItem>
               </SelectContent>
             </Select>
             <TabsList className="hidden md:inline-flex">
               <TabsTrigger value="auction">集合竞价</TabsTrigger>
-              <TabsTrigger value="ma-support">均线支持</TabsTrigger>
+              <TabsTrigger value="ma-support">技术指标</TabsTrigger>
               <TabsTrigger value="fund-flow">资金</TabsTrigger>
             </TabsList>
           </div>
@@ -348,17 +349,7 @@ export default function StockChartPage() {
           </TabsContent>
 
           <TabsContent value="ma-support" className="mt-0">
-            <Card className="border-white/70 bg-white/80 shadow-[0_20px_70px_rgba(15,23,42,0.08)]">
-              <CardHeader>
-                <CardTitle className="text-base">均线支持</CardTitle>
-                <CardDescription>先保留 mock 结构，后续接入真实均线支撑/压力分析。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-6 text-sm text-slate-500">
-                  均线支持模块待接入真实数据，当前为占位内容。
-                </div>
-              </CardContent>
-            </Card>
+            <TechnicalIndicatorPanel bars={bars} />
           </TabsContent>
 
           <TabsContent value="fund-flow" className="mt-0">

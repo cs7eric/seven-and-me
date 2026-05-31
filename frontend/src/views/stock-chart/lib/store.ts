@@ -23,7 +23,7 @@ type StockChartState = {
 
 const defaultIndicators = ["MA", "BOLL", "MACD", "AMOUNT"]
 const defaultMALines = [5, 10, 30]
-const defaultPeriod: StockPeriod = "5m"
+const defaultPeriod: StockPeriod = "1d"
 const defaultAdjust: StockAdjust = "qfq"
 
 export const useStockChartStore = create<StockChartState>((set) => ({
