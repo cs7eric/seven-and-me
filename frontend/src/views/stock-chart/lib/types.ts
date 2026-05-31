@@ -41,6 +41,18 @@ export interface StockAnnotation {
   updated_at: string
 }
 
+export interface StockSignalPoint {
+  id: string
+  timestamp: number
+  price: number
+  side: "B" | "S"
+  label?: string
+  reason?: string
+  score?: number
+  period?: string
+  source?: "manual"
+}
+
 export interface StockAuctionPriceRange {
   low: number
   high: number

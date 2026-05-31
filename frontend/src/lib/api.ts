@@ -224,7 +224,7 @@ export async function saveStockWorkspace(payload: Omit<StockWorkspace, "id" | "u
   return data;
 }
 
-export async function listStockAnnotations(targetType: StockTargetType, symbol: string, period: StockPeriod): Promise<StockAnnotation[]> {
+export async function listStockAnnotations(targetType: StockTargetType, symbol: string, period: string): Promise<StockAnnotation[]> {
   const query = new URLSearchParams({ target_type: targetType, symbol, period });
   const res = await fetch(`${API_BASE}/api/stock-chart/annotations?${query.toString()}`);
   const data = (await res.json().catch(() => null)) as { items?: StockAnnotation[] } | null;
@@ -235,7 +235,7 @@ export async function listStockAnnotations(targetType: StockTargetType, symbol: 
 export async function createStockAnnotation(payload: {
   target_type: StockTargetType;
   symbol: string;
-  period: StockPeriod;
+  period: string;
   overlay_type: string;
   points: Array<{ timestamp: number; value: number }>;
   styles?: Record<string, unknown>;
@@ -249,6 +249,14 @@ export async function createStockAnnotation(payload: {
   const data = (await res.json().catch(() => null)) as StockAnnotation | null;
   if (!res.ok || !data) throw new Error("创建标记失败");
   return data;
+}
+
+export async function deleteStockAnnotation(targetType: StockTargetType, symbol: string, period: string, annotationId: string): Promise<void> {
+  const query = new URLSearchParams({ target_type: targetType, symbol, period });
+  const res = await fetch(`${API_BASE}/api/stock-chart/annotations/${encodeURIComponent(annotationId)}?${query.toString()}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("删除标记失败");
 }
 
 export async function fetchStockAuction(symbol: string): Promise<StockAuctionSnapshot> {

@@ -1,0 +1,21 @@
+{
+  "items": [
+    {
+      "id": "anno-1780215946651",
+      "overlay_type": "bs_point",
+      "points": [
+        {
+          "timestamp": 1780031700000,
+          "value": 10.84
+        }
+      ],
+      "styles": {
+        "side": "B",
+        "source": "manual"
+      },
+      "text": "B:manual",
+      "created_at": "2026-05-31T16:25:46.651503",
+      "updated_at": "2026-05-31T16:25:46.651508"
+    }
+  ]
+}

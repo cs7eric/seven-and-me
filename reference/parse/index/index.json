@@ -1,8 +1,18 @@
 {
   "type": "mp4_parse",
   "version": 1,
-  "updated_at": "2026-05-31T00:37:02.542882",
+  "updated_at": "2026-05-31T15:22:35.223887",
   "items": [
+    {
+      "id": "mp4-99695d00-2170-402c-b8a3-0cdd84949bda",
+      "title": "短线辨识度与龙头股筛选法",
+      "created_at": "2026-05-31T15:22:35.223887",
+      "updated_at": "2026-05-31T15:22:35.223887",
+      "task_id": "99695d00-2170-402c-b8a3-0cdd84949bda",
+      "status": "done",
+      "file_name": "辨识度.mp4",
+      "data_file": "parse/data/mp4-99695d00-2170-402c-b8a3-0cdd84949bda.json"
+    },
     {
       "id": "mp4-8c775f20-e2b6-4583-9302-d1690f7efc82",
       "title": "从爆仓到亿级：我的情绪周期悟道之路",

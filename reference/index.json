@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-05-31T00:37:02.542882",
+  "updated_at": "2026-05-31T15:22:35.223887",
   "types": {
     "stock_chart": {
       "title": "Stock Chart Workspace",
@@ -12,7 +12,7 @@
       "title": "MP4 Parse History",
       "index_file": "parse/index/index.json",
       "data_dir": "parse/data",
-      "count": 3
+      "count": 4
     }
   }
 }
