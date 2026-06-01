@@ -1,6 +1,25 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from backend.services.stock.market_overview.windows import PriceLevel
+
+
+def _format_bar_date(value) -> str:
+    if value is None:
+        return ''
+    raw = str(value)
+    try:
+        number = float(raw)
+        if number > 100000000000:
+            number = number / 1000
+        if number > 1000000000:
+            return datetime.fromtimestamp(number, tz=timezone.utc).strftime('%Y-%m-%d')
+    except (TypeError, ValueError):
+        pass
+    if len(raw) >= 10 and raw[:4].isdigit():
+        return raw[:10]
+    return raw
 
 
 def _append_level(bucket: list[PriceLevel], latest_close: float, price: float, level_type: str, source: str, strength: int, label: str):
@@ -51,7 +70,7 @@ def _build_gap_levels(bars: list[dict], latest_close: float) -> tuple[list[Price
         prev_low = float(bars[i - 1]['low'])
         curr_high = float(bars[i]['high'])
         curr_low = float(bars[i]['low'])
-        date = str(bars[i].get('timestamp'))
+        date = _format_bar_date(bars[i].get('timestamp'))
 
         if curr_low > prev_high:
             gap_pct = curr_low / prev_high - 1
@@ -80,7 +99,7 @@ def _build_swing_cluster_levels(bars: list[dict], latest_close: float) -> tuple[
         right_highs = [float(bars[i + 1]['high']), float(bars[i + 2]['high'])]
         left_lows = [float(bars[i - 2]['low']), float(bars[i - 1]['low'])]
         right_lows = [float(bars[i + 1]['low']), float(bars[i + 2]['low'])]
-        date = str(bars[i].get('timestamp'))
+        date = _format_bar_date(bars[i].get('timestamp'))
 
         if high >= max(left_highs + right_highs):
             _append_level(resistances, latest_close, high, 'resistance', 'swing', 64, f'波段高点 {date}')

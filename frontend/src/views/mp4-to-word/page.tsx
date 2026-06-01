@@ -675,12 +675,17 @@ export default function Mp4ToWordPage() {
 
   useEffect(() => {
     if (initialTaskId && !esRef.current) {
-      startTaskMonitoring(initialTaskId);
-      return;
+      const timer = window.setTimeout(() => {
+        startTaskMonitoring(initialTaskId);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
 
     if (!initialTaskId && remoteDraft && !taskId && !remoteStarting) {
-      startRemoteWorkflow();
+      const timer = window.setTimeout(() => {
+        startRemoteWorkflow();
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [initialTaskId, remoteDraft, remoteStarting, startRemoteWorkflow, startTaskMonitoring, taskId]);
 

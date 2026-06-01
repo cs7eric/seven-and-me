@@ -88,6 +88,10 @@ def build_sentiment_overview() -> dict:
         'trend': trend,
         'score5': score5,
         'score20': score20,
+        'limitUpCount': int(today.get('limitUpCount') or 0) if today else 0,
+        'limitDownCount': int(today.get('limitDownCount') or 0) if today else 0,
+        'breakRate': round(float(today.get('breakRate') or 0), 2) if today else 0,
+        'totalTurnover': round(float(today.get('totalTurnover') or 0), 2) if today else 0,
     }
 
 
