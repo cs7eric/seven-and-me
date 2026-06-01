@@ -2,8 +2,8 @@ import type { Phase, SSEEvent, QAResponse, TransferProgress } from "./types";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
 import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace } from "@/views/stock-chart/lib/types";
 
-const API_BASE = "http://localhost:5000";
-const DOWNLOADER_API_BASE = "https://downloader-api.bhwa233.com";
+const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
+const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
 
 export interface DownloaderPageInfo {
   page: number;

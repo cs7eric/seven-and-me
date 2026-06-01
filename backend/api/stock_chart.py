@@ -123,7 +123,7 @@ def stock_chart_meta():
 _BREADTH_CACHE_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'latest.json'
 _BREADTH_SERIES_CACHE_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'series.json'
 _BREADTH_CACHE_TTL_SEC = 60
-_MAX_SERIES_DAYS = 120
+_MAX_SERIES_DAYS = 500
 
 
 @stock_chart_bp.route('/api/stock-chart/market-breadth')
@@ -158,8 +158,13 @@ def stock_chart_breadth():
         series = read_json_file(_BREADTH_SERIES_CACHE_FILE, [])
         if not isinstance(series, list):
             series = []
-        existing_dates = {item.get('date') for item in series if isinstance(item, dict)}
-        if payload['date'] not in existing_dates:
+        replaced = False
+        for i, item in enumerate(series):
+            if isinstance(item, dict) and item.get('date') == payload['date']:
+                series[i] = payload
+                replaced = True
+                break
+        if not replaced:
             series.append(payload)
         series.sort(key=lambda x: str(x.get('date', '')))
         series = series[-_MAX_SERIES_DAYS:]

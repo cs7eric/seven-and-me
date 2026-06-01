@@ -3,6 +3,7 @@ import { LineChart, RefreshCw, ShieldAlert, TrendingUp } from "lucide-react"
 
 import { WorkspaceShell } from "@/components/workspace-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -45,6 +46,17 @@ interface SimilarForwardStat {
   worstReturn: number
   medianMaxDrawdown: number
   positiveRatio: number
+}
+
+interface SimilarMatchDetail {
+  date: string
+  distance: number
+  regimeBucket: string
+  dominantStyle: string
+  sentimentTrend: string
+  rangePos60: number
+  return20: number
+  return60: number
 }
 
 interface MarketOverview {
@@ -91,6 +103,10 @@ interface MarketOverview {
   }>
   industries: Array<{
     name: string
+    indexName: string
+    symbol: string
+    industryQuery: string
+    provider: string
     relativeReturn5: number | null
     relativeReturn20: number | null
     relativeReturn60: number | null
@@ -99,7 +115,10 @@ interface MarketOverview {
   }>
   similarScenarioBacktest: {
     matchedCount: number
+    medianDistance: number | null
+    matchThreshold: number
     conclusion: string
+    matchedDetails: SimilarMatchDetail[]
     forwardStats: SimilarForwardStat[]
   }
 }
@@ -114,6 +133,26 @@ function fmtNum(value: number | null | undefined, digits = 2) {
   return value.toFixed(digits)
 }
 
+function sourceLabel(source: string) {
+  if (source === "ma") return "均线"
+  if (source === "gap") return "缺口"
+  if (source === "volumeNode") return "成交密集区"
+  if (source === "swing") return "波段"
+  if (source === "cluster") return "聚类"
+  if (source === "rangeHighLow") return "区间高低点"
+  return source
+}
+
+function regimeBucketLabel(bucket: string) {
+  if (bucket === "trend_up") return "上升趋势"
+  if (bucket === "trend_down") return "下降趋势"
+  if (bucket === "near_high") return "接近上沿"
+  if (bucket === "near_low") return "接近下沿"
+  if (bucket === "range") return "震荡区间"
+  if (bucket === "transition") return "过渡阶段"
+  return bucket
+}
+
 function SummaryCard({ title, value, hint }: { title: string; value: string; hint: string }) {
   return (
     <Card className="border-border/40">
@@ -123,6 +162,25 @@ function SummaryCard({ title, value, hint }: { title: string; value: string; hin
       </CardHeader>
       <CardContent className="text-xs text-muted-foreground">{hint}</CardContent>
     </Card>
+  )
+}
+
+function LevelList({ title, items }: { title: string; items: MarketLevel[] }) {
+  return (
+    <div>
+      <div className="mb-2 text-sm font-medium text-foreground">{title}</div>
+      <div className="space-y-2">
+        {items.map((item) => (
+          <div key={`${item.source}-${item.label}-${item.price}`} className="rounded-xl border border-border/30 p-3 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-medium">{item.label}</div>
+              <Badge variant="secondary">{sourceLabel(item.source)}</Badge>
+            </div>
+            <div className="mt-1 text-muted-foreground">{fmtNum(item.price)} · {fmtPct(item.distancePct)} · 强度 {item.strength}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -165,7 +223,7 @@ export default function StockOverviewPage() {
           <div className="space-y-2">
             <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Application Overview</h1>
             <p className="max-w-4xl text-sm leading-7 text-muted-foreground sm:text-base">
-              聚焦上证结构、多周期区间定位、情绪趋势、风格轮动、行业相对强弱，以及历史相似情景回测。
+              聚焦上证结构、多周期区间定位、支撑压力地图、情绪趋势、风格轮动、真实行业指数强弱，以及历史相似情景回测。
             </p>
           </div>
         </div>
@@ -205,19 +263,19 @@ export default function StockOverviewPage() {
                 <div className="mt-2 text-2xl font-semibold">{fmtNum(data.shanghai.close)}</div>
                 <div className="mt-2 text-sm text-muted-foreground">区间类型：{data.shanghai.rangeType}</div>
               </div>
-              <div className="rounded-xl border border-border/30 p-4 text-sm text-muted-foreground space-y-1">
+              <div className="space-y-1 rounded-xl border border-border/30 p-4 text-sm text-muted-foreground">
                 <div>MA20：{fmtNum(data.shanghai.ma20)}</div>
                 <div>MA60：{fmtNum(data.shanghai.ma60)}</div>
                 <div>MA120：{fmtNum(data.shanghai.ma120)}</div>
                 <div>MA250：{fmtNum(data.shanghai.ma250)}</div>
               </div>
-              <div className="rounded-xl border border-border/30 p-4 text-sm text-muted-foreground space-y-2">
+              <div className="space-y-2 rounded-xl border border-border/30 p-4 text-sm text-muted-foreground">
                 <div className="font-medium text-foreground">最近支撑</div>
                 <div>{data.shanghai.nearestSupport?.label ?? "—"}</div>
                 <div>{fmtNum(data.shanghai.nearestSupport?.price)}</div>
                 <div>{fmtPct(data.shanghai.nearestSupport?.distancePct)}</div>
               </div>
-              <div className="rounded-xl border border-border/30 p-4 text-sm text-muted-foreground space-y-2">
+              <div className="space-y-2 rounded-xl border border-border/30 p-4 text-sm text-muted-foreground">
                 <div className="font-medium text-foreground">最近压力</div>
                 <div>{data.shanghai.nearestResistance?.label ?? "—"}</div>
                 <div>{fmtNum(data.shanghai.nearestResistance?.price)}</div>
@@ -265,31 +323,11 @@ export default function StockOverviewPage() {
             <Card className="border-border/40">
               <CardHeader>
                 <CardTitle>支撑压力地图</CardTitle>
-                <CardDescription>结合均线与各窗口高低点的最近价格层。</CardDescription>
+                <CardDescription>结合均线、区间高低点、缺口、波段聚类与成交密集区。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <div className="mb-2 text-sm font-medium text-foreground">上方压力</div>
-                  <div className="space-y-2">
-                    {data.shanghai.resistanceLevels.map((item) => (
-                      <div key={`${item.source}-${item.label}`} className="rounded-xl border border-border/30 p-3 text-sm">
-                        <div className="font-medium">{item.label}</div>
-                        <div className="text-muted-foreground">{fmtNum(item.price)} · {fmtPct(item.distancePct)} · 强度 {item.strength}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <div className="mb-2 text-sm font-medium text-foreground">下方支撑</div>
-                  <div className="space-y-2">
-                    {data.shanghai.supportLevels.map((item) => (
-                      <div key={`${item.source}-${item.label}`} className="rounded-xl border border-border/30 p-3 text-sm">
-                        <div className="font-medium">{item.label}</div>
-                        <div className="text-muted-foreground">{fmtNum(item.price)} · {fmtPct(item.distancePct)} · 强度 {item.strength}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <LevelList title="上方压力" items={data.shanghai.resistanceLevels} />
+                <LevelList title="下方支撑" items={data.shanghai.supportLevels} />
               </CardContent>
             </Card>
           </div>
@@ -329,16 +367,20 @@ export default function StockOverviewPage() {
             <Card className="border-border/40">
               <CardHeader>
                 <CardTitle>行业强弱</CardTitle>
-                <CardDescription>当前以风格行业代理方式展示前后排分布。</CardDescription>
+                <CardDescription>当前基于真实行业指数，展示相对上证的前后排分布。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-4 md:grid-cols-2">
                 <div>
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium"><TrendingUp className="size-4" /> 强势前五</div>
                   <div className="space-y-2">
                     {topIndustries.map((item) => (
-                      <div key={item.name} className="rounded-xl border border-border/30 p-3 text-sm">
-                        <div className="font-medium">{item.name}</div>
-                        <div className="text-muted-foreground">20日 {fmtPct(item.relativeReturn20)} / 60日 {fmtPct(item.relativeReturn60)} / {item.state}</div>
+                      <div key={`${item.name}-${item.symbol}`} className="rounded-xl border border-border/30 p-3 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-medium">{item.name}</div>
+                          <Badge variant="secondary">{item.symbol}</Badge>
+                        </div>
+                        <div className="mt-1 text-muted-foreground">{item.indexName}</div>
+                        <div className="mt-1 text-muted-foreground">20日 {fmtPct(item.relativeReturn20)} / 60日 {fmtPct(item.relativeReturn60)} / {item.state}</div>
                       </div>
                     ))}
                   </div>
@@ -347,9 +389,13 @@ export default function StockOverviewPage() {
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium"><ShieldAlert className="size-4" /> 弱势后五</div>
                   <div className="space-y-2">
                     {bottomIndustries.map((item) => (
-                      <div key={item.name} className="rounded-xl border border-border/30 p-3 text-sm">
-                        <div className="font-medium">{item.name}</div>
-                        <div className="text-muted-foreground">20日 {fmtPct(item.relativeReturn20)} / 60日 {fmtPct(item.relativeReturn60)} / {item.state}</div>
+                      <div key={`${item.name}-${item.symbol}`} className="rounded-xl border border-border/30 p-3 text-sm">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="font-medium">{item.name}</div>
+                          <Badge variant="secondary">{item.symbol}</Badge>
+                        </div>
+                        <div className="mt-1 text-muted-foreground">{item.indexName}</div>
+                        <div className="mt-1 text-muted-foreground">20日 {fmtPct(item.relativeReturn20)} / 60日 {fmtPct(item.relativeReturn60)} / {item.state}</div>
                       </div>
                     ))}
                   </div>
@@ -363,8 +409,22 @@ export default function StockOverviewPage() {
               <CardTitle>历史相似情景回测</CardTitle>
               <CardDescription>{data.similarScenarioBacktest.conclusion}</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="mb-4 text-sm text-muted-foreground">相似样本数：{data.similarScenarioBacktest.matchedCount}</div>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-border/30 p-4 text-sm text-muted-foreground">
+                  <div>相似样本数</div>
+                  <div className="mt-2 text-2xl font-semibold text-foreground">{data.similarScenarioBacktest.matchedCount}</div>
+                </div>
+                <div className="rounded-xl border border-border/30 p-4 text-sm text-muted-foreground">
+                  <div>中位距离</div>
+                  <div className="mt-2 text-2xl font-semibold text-foreground">{fmtNum(data.similarScenarioBacktest.medianDistance)}</div>
+                </div>
+                <div className="rounded-xl border border-border/30 p-4 text-sm text-muted-foreground">
+                  <div>匹配阈值</div>
+                  <div className="mt-2 text-2xl font-semibold text-foreground">{fmtNum(data.similarScenarioBacktest.matchThreshold)}</div>
+                </div>
+              </div>
+
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -389,6 +449,28 @@ export default function StockOverviewPage() {
                   ))}
                 </TableBody>
               </Table>
+
+              <div className="space-y-3">
+                <div className="text-sm font-medium text-foreground">最近匹配样本</div>
+                <div className="grid gap-3 xl:grid-cols-3">
+                  {data.similarScenarioBacktest.matchedDetails.map((item) => (
+                    <div key={`${item.date}-${item.distance}`} className="rounded-xl border border-border/30 p-4 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="font-medium">{item.date}</div>
+                        <Badge variant="outline">距离 {fmtNum(item.distance)}</Badge>
+                      </div>
+                      <div className="mt-2 space-y-1 text-muted-foreground">
+                        <div>结构：{regimeBucketLabel(item.regimeBucket)}</div>
+                        <div>风格：{item.dominantStyle}</div>
+                        <div>情绪：{item.sentimentTrend}</div>
+                        <div>60日区间位：{fmtPct(item.rangePos60)}</div>
+                        <div>20日收益：{fmtPct(item.return20)}</div>
+                        <div>60日收益：{fmtPct(item.return60)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </CardContent>
           </Card>
         </>
