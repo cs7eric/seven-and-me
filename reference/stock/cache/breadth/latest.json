@@ -1,9 +1,9 @@
 {
-  "upCount": 1377,
-  "downCount": 3478,
-  "limitUpCount": 61,
-  "limitDownCount": 132,
-  "totalCount": 4927,
+  "upCount": 3359,
+  "downCount": 1557,
+  "limitUpCount": 141,
+  "limitDownCount": 55,
+  "totalCount": 4966,
   "breakRate": null,
   "maxLianBan": null,
   "yesterdayLimitUpReturn": null,
@@ -12,6 +12,6 @@
   "new20HighCount": null,
   "new20LowCount": null,
   "source": "cfi",
-  "cachedAt": 1780244129.168032,
+  "cachedAt": 1780313130.776083,
   "date": "2026-06-01"
 }

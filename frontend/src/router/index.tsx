@@ -5,6 +5,7 @@ import HomePage from "../views/home"
 import Mp4ToWordPage from "../views/mp4-to-word"
 import Mp4HistoryPage from "../views/mp4-to-word/history"
 import StockChartPage from "../views/stock-chart"
+import StockOverviewPage from "../views/stock-overview"
 import StockReviewPage from "../views/stock-review"
 
 export const router = createBrowserRouter([
@@ -35,6 +36,10 @@ export const router = createBrowserRouter([
       {
         path: "stock-chart",
         element: <StockChartPage />,
+      },
+      {
+        path: "stock-overview",
+        element: <StockOverviewPage />,
       },
       {
         path: "stock-review",

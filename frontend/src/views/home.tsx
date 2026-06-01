@@ -5,6 +5,7 @@ import {
   FileText,
   LineChart,
   Sparkles,
+  TrendingUp,
 } from "lucide-react"
 
 import { WorkspaceShell } from "@/components/workspace-shell"
@@ -22,6 +23,12 @@ const applications = [
     description: "将音视频内容转换为 Transcript、Polish、Summary 与结构化问答。",
     href: "/mp4-to-word",
     icon: FileText,
+  },
+  {
+    name: "Stock Overview",
+    description: "识别市场所处阶段，查看区间定位、支撑压力、风格轮动与历史相似情景。",
+    href: "/stock-overview",
+    icon: TrendingUp,
   },
   {
     name: "Stock Review",

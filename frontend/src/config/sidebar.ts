@@ -65,6 +65,17 @@ export const sidebarConfig = {
       ],
     },
     {
+      title: "Stock Overview",
+      url: "/stock-overview",
+      icon: LineChart,
+      items: [
+        {
+          title: "open",
+          url: "/stock-overview",
+        },
+      ],
+    },
+    {
       title: "Stock Review",
       url: "/stock-review",
       icon: LineChart,
@@ -96,6 +107,11 @@ export const sidebarConfig = {
       name: "Stock Chart",
       url: "/stock-chart",
       icon: TrendingUp,
+    },
+    {
+      name: "Stock Overview",
+      url: "/stock-overview",
+      icon: LineChart,
     },
     {
       name: "Stock Review",

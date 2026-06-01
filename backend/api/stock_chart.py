@@ -7,6 +7,7 @@ from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
 from backend.repositories.stock.workspace_repo import stock_kline_cache_file
 from backend.services.stock.auction_service import fetch_stock_auction
 from backend.services.stock.kline_service import resolve_stock_klines
+from backend.services.stock.market_overview_service import build_market_overview
 from backend.services.stock.search_service import search_stock_chart
 from backend.services.stock.workspace_service import (
     create_stock_annotation,
@@ -180,3 +181,11 @@ def stock_chart_breadth_series():
     if not series:
         return jsonify({'items': []})
     return jsonify({'items': series})
+
+
+@stock_chart_bp.route('/api/stock-chart/market-overview')
+def stock_chart_market_overview():
+    try:
+        return jsonify(build_market_overview())
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 502

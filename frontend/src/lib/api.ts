@@ -357,6 +357,13 @@ export async function fetchMarketBreadthSeries(): Promise<Array<{
   }))
 }
 
+export async function fetchMarketOverview(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取市场概览失败")
+  return data
+}
+
 export async function askQuestion(
   taskId: string,
   question: string
