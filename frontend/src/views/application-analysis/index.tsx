@@ -14,9 +14,13 @@ import {
   fetchApplicationAnalysisSchedulerStatus,
   fetchApplicationAnalysisTargets,
   fetchStockKlines,
+  listApplicationAnalysisRecent30,
+  readApplicationAnalysisRecent30,
+  refreshApplicationAnalysisRecent30,
   runApplicationAnalysis,
   saveApplicationAnalysisTargets,
   triggerApplicationAnalysis,
+  type ApplicationAnalysisDailySnapshotFile,
   type ApplicationAnalysisSchedulerStatus,
   type ApplicationAnalysisTarget,
 } from "@/lib/api"
@@ -389,98 +393,182 @@ function AIDirectionCard({
   currentSituation,
   collapsed,
   onToggle,
+  dailySnapshots,
+  dailySnapshotsLoading,
+  dailyRefreshing,
+  dailyLastRefreshAt,
+  onRefreshDaily,
+  dailySelectedDate,
+  onSelectDailyDate,
+  dailySelectedSnapshot,
 }: {
   shortTermTrend: Record<string, unknown>
   currentSituation: Record<string, unknown>
   collapsed: boolean
   onToggle: () => void
+  dailySnapshots: ApplicationAnalysisDailySnapshotFile[]
+  dailySnapshotsLoading: boolean
+  dailyRefreshing: boolean
+  dailyLastRefreshAt: string | null
+  onRefreshDaily: () => void
+  dailySelectedDate: string | null
+  onSelectDailyDate: (date: string) => void
+  dailySelectedSnapshot: {
+    short_term_trend?: Record<string, unknown> | null
+    current_situation?: Record<string, unknown> | null
+    summary?: Record<string, unknown> | null
+    updated_at?: string
+  } | null
 }) {
   const trend = safeRecord(shortTermTrend)
   const situation = safeRecord(currentSituation)
-  const hasTrend = Object.keys(trend).length > 0
-  const hasSituation = Object.keys(situation).length > 0
-  if (!hasTrend && !hasSituation) return null
 
-  const stateLabel = fmt(trend.state)
-  const bias = biasTone(trend.bias)
-  const horizon = fmt(trend.horizon)
-  const score = fmt(trend.score)
-  const confidence = fmt(trend.confidence)
-  const momentum = safeRecord(trend.momentum)
-  const maPosition = safeRecord(trend.ma_position)
-  const pricePosition = safeRecord(trend.price_position)
-  const scenario = safeRecord(trend.scenario_analysis)
-  const evidence = textList(trend.key_evidence)
-  const invalidList = textList(trend.invalid_conditions)
+  // 历史快照使用日期对应读取出来的数据
+  const showHistoricalView = Boolean(dailySelectedDate && dailySelectedSnapshot)
+  const historicalTrend = showHistoricalView ? safeRecord(dailySelectedSnapshot?.short_term_trend) : trend
+  const historicalSituation = showHistoricalView ? safeRecord(dailySelectedSnapshot?.current_situation) : situation
+  const activeTrend = showHistoricalView ? historicalTrend : trend
+  const activeSituation = showHistoricalView ? historicalSituation : situation
+  const hasActiveTrend = Object.keys(activeTrend).length > 0
+  const hasActiveSituation = Object.keys(activeSituation).length > 0
 
-  const position = fmt(situation.position)
-  const spaceStructure = fmt(situation.space_structure)
-  const positionScore = fmt(situation.position_score)
-  const situationConfidence = fmt(situation.confidence)
-  const statusTags = textList(situation.status_tags)
-  const situationEvidence = textList(situation.key_evidence)
-  const situationNote = safeString(situation.note)
+  const stateLabel = fmt(activeTrend.state)
+  const bias = biasTone(activeTrend.bias)
+  const horizon = fmt(activeTrend.horizon)
+  const score = fmt(activeTrend.score)
+  const confidence = fmt(activeTrend.confidence)
+  const momentum = safeRecord(activeTrend.momentum)
+  const maPosition = safeRecord(activeTrend.ma_position)
+  const pricePosition = safeRecord(activeTrend.price_position)
+  const scenario = safeRecord(activeTrend.scenario_analysis)
+  const evidence = textList(activeTrend.key_evidence)
+  const invalidList = textList(activeTrend.invalid_conditions)
+
+  const position = fmt(activeSituation.position)
+  const spaceStructure = fmt(activeSituation.space_structure)
+  const positionScore = fmt(activeSituation.position_score)
+  const situationConfidence = fmt(activeSituation.confidence)
+  const statusTags = textList(activeSituation.status_tags)
+  const situationEvidence = textList(activeSituation.key_evidence)
+  const situationNote = safeString(activeSituation.note)
+
+  const lastRefreshText = dailyLastRefreshAt
+    ? new Date(dailyLastRefreshAt).toLocaleString("zh-CN", { hour12: false })
+    : "尚未手动触发"
 
   return (
     <CollapsibleCard
       title="AI 整体判断"
-      description="短期趋势与当前位置的结构化结论"
+      description="短期趋势与当前位置的结构化结论，按日持久化、倒序展示"
       icon={Compass}
-      badge={stateLabel || position}
+      badge={dailySelectedDate || stateLabel || position}
       collapsed={collapsed}
       onToggle={onToggle}
     >
       <div className="space-y-3">
-        <div className="grid gap-2 sm:grid-cols-2">
-          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-              <Sparkles className="size-3" />短期趋势
-            </div>
-            <div className="mt-1.5 flex items-center gap-2">
-              <div className="truncate text-sm font-semibold text-slate-900">{stateLabel || "—"}</div>
-              <Badge className={`rounded-full border px-2 py-0 text-[10px] font-medium ${bias.cls}`} variant="outline">
-                {bias.label}
-              </Badge>
-            </div>
-            <div className="mt-1.5 grid grid-cols-3 gap-1 text-[11px] text-slate-500">
-              <div>
-                <div className="text-slate-400">周期</div>
-                <div className="font-mono text-slate-700">{horizon || "—"}</div>
-              </div>
-              <div>
-                <div className="text-slate-400">分</div>
-                <div className="font-mono text-slate-700">{score}</div>
-              </div>
-              <div>
-                <div className="text-slate-400">置信</div>
-                <div className="font-mono text-slate-700">{confidence}</div>
-              </div>
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/60 px-3 py-2">
+          <div className="text-[11px] text-slate-500">
+            入口：最近 30 根日 K · 每天 16:00 定时刷新 · 持久化到 <span className="font-mono">reference/application-analysis/snapshots/</span>
           </div>
-          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-              <MapPin className="size-3" />当前所处情况
-            </div>
-            <div className="mt-1.5 flex items-center gap-2">
-              <div className="truncate text-sm font-semibold text-slate-900">{position || "—"}</div>
-              <Badge className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0 text-[10px] text-slate-600" variant="outline">
-                {spaceStructure || "—"}
-              </Badge>
-            </div>
-            <div className="mt-1.5 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
-              <div>
-                <div className="text-slate-400">位置分</div>
-                <div className="font-mono text-slate-700">{positionScore}</div>
-              </div>
-              <div>
-                <div className="text-slate-400">置信</div>
-                <div className="font-mono text-slate-700">{situationConfidence}</div>
-              </div>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-400">上次刷新 {lastRefreshText}</span>
+            <Button
+              size="sm"
+              variant="default"
+              className="h-7 rounded-lg bg-slate-950 px-2.5 text-[11px] text-white hover:bg-slate-800"
+              onClick={onRefreshDaily}
+              disabled={dailyRefreshing}
+            >
+              <RefreshCw className={`mr-1 size-3 ${dailyRefreshing ? "animate-spin" : ""}`} />
+              {dailyRefreshing ? "生成中" : "重新生成当日判断"}
+            </Button>
           </div>
         </div>
 
-        {statusTags.length || situationNote ? (
+        {dailySnapshots.length ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.08em] text-slate-500">
+              <span>按日历史 · 倒序</span>
+              <span className="text-slate-400">{dailySnapshotsLoading ? "加载中" : `${dailySnapshots.length} 条`}</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {dailySnapshots.map((item) => {
+                const isActive = item.date === dailySelectedDate
+                return (
+                  <button
+                    type="button"
+                    key={`${item.path}-${item.date}`}
+                    onClick={() => onSelectDailyDate(item.date)}
+                    className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
+                      isActive
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
+                    }`}
+                  >
+                    {item.date}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {hasActiveTrend || hasActiveSituation ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+                <Sparkles className="size-3" />短期趋势
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <div className="truncate text-sm font-semibold text-slate-900">{stateLabel || "—"}</div>
+                <Badge className={`rounded-full border px-2 py-0 text-[10px] font-medium ${bias.cls}`} variant="outline">
+                  {bias.label}
+                </Badge>
+              </div>
+              <div className="mt-1.5 grid grid-cols-3 gap-1 text-[11px] text-slate-500">
+                <div>
+                  <div className="text-slate-400">周期</div>
+                  <div className="font-mono text-slate-700">{horizon || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">分</div>
+                  <div className="font-mono text-slate-700">{score}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">置信</div>
+                  <div className="font-mono text-slate-700">{confidence}</div>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+                <MapPin className="size-3" />当前所处情况
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <div className="truncate text-sm font-semibold text-slate-900">{position || "—"}</div>
+                <Badge className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0 text-[10px] text-slate-600" variant="outline">
+                  {spaceStructure || "—"}
+                </Badge>
+              </div>
+              <div className="mt-1.5 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
+                <div>
+                  <div className="text-slate-400">位置分</div>
+                  <div className="font-mono text-slate-700">{positionScore}</div>
+                </div>
+                <div>
+                  <div className="text-slate-400">置信</div>
+                  <div className="font-mono text-slate-700">{situationConfidence}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-[11px] text-slate-500">
+            还没有 AI 整体判断数据，点击上方 “重新生成当日判断” 按钮触发一次，或等待每天 16:00 的定时任务。
+          </div>
+        )}
+
+        {hasActiveSituation && (statusTags.length || situationNote) ? (
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
               <Target className="size-3" />状态标签与备注
@@ -500,7 +588,7 @@ function AIDirectionCard({
           </div>
         ) : null}
 
-        {hasTrend ? (
+        {hasActiveTrend ? (
           <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
               <LineChart className="size-3" />动量 / 均线 / 位置
@@ -534,13 +622,13 @@ function AIDirectionCard({
               </div>
               <div>
                 <span className="text-slate-400">量价 / 换手</span>{" "}
-                <span className="text-slate-700">{fmt(trend.volume_price_state)} · {fmt(trend.turnover_state)}</span>
+                <span className="text-slate-700">{fmt(activeTrend.volume_price_state)} · {fmt(activeTrend.turnover_state)}</span>
               </div>
             </div>
           </div>
         ) : null}
 
-        {hasTrend && Object.keys(scenario).length ? (
+        {hasActiveTrend && Object.keys(scenario).length ? (
           <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
               <Compass className="size-3" />情景分析
@@ -570,7 +658,7 @@ function AIDirectionCard({
           </div>
         ) : null}
 
-        {evidence.length || invalidList.length ? (
+        {evidence.length || invalidList.length || situationEvidence.length ? (
           <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3">
             {evidence.length ? (
               <div>
@@ -682,6 +770,17 @@ export default function ApplicationAnalysisPage() {
   const [selectionCardCollapsed, setSelectionCardCollapsed] = useState(false)
   const [chartCardCollapsed, setChartCardCollapsed] = useState(false)
   const [directionCardCollapsed, setDirectionCardCollapsed] = useState(false)
+  const [dailySnapshots, setDailySnapshots] = useState<ApplicationAnalysisDailySnapshotFile[]>([])
+  const [dailySnapshotsLoading, setDailySnapshotsLoading] = useState(false)
+  const [dailyRefreshing, setDailyRefreshing] = useState(false)
+  const [dailyLastRefreshAt, setDailyLastRefreshAt] = useState<string | null>(null)
+  const [dailySelectedDate, setDailySelectedDate] = useState<string | null>(null)
+  const [dailySelectedSnapshot, setDailySelectedSnapshot] = useState<{
+    short_term_trend?: Record<string, unknown> | null
+    current_situation?: Record<string, unknown> | null
+    summary?: Record<string, unknown> | null
+    updated_at?: string
+  } | null>(null)
   const [selectedChartItems, setSelectedChartItems] = useState<ChartPanelSelectionItem[]>([])
   const [analysisFocusKey, setAnalysisFocusKey] = useState<string | null>(null)
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
@@ -893,6 +992,95 @@ export default function ApplicationAnalysisPage() {
       setRunning(false)
     }
   }
+
+  const refreshDailySnapshots = useCallback(async (targetId: string) => {
+    try {
+      setDailySnapshotsLoading(true)
+      const data = await listApplicationAnalysisRecent30(targetId, 60)
+      const items = (data.snapshots || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1))
+      setDailySnapshots(items)
+      if (items.length) {
+        if (!dailySelectedDate || !items.some((item) => item.date === dailySelectedDate)) {
+          setDailySelectedDate(items[0].date)
+        }
+      } else {
+        setDailySelectedDate(null)
+        setDailySelectedSnapshot(null)
+      }
+    } catch {
+      setDailySnapshots([])
+    } finally {
+      setDailySnapshotsLoading(false)
+    }
+  }, [dailySelectedDate])
+
+  const handleRefreshDaily = useCallback(async () => {
+    if (!selected) return
+    try {
+      setDailyRefreshing(true)
+      setError(null)
+      setInfo(null)
+      const res = await refreshApplicationAnalysisRecent30(selected.id)
+      if (!res.ok) {
+        setError(res.error || "刷新当日 AI 整体判断失败")
+        return
+      }
+      setDailyLastRefreshAt(new Date().toISOString())
+      setInfo(`已为 ${selected.name} 重新生成当日 AI 整体判断（${res.date || "今日"}）`)
+      await refreshDailySnapshots(selected.id)
+      if (res.date) {
+        setDailySelectedDate(res.date)
+        setDailySelectedSnapshot({
+          short_term_trend: res.short_term_trend || null,
+          current_situation: res.current_situation || null,
+          updated_at: new Date().toISOString(),
+        })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "刷新当日 AI 整体判断失败")
+    } finally {
+      setDailyRefreshing(false)
+    }
+  }, [refreshDailySnapshots, selected])
+
+  useEffect(() => {
+    if (!selected) {
+      setDailySnapshots([])
+      setDailySelectedDate(null)
+      setDailySelectedSnapshot(null)
+      return
+    }
+    void refreshDailySnapshots(selected.id)
+  }, [selected, refreshDailySnapshots])
+
+  useEffect(() => {
+    if (!selected || !dailySelectedDate) {
+      setDailySelectedSnapshot(null)
+      return
+    }
+    const cached = dailySnapshots.find((item) => item.date === dailySelectedDate)
+    if (!cached) {
+      setDailySelectedSnapshot(null)
+      return
+    }
+    // 本地快照仅含 meta 字段，要再读一次详细 JSON
+    let cancelled = false
+    void (async () => {
+      const data = await readApplicationAnalysisRecent30(selected.id, dailySelectedDate)
+      if (cancelled) return
+      if (data?.ok && data.snapshot) {
+        setDailySelectedSnapshot({
+          short_term_trend: data.snapshot.short_term_trend || null,
+          current_situation: data.snapshot.current_situation || null,
+          summary: data.snapshot.summary || null,
+          updated_at: data.snapshot.updated_at,
+        })
+      }
+    })().catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [dailySelectedDate, dailySnapshots, selected])
 
   const handleTriggerTarget = async (targetId: string) => {
     setError(null)
@@ -1352,6 +1540,14 @@ export default function ApplicationAnalysisPage() {
               currentSituation={currentSituation}
               collapsed={directionCardCollapsed}
               onToggle={() => setDirectionCardCollapsed((value) => !value)}
+              dailySnapshots={dailySnapshots}
+              dailySnapshotsLoading={dailySnapshotsLoading}
+              dailyRefreshing={dailyRefreshing}
+              dailyLastRefreshAt={dailyLastRefreshAt}
+              onRefreshDaily={() => void handleRefreshDaily()}
+              dailySelectedDate={dailySelectedDate}
+              onSelectDailyDate={setDailySelectedDate}
+              dailySelectedSnapshot={dailySelectedSnapshot}
             />
           </div>
 

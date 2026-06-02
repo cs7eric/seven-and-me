@@ -3,12 +3,17 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import requests
 
-from backend.config.settings import BASE_DIR, STOCK_REFERENCE_CACHE_FOLDER
+from backend.config.settings import (
+    APPLICATION_ANALYSIS_DAILY_SNAPSHOT_FOLDER,
+    BASE_DIR,
+    STOCK_REFERENCE_CACHE_FOLDER,
+)
 from backend.services.ai_provider_service import ai_provider_registry
 from backend.services.stock.kline_service import resolve_stock_klines
 from backend.services.stock.sample_data_service import sample_stock_klines
@@ -24,6 +29,10 @@ BENCHMARKS = {
 PROMPT_FILE = BASE_DIR / 'prompt' / 'annotation.md'
 BREADTH_SERIES_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'series.json'
 APPLICATION_ANALYSIS_DUMP_DIR = Path(BASE_DIR) / 'runtime' / 'application-analysis-dumps'
+APPLICATION_ANALYSIS_DAILY_SNAPSHOT_DIR = APPLICATION_ANALYSIS_DAILY_SNAPSHOT_FOLDER
+APPLICATION_ANALYSIS_DAILY_DEFAULT_HOUR = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_DAILY_HOUR') or '16')
+APPLICATION_ANALYSIS_DAILY_DEFAULT_MINUTE = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_DAILY_MINUTE') or '0')
+APPLICATION_ANALYSIS_DAILY_TIMEZONE_OFFSET_HOURS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_DAILY_TZ_OFFSET_HOURS') or '8')
 APPLICATION_ANALYSIS_MODEL = os.getenv('MINIMAX_APPLICATION_ANALYSIS_MODEL') or os.getenv('MINIMAX_MODEL') or 'MiniMax-M2.7'
 APPLICATION_ANALYSIS_TEXT_CHUNK_CHARS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TEXT_CHUNK_CHARS') or '120000')
 APPLICATION_ANALYSIS_TIMEOUT = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TIMEOUT') or '600')
@@ -32,6 +41,7 @@ TARGET_WEEKLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_WEEKLY')
 TARGET_MONTHLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_MONTHLY') or '6')
 TARGET_HORIZON_DAYS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_HORIZON_DAYS') or '120')
 TARGET_HORIZON_SEGMENTS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_HORIZON_SEGMENTS') or '4')
+APPLICATION_ANALYSIS_RECENT30_DAYS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_RECENT30_DAYS') or '30')
 BENCHMARK_DAILY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_BENCHMARK_DAILY') or '10')
 BENCHMARK_WEEKLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_BENCHMARK_WEEKLY') or '5')
 BREADTH_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_BREADTH') or '10')
@@ -927,3 +937,150 @@ def run_application_analysis_target(target: dict) -> dict:
     days = int(target.get('horizon_days') or TARGET_HORIZON_DAYS)
     segments = int(target.get('horizon_segments') or TARGET_HORIZON_SEGMENTS)
     return run_application_analysis_horizon(target_type, symbol, name, adjust, days, segments)
+
+
+# --- 最近 30 日 K 入口：用于按日持久化 short_term_trend / current_situation ---
+
+
+def build_recent30_analysis_input(target_type: str, symbol: str, name: str, adjust: str = 'qfq') -> dict:
+    payload = build_application_analysis_input(target_type, symbol, name, adjust)
+    days = APPLICATION_ANALYSIS_RECENT30_DAYS
+    bars = payload.setdefault('bars', {})
+    daily = bars.get('daily') or {}
+    daily_items = daily.get('items') or []
+    if isinstance(daily_items, list):
+        daily['items'] = _keep_tail(daily_items, days)
+        daily['total_count'] = len(daily_items)
+        daily['recent_window_days'] = days
+    weekly = bars.get('weekly') or {}
+    weekly_items = weekly.get('items') or []
+    if isinstance(weekly_items, list):
+        weekly['items'] = _keep_tail(weekly_items, 12)
+    payload['analysis_windows'] = [3, 5, 10, 20]
+    payload.setdefault('enabled_features', {})['short_term_trend_assessment'] = True
+    payload.setdefault('enabled_features', {})['current_situation_assessment'] = True
+    payload['recent_window'] = {
+        'kind': 'recent_30_daily_k',
+        'days': days,
+    }
+    return payload
+
+
+def run_application_analysis_recent30(target_type: str, symbol: str, name: str, adjust: str = 'qfq') -> dict:
+    analysis_input = build_recent30_analysis_input(target_type, symbol, name, adjust)
+    prompt = _prompt_text()
+    print(f'[ApplicationAnalysisRecent30] target={target_type}/{symbol} prompt_chars={len(prompt)}', flush=True)
+    raw_response, dump_paths = _call_minimax_json(prompt, analysis_input, target_type, symbol, name)
+    raw_keys = list(raw_response.keys()) if isinstance(raw_response, dict) else None
+    print(f'[ApplicationAnalysisRecent30] raw keys={raw_keys}', flush=True)
+    sanitized = _sanitize_annotations(raw_response)
+    return {
+        'analysis_input': analysis_input,
+        'analysis_result': sanitized.get('analysis_result'),
+        'raw_result': sanitized,
+        'raw_root_keys': raw_keys,
+        'dump_paths': dump_paths,
+        'recent_window': analysis_input.get('recent_window'),
+    }
+
+
+def _atomic_write_json_local(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=path.name + '.', dir=str(path.parent))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as file:
+            json.dump(data, file, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _daily_snapshot_target_dir(target: dict[str, Any]) -> Path:
+    target_type = str(target.get('target_type') or 'stock').strip() or 'stock'
+    symbol = str(target.get('symbol') or '').strip() or 'unknown'
+    return APPLICATION_ANALYSIS_DAILY_SNAPSHOT_DIR / f'{target_type}-{symbol}'
+
+
+def _today_key() -> str:
+    return datetime.now().strftime('%Y-%m-%d')
+
+
+def _iso_now() -> str:
+    return datetime.now().isoformat()
+
+
+def write_daily_snapshot(target: dict[str, Any], payload: dict[str, Any], date_key: str | None = None) -> dict[str, Any]:
+    directory = _daily_snapshot_target_dir(target)
+    directory.mkdir(parents=True, exist_ok=True)
+    key = (date_key or _today_key()).strip() or _today_key()
+    snapshot_path = directory / f'{key}.json'
+    analysis_result = payload.get('analysis_result') or {}
+    short_term = analysis_result.get('short_term_trend') if isinstance(analysis_result, dict) else None
+    situation = analysis_result.get('current_situation') if isinstance(analysis_result, dict) else None
+    serialized = {
+        'target': {
+            'id': target.get('id'),
+            'target_type': target.get('target_type'),
+            'symbol': target.get('symbol'),
+            'name': target.get('name'),
+            'adjust': target.get('adjust'),
+        },
+        'date': key,
+        'updated_at': _iso_now(),
+        'recent_window': payload.get('recent_window'),
+        'short_term_trend': short_term,
+        'current_situation': situation,
+        'summary': analysis_result.get('summary') if isinstance(analysis_result, dict) else None,
+        'analysis_result': analysis_result,
+    }
+    _atomic_write_json_local(snapshot_path, serialized)
+    return {'snapshot_path': str(snapshot_path), 'date': key}
+
+
+def list_daily_snapshots(target: dict[str, Any], limit: int = 30) -> list[dict[str, Any]]:
+    directory = _daily_snapshot_target_dir(target)
+    if not directory.exists():
+        return []
+    files = sorted(directory.glob('*.json'), key=lambda p: p.name, reverse=True)
+    out: list[dict[str, Any]] = []
+    for path in files[: max(1, limit)]:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        out.append({
+            'filename': path.name,
+            'path': str(path),
+            'date': path.stem,
+            'size_bytes': stat.st_size,
+            'updated_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        })
+    return out
+
+
+def read_daily_snapshot(target: dict[str, Any], date_key: str) -> dict[str, Any] | None:
+    directory = _daily_snapshot_target_dir(target)
+    snapshot_path = directory / f'{date_key}.json'
+    if not snapshot_path.exists():
+        return None
+    return read_json_file(snapshot_path, None)
+
+
+def run_application_analysis_recent30_and_snapshot(target: dict[str, Any], date_key: str | None = None) -> dict[str, Any]:
+    target_type = str(target.get('target_type') or 'stock').strip() or 'stock'
+    symbol = str(target.get('symbol') or '').strip() or '000001'
+    name = str(target.get('name') or symbol).strip() or symbol
+    adjust = str(target.get('adjust') or 'qfq').strip() or 'qfq'
+    payload = run_application_analysis_recent30(target_type, symbol, name, adjust)
+    paths = write_daily_snapshot(target, payload, date_key=date_key)
+    return {
+        'analysis_result': payload.get('analysis_result'),
+        'short_term_trend': (payload.get('analysis_result') or {}).get('short_term_trend'),
+        'current_situation': (payload.get('analysis_result') or {}).get('current_situation'),
+        'snapshot_path': paths.get('snapshot_path'),
+        'date': paths.get('date'),
+    }

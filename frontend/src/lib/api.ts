@@ -448,6 +448,65 @@ export async function fetchApplicationAnalysisSchedulerStatus(): Promise<Applica
   return (await res.json()) as ApplicationAnalysisSchedulerStatus
 }
 
+export interface ApplicationAnalysisDailySnapshotFile {
+  filename: string
+  path: string
+  date: string
+  size_bytes: number
+  updated_at: string
+}
+
+export interface ApplicationAnalysisDailySnapshotResponse {
+  ok: boolean
+  error?: string
+  target_id?: string
+  date?: string
+  snapshot_path?: string
+  short_term_trend?: Record<string, unknown> | null
+  current_situation?: Record<string, unknown> | null
+  snapshots?: ApplicationAnalysisDailySnapshotFile[]
+  snapshot?: {
+    target: Record<string, unknown>
+    date: string
+    updated_at: string
+    short_term_trend?: Record<string, unknown> | null
+    current_situation?: Record<string, unknown> | null
+    summary?: Record<string, unknown> | null
+  }
+}
+
+export async function refreshApplicationAnalysisRecent30(
+  targetId: string,
+  date?: string,
+): Promise<ApplicationAnalysisDailySnapshotResponse> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/recent30/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(date ? { target_id: targetId, date } : { target_id: targetId }),
+  })
+  return (await res.json()) as ApplicationAnalysisDailySnapshotResponse
+}
+
+export async function listApplicationAnalysisRecent30(
+  targetId: string,
+  limit = 60,
+): Promise<ApplicationAnalysisDailySnapshotResponse> {
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/application-analysis/recent30/${encodeURIComponent(targetId)}?limit=${encodeURIComponent(String(limit))}`,
+  )
+  return (await res.json()) as ApplicationAnalysisDailySnapshotResponse
+}
+
+export async function readApplicationAnalysisRecent30(
+  targetId: string,
+  date: string,
+): Promise<ApplicationAnalysisDailySnapshotResponse> {
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/application-analysis/recent30/${encodeURIComponent(targetId)}/${encodeURIComponent(date)}`,
+  )
+  return (await res.json()) as ApplicationAnalysisDailySnapshotResponse
+}
+
 export async function controlApplicationAnalysisScheduler(action: "start" | "stop"): Promise<{ ok: boolean; status: ApplicationAnalysisSchedulerStatus }> {
   const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/scheduler/${action}`, { method: "POST" })
   return (await res.json()) as { ok: boolean; status: ApplicationAnalysisSchedulerStatus }

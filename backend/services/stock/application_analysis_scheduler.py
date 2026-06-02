@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from backend.services.stock.application_analysis_service import run_application_analysis_target
@@ -31,6 +31,8 @@ class ApplicationAnalysisScheduler:
         self._started_at: datetime | None = None
         self._tick_count = 0
         self._runs_count = 0
+        self._daily_last_run_date: str | None = None
+        self._daily_last_run_lock = threading.Lock()
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -139,9 +141,63 @@ class ApplicationAnalysisScheduler:
                 self._tick()
             except Exception as exc:
                 print(f'[ApplicationAnalysisScheduler] tick error: {exc}', flush=True)
+            try:
+                self._tick_recent30_daily()
+            except Exception as exc:
+                print(f'[ApplicationAnalysisScheduler] recent30 daily error: {exc}', flush=True)
             self._persist_status()
             sleep_seconds = 30
             self._stop_event.wait(sleep_seconds)
+
+    def _tick_recent30_daily(self) -> None:
+        from backend.services.stock.application_analysis_service import run_application_analysis_recent30_and_snapshot
+        from backend.config.settings import (
+            APPLICATION_ANALYSIS_DAILY_DEFAULT_HOUR,
+            APPLICATION_ANALYSIS_DAILY_DEFAULT_MINUTE,
+            APPLICATION_ANALYSIS_DAILY_TIMEZONE_OFFSET_HOURS,
+        )
+        now_utc = datetime.utcnow()
+        local = now_utc + timedelta(hours=APPLICATION_ANALYSIS_DAILY_TIMEZONE_OFFSET_HOURS)
+        today_key = local.strftime('%Y-%m-%d')
+        with self._daily_last_run_lock:
+            if self._daily_last_run_date == today_key:
+                return
+        if local.hour < APPLICATION_ANALYSIS_DAILY_DEFAULT_HOUR:
+            return
+        if local.hour == APPLICATION_ANALYSIS_DAILY_DEFAULT_HOUR and local.minute < APPLICATION_ANALYSIS_DAILY_DEFAULT_MINUTE:
+            return
+        with self._daily_last_run_lock:
+            if self._daily_last_run_date == today_key:
+                return
+            self._daily_last_run_date = today_key
+        for target in load_targets().get('items', []):
+            if not target.get('enabled'):
+                continue
+            target_id = target.get('id')
+            try:
+                started = time.monotonic()
+                result = run_application_analysis_recent30_and_snapshot(target, date_key=today_key)
+                elapsed = int(time.monotonic() - started)
+                with self._last_run_lock:
+                    self._last_run[target_id] = {
+                        'status': 'success',
+                        'elapsed_seconds': elapsed,
+                        'source': 'scheduler_recent30_daily',
+                        'finished_at': datetime.now().isoformat(),
+                        'snapshot_path': result.get('snapshot_path'),
+                        'date': result.get('date'),
+                    }
+                print(f'[ApplicationAnalysisScheduler] recent30 daily target={target_id} date={today_key} elapsed={elapsed}s', flush=True)
+            except Exception as exc:
+                with self._last_run_lock:
+                    self._last_run[target_id] = {
+                        'status': 'failed',
+                        'error': str(exc),
+                        'source': 'scheduler_recent30_daily',
+                        'finished_at': datetime.now().isoformat(),
+                        'date': today_key,
+                    }
+                print(f'[ApplicationAnalysisScheduler] recent30 daily target={target_id} failed: {exc}', flush=True)
 
     def _tick(self) -> None:
         targets = load_targets().get('items', [])
@@ -260,3 +316,50 @@ def trigger_application_analysis(target_id: str | None, source: str = 'manual') 
     if target_id:
         return scheduler.trigger_target(target_id, source=source)
     return {'ok': True, 'items': scheduler.trigger_all(source=source)}
+
+
+def run_recent30_for_target(target_id: str, source: str = 'manual_recent30', date_key: str | None = None) -> dict[str, Any]:
+    from backend.services.stock.application_analysis_service import (
+        list_daily_snapshots,
+        run_application_analysis_recent30_and_snapshot,
+    )
+    targets = {item['id']: item for item in load_targets().get('items', []) if item.get('id')}
+    target = targets.get(target_id)
+    if not target:
+        return {'ok': False, 'error': f'target {target_id} not found'}
+    try:
+        result = run_application_analysis_recent30_and_snapshot(target, date_key=date_key)
+        snapshots = list_daily_snapshots(target, limit=60)
+        return {
+            'ok': True,
+            'target_id': target_id,
+            'source': source,
+            'snapshot_path': result.get('snapshot_path'),
+            'date': result.get('date'),
+            'short_term_trend': result.get('short_term_trend'),
+            'current_situation': result.get('current_situation'),
+            'snapshots': snapshots,
+        }
+    except Exception as exc:
+        return {'ok': False, 'target_id': target_id, 'error': str(exc)}
+
+
+def list_recent30_snapshots(target_id: str, limit: int = 30) -> dict[str, Any]:
+    from backend.services.stock.application_analysis_service import list_daily_snapshots
+    targets = {item['id']: item for item in load_targets().get('items', []) if item.get('id')}
+    target = targets.get(target_id)
+    if not target:
+        return {'ok': False, 'error': f'target {target_id} not found'}
+    return {'ok': True, 'target_id': target_id, 'items': list_daily_snapshots(target, limit=limit)}
+
+
+def read_recent30_snapshot(target_id: str, date_key: str) -> dict[str, Any]:
+    from backend.services.stock.application_analysis_service import read_daily_snapshot
+    targets = {item['id']: item for item in load_targets().get('items', []) if item.get('id')}
+    target = targets.get(target_id)
+    if not target:
+        return {'ok': False, 'error': f'target {target_id} not found'}
+    snapshot = read_daily_snapshot(target, date_key)
+    if not snapshot:
+        return {'ok': False, 'error': f'no snapshot for {target_id} on {date_key}'}
+    return {'ok': True, 'target_id': target_id, 'date': date_key, 'snapshot': snapshot}

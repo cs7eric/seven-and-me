@@ -12,6 +12,9 @@ from backend.services.stock.application_analysis_scheduler import (
     get_application_analysis_scheduler_status,
     list_application_analysis_results,
     list_application_analysis_targets,
+    list_recent30_snapshots,
+    read_recent30_snapshot,
+    run_recent30_for_target,
     start_application_analysis_scheduler,
     stop_application_analysis_scheduler,
     trigger_application_analysis,
@@ -266,6 +269,34 @@ def stock_chart_application_analysis():
         return jsonify(run_application_analysis(target_type, symbol, name, adjust))
     except Exception as exc:
         return jsonify({'error': str(exc)}), 502
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/recent30/refresh', methods=['POST'])
+def refresh_recent30_application_analysis_api():
+    data = request.get_json() or {}
+    target_id = str(data.get('target_id') or '').strip()
+    if not target_id:
+        return jsonify({'ok': False, 'error': 'target_id required'}), 400
+    date_key = data.get('date')
+    if isinstance(date_key, str) and date_key.strip():
+        date_key = date_key.strip()
+    else:
+        date_key = None
+    return jsonify(run_recent30_for_target(target_id, source='api_recent30', date_key=date_key))
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/recent30/<target_id>', methods=['GET'])
+def list_recent30_application_analysis_api(target_id: str):
+    try:
+        limit = int(request.args.get('limit') or 60)
+    except (TypeError, ValueError):
+        limit = 60
+    return jsonify(list_recent30_snapshots(target_id, limit=max(1, min(limit, 200))))
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/recent30/<target_id>/<date_key>', methods=['GET'])
+def read_recent30_application_analysis_api(target_id: str, date_key: str):
+    return jsonify(read_recent30_snapshot(target_id, date_key))
 
 
 @stock_chart_bp.route('/api/stock-chart/market-overview')
