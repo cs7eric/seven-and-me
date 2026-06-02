@@ -27,6 +27,7 @@ BENCHMARKS = {
 }
 
 PROMPT_FILE = BASE_DIR / 'prompt' / 'annotation.md'
+SHORT_TERM_DAILY_PROMPT_FILE = BASE_DIR / 'prompt' / 'short_term_daily.md'
 BREADTH_SERIES_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'series.json'
 APPLICATION_ANALYSIS_DUMP_DIR = Path(BASE_DIR) / 'runtime' / 'application-analysis-dumps'
 APPLICATION_ANALYSIS_DAILY_SNAPSHOT_DIR = APPLICATION_ANALYSIS_DAILY_SNAPSHOT_FOLDER
@@ -968,12 +969,12 @@ def build_recent30_analysis_input(target_type: str, symbol: str, name: str, adju
 
 def run_application_analysis_recent30(target_type: str, symbol: str, name: str, adjust: str = 'qfq') -> dict:
     analysis_input = build_recent30_analysis_input(target_type, symbol, name, adjust)
-    prompt = _prompt_text()
+    prompt = _short_term_daily_prompt_text()
     print(f'[ApplicationAnalysisRecent30] target={target_type}/{symbol} prompt_chars={len(prompt)}', flush=True)
     raw_response, dump_paths = _call_minimax_json(prompt, analysis_input, target_type, symbol, name)
     raw_keys = list(raw_response.keys()) if isinstance(raw_response, dict) else None
     print(f'[ApplicationAnalysisRecent30] raw keys={raw_keys}', flush=True)
-    sanitized = _sanitize_annotations(raw_response)
+    sanitized = _sanitize_short_term_only(raw_response)
     return {
         'analysis_input': analysis_input,
         'analysis_result': sanitized.get('analysis_result'),
@@ -982,6 +983,66 @@ def run_application_analysis_recent30(target_type: str, symbol: str, name: str, 
         'dump_paths': dump_paths,
         'recent_window': analysis_input.get('recent_window'),
     }
+
+
+def _short_term_daily_prompt_text() -> str:
+    raw = Path(SHORT_TERM_DAILY_PROMPT_FILE).read_text(encoding='utf-8').strip()
+    enforcement = (
+        "\n\n【输出硬约束】\n"
+        "- 你只能输出一个 JSON 对象，必须以 `{` 开头、以 `}` 结束。\n"
+        "- 严禁输出 <think>、<analysis>、```、Markdown、解释、问候、总结。\n"
+        "- 严禁使用 reasoning_content、reasoning_details、audio_content 等非 JSON 文本。\n"
+        "- 根字段只能出现 analysis_result；target / data_quality 必须放在 analysis_result 内部。\n"
+        "- analysis_result 必须同时包含 short_term_trend 与 current_situation 两个字段，二者都可以是对象。\n"
+        "- 不得输出 overlay_annotations、support_resistance_zones、pattern_candidates、"
+        "market_sentiment、multi_index_resonance、trend_state、rolling_metrics、summary 等其他字段。\n"
+        "- 不得新增本 prompt 未定义的字段。\n"
+    )
+    return raw + enforcement
+
+
+def _sanitize_short_term_only(result: dict) -> dict:
+    if not isinstance(result, dict):
+        return {'analysis_result': {'short_term_trend': None, 'current_situation': None, 'data_quality': {'warnings': ['AI 返回不是 JSON 对象']}}}
+
+    if isinstance(result.get('analysis_result'), dict):
+        analysis_result = result['analysis_result']
+    else:
+        # 兼容 AI 把字段直接铺在根上的情况
+        analysis_result = {}
+        for key in [
+            'target',
+            'data_quality',
+            'short_term_trend',
+            'current_situation',
+        ]:
+            if key in result:
+                analysis_result[key] = result[key]
+        if not analysis_result:
+            return {'analysis_result': {'short_term_trend': None, 'current_situation': None, 'data_quality': {'warnings': ['AI 未返回 analysis_result']}}}
+        result['analysis_result'] = analysis_result
+
+    # 过滤掉 prompt 之外的多余字段，避免对前端造成误解；缺失字段占位为 None
+    cleaned: dict = {key: analysis_result[key] for key in ('target', 'data_quality') if key in analysis_result}
+    cleaned['short_term_trend'] = analysis_result.get('short_term_trend') if isinstance(analysis_result.get('short_term_trend'), dict) else None
+    cleaned['current_situation'] = analysis_result.get('current_situation') if isinstance(analysis_result.get('current_situation'), dict) else None
+
+    data_quality = cleaned.get('data_quality')
+    if not isinstance(data_quality, dict):
+        data_quality = {}
+        cleaned['data_quality'] = data_quality
+    warnings = data_quality.get('warnings')
+    if not isinstance(warnings, list):
+        warnings = []
+        data_quality['warnings'] = warnings
+
+    if not isinstance(cleaned.get('short_term_trend'), dict):
+        warnings.append('AI 未返回 short_term_trend')
+    if not isinstance(cleaned.get('current_situation'), dict):
+        warnings.append('AI 未返回 current_situation')
+
+    result['analysis_result'] = cleaned
+    return result
 
 
 def _atomic_write_json_local(path: Path, data: Any) -> None:

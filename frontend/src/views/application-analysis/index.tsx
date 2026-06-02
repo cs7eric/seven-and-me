@@ -423,12 +423,18 @@ function AIDirectionCard({
   const trend = safeRecord(shortTermTrend)
   const situation = safeRecord(currentSituation)
 
-  // 历史快照使用日期对应读取出来的数据
-  const showHistoricalView = Boolean(dailySelectedDate && dailySelectedSnapshot)
-  const historicalTrend = showHistoricalView ? safeRecord(dailySelectedSnapshot?.short_term_trend) : trend
-  const historicalSituation = showHistoricalView ? safeRecord(dailySelectedSnapshot?.current_situation) : situation
-  const activeTrend = showHistoricalView ? historicalTrend : trend
-  const activeSituation = showHistoricalView ? historicalSituation : situation
+  // 历史快照：仅当所选日期已读到带数据的对象时，才切换为历史视图
+  const historicalTrendRecord =
+    dailySelectedSnapshot && dailySelectedSnapshot.short_term_trend
+      ? safeRecord(dailySelectedSnapshot.short_term_trend)
+      : null
+  const historicalSituationRecord =
+    dailySelectedSnapshot && dailySelectedSnapshot.current_situation
+      ? safeRecord(dailySelectedSnapshot.current_situation)
+      : null
+  const useHistorical = Boolean(dailySelectedDate && (historicalTrendRecord || historicalSituationRecord))
+  const activeTrend = useHistorical && historicalTrendRecord ? historicalTrendRecord : trend
+  const activeSituation = useHistorical && historicalSituationRecord ? historicalSituationRecord : situation
   const hasActiveTrend = Object.keys(activeTrend).length > 0
   const hasActiveSituation = Object.keys(activeSituation).length > 0
 
@@ -1027,6 +1033,19 @@ export default function ApplicationAnalysisPage() {
       }
       setDailyLastRefreshAt(new Date().toISOString())
       setInfo(`已为 ${selected.name} 重新生成当日 AI 整体判断（${res.date || "今日"}）`)
+      // 同步把 daily 的 analysis_result 写回 result，保证顶部 短期趋势/当前情况 也用最新值
+      if (res.short_term_trend || res.current_situation) {
+        const baseResult = (result as Record<string, unknown> | null) || {}
+        const analysisResult = (baseResult.analysis_result as Record<string, unknown> | undefined) || {}
+        setResult({
+          ...(baseResult as Record<string, unknown>),
+          analysis_result: {
+            ...analysisResult,
+            short_term_trend: res.short_term_trend || null,
+            current_situation: res.current_situation || null,
+          },
+        } as unknown as typeof result)
+      }
       await refreshDailySnapshots(selected.id)
       if (res.date) {
         setDailySelectedDate(res.date)
@@ -1041,7 +1060,7 @@ export default function ApplicationAnalysisPage() {
     } finally {
       setDailyRefreshing(false)
     }
-  }, [refreshDailySnapshots, selected])
+  }, [refreshDailySnapshots, result, selected])
 
   useEffect(() => {
     if (!selected) {
