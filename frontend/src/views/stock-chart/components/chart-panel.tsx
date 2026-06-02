@@ -32,7 +32,6 @@ const RANGE_TIME_FILL_ALPHA = 0.045
 const RANGE_PRICE_LINE_ALPHA = 0.42
 const RANGE_TIME_LINE_ALPHA = 0.38
 const SELECTED_CANDLE_BORDER_COLOR = "#0f172a"
-const SELECTED_CANDLE_FILL_COLOR = "#e0f2fe"
 const SELECTED_CANDLE_FILL_ALPHA = 0.055
 
 type AiOverlayKind = "point" | "range" | "line"
@@ -86,6 +85,30 @@ interface AiAnnotationLabelPosition {
   anchorTimestamp: number
   anchorValue: number
 }
+
+export interface ChartPanelSelectedBarItem {
+  kind: "bar"
+  key: string
+  index: number
+  bar: StockKlineBar
+}
+
+export interface ChartPanelSelectedAnnotationItem {
+  kind: "annotation"
+  key: string
+  annotationId: string
+  annotation: StockOverlayAnnotation
+  overlayType: string
+  typeLabel: string
+  shortText: string
+  fullText: string
+  startTimestamp: number
+  endTimestamp: number
+  minValue: number
+  maxValue: number
+}
+
+export type ChartPanelSelectionItem = ChartPanelSelectedBarItem | ChartPanelSelectedAnnotationItem
 
 let bsOverlayRegistered = false
 let aiOverlaysRegistered = false
@@ -593,6 +616,10 @@ export function ChartPanel({
   period,
   indicators,
   maLines,
+  selectionMode = "single",
+  selectionColors,
+  onSelectionChange,
+  onAnalyzeSelection,
 }: {
   bars: StockKlineBar[]
   annotations: StockAnnotation[]
@@ -604,6 +631,10 @@ export function ChartPanel({
   period: StockPeriod
   indicators: string[]
   maLines: number[]
+  selectionMode?: "single" | "multiple"
+  selectionColors?: Record<string, string>
+  onSelectionChange?: (items: ChartPanelSelectionItem[]) => void
+  onAnalyzeSelection?: (item: ChartPanelSelectionItem) => void
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<Chart | null>(null)
@@ -611,7 +642,7 @@ export function ChartPanel({
   const [hoveredAiAnnotation, setHoveredAiAnnotation] = useState<HoveredAiAnnotation | null>(null)
   const [selectedAiAnnotation, setSelectedAiAnnotation] = useState<HoveredAiAnnotation | null>(null)
   const [annotationLabels, setAnnotationLabels] = useState<AiAnnotationLabelPosition[]>([])
-  const [selectedBarIndex, setSelectedBarIndex] = useState<number | null>(null)
+  const [selectedBarIndexes, setSelectedBarIndexes] = useState<number[]>([])
   const [chartSizeTick, setChartSizeTick] = useState(0)
   const hasTurnover = useMemo(() => bars.some((bar) => typeof bar.turnover === "number" && bar.turnover > 0), [bars])
 
@@ -767,17 +798,52 @@ export function ChartPanel({
     setHoveredSignal(null)
   }
 
-  const activeAiAnnotation = hoveredAiAnnotation ?? selectedAiAnnotation
-  const isAiAnnotationPinned = Boolean(selectedAiAnnotation && activeAiAnnotation?.annotation.id === selectedAiAnnotation.annotation.id)
+  const highlightedAiAnnotation = hoveredAiAnnotation ?? selectedAiAnnotation
+  const tooltipAiAnnotation = hoveredAiAnnotation
+  const isAiAnnotationPinned = Boolean(selectedAiAnnotation)
 
-  const selectedBarData = useMemo(() => {
-    if (selectedBarIndex === null) return null
-    const bar = bars[selectedBarIndex]
-    if (!bar) return null
-    const pixel = getAiPixelPoint(bar.timestamp, (bar.open + bar.close) / 2)
-    if (!pixel || typeof pixel.x !== "number" || typeof pixel.y !== "number") return null
-    return { bar, x: pixel.x, y: pixel.y }
-  }, [selectedBarIndex, bars, chartSizeTick])
+  const buildSelectedAnnotationItem = (item: HoveredAiAnnotation): ChartPanelSelectedAnnotationItem => ({
+    kind: "annotation",
+    key: item.annotation.id,
+    annotationId: item.annotation.id,
+    annotation: item.annotation.overlay,
+    overlayType: item.annotation.overlay.overlay_type,
+    typeLabel: item.annotation.typeLabel,
+    shortText: item.annotation.shortText,
+    fullText: item.annotation.fullText,
+    startTimestamp: item.annotation.startTimestamp,
+    endTimestamp: item.annotation.endTimestamp,
+    minValue: item.annotation.minValue,
+    maxValue: item.annotation.maxValue,
+  })
+
+  useEffect(() => {
+    setSelectedBarIndexes([])
+    setHoveredSignal(null)
+    setHoveredAiAnnotation(null)
+    setSelectedAiAnnotation(null)
+  }, [symbol, period, bars, overlayAnnotations])
+
+  useEffect(() => {
+    const selectedItems: ChartPanelSelectionItem[] = selectedBarIndexes
+      .map((index) => {
+        const bar = bars[index]
+        if (!bar) return null
+        return {
+          kind: "bar" as const,
+          key: `bar-${bar.timestamp}`,
+          index,
+          bar,
+        }
+      })
+      .filter((item): item is ChartPanelSelectedBarItem => Boolean(item))
+
+    if (selectedAiAnnotation) {
+      selectedItems.push(buildSelectedAnnotationItem(selectedAiAnnotation))
+    }
+
+    onSelectionChange?.(selectedItems)
+  }, [bars, onSelectionChange, selectedAiAnnotation, selectedBarIndexes])
 
   const handleChartClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const chart = chartRef.current
@@ -823,13 +889,20 @@ export function ChartPanel({
         reason: "manual",
         score: 1,
       })
-      setSelectedBarIndex(null)
+      setSelectedBarIndexes([])
       setSelectedAiAnnotation(null)
       return
     }
 
     setSelectedAiAnnotation(null)
-    setSelectedBarIndex(selectedBarIndex === dataIndex ? null : dataIndex)
+    setSelectedBarIndexes((current) => {
+      const exists = current.includes(dataIndex)
+      if (selectionMode === "multiple") {
+        return exists ? current.filter((index) => index !== dataIndex) : [...current, dataIndex].sort((left, right) => left - right)
+      }
+
+      return exists ? [] : [dataIndex]
+    })
   }
 
   const handleChartMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1106,8 +1179,6 @@ export function ChartPanel({
 
     const visibleStartTs = bars[0]?.timestamp
     const visibleEndTs = bars[bars.length - 1]?.timestamp
-    const yMin = bars.length ? Math.min(...bars.map((bar) => bar.low), ...derivedAiAnnotations.map((annotation) => annotation.minValue)) : 0
-    const yMax = bars.length ? Math.max(...bars.map((bar) => bar.high), ...derivedAiAnnotations.map((annotation) => annotation.maxValue)) : 0
     const candleWidth = Math.max(getCurrentBarSpace() * 1.2, 8)
 
     const createCandleFrame = (id: string, bar: StockKlineBar, options?: { borderColor?: string; fillColor?: string; alpha?: number; borderAlpha?: number; borderSize?: number; width?: number; zLevel?: number; groupId?: string }) => {
@@ -1136,15 +1207,12 @@ export function ChartPanel({
       })
     }
 
-    if (activeAiAnnotation && visibleStartTs !== undefined && visibleEndTs !== undefined) {
-      const annotation = activeAiAnnotation.annotation
+    if (highlightedAiAnnotation && visibleStartTs !== undefined && visibleEndTs !== undefined) {
+      const annotation = highlightedAiAnnotation.annotation
       const range = getAnnotationBarRange(annotation, bars)
-      const rangeStartIndex = range.startIndex >= 0 ? range.startIndex : activeAiAnnotation.rangeStartIndex
-      const rangeEndIndex = range.endIndex >= 0 ? range.endIndex : activeAiAnnotation.rangeEndIndex
+      const rangeStartIndex = range.startIndex >= 0 ? range.startIndex : highlightedAiAnnotation.rangeStartIndex
+      const rangeEndIndex = range.endIndex >= 0 ? range.endIndex : highlightedAiAnnotation.rangeEndIndex
       const startBar = bars[rangeStartIndex]
-      const endBar = bars[Math.max(rangeStartIndex, rangeEndIndex)]
-      const rangeStartTs = startBar?.timestamp ?? annotation.startTimestamp
-      const rangeEndTs = endBar?.timestamp ?? annotation.endTimestamp
       const accent = annotation.accentColor
 
       if (annotation.kind === "point" && startBar) {
@@ -1215,13 +1283,15 @@ export function ChartPanel({
       }
     }
 
-    if (selectedBarIndex !== null) {
-      const bar = bars[selectedBarIndex]
+    selectedBarIndexes.forEach((selectedIndex) => {
+      const bar = bars[selectedIndex]
       if (bar) {
-        createCandleFrame("selected-bar-highlight", bar, {
+        const barKey = `bar-${bar.timestamp}`
+        const highlightColor = selectionColors?.[barKey] ?? SELECTED_CANDLE_BORDER_COLOR
+        createCandleFrame(`selected-bar-highlight-${bar.timestamp}`, bar, {
           groupId: "selected-bar",
-          borderColor: SELECTED_CANDLE_BORDER_COLOR,
-          fillColor: SELECTED_CANDLE_FILL_COLOR,
+          borderColor: highlightColor,
+          fillColor: highlightColor,
           alpha: SELECTED_CANDLE_FILL_ALPHA,
           borderAlpha: 0.86,
           borderSize: 1.6,
@@ -1229,7 +1299,7 @@ export function ChartPanel({
           zLevel: 35,
         })
       }
-    }
+    })
 
     if (bsSignals.length > 0) {
       chart.createOverlay(
@@ -1256,17 +1326,17 @@ export function ChartPanel({
         }))
       )
     }
-  }, [annotations, bars, bsSignals, chartSizeTick, derivedAiAnnotations, activeAiAnnotation, selectedBarIndex])
+  }, [annotations, bars, bsSignals, chartSizeTick, derivedAiAnnotations, highlightedAiAnnotation, selectedBarIndexes, selectionColors])
 
-  const visibleAnnotationLabels = activeAiAnnotation
-    ? annotationLabels.filter((label) => label.id === activeAiAnnotation.annotation.id)
+  const visibleAnnotationLabels = highlightedAiAnnotation
+    ? annotationLabels.filter((label) => label.id === highlightedAiAnnotation.annotation.id)
     : annotationLabels
 
   const panelWidth = containerRef.current?.clientWidth ?? 960
   const panelHeight = containerRef.current?.clientHeight ?? 720
 
   const activeRangeVisual = (() => {
-    const active = activeAiAnnotation
+    const active = highlightedAiAnnotation
     if (!active || active.annotation.kind !== "range" || bars.length === 0) return null
 
     const annotation = active.annotation
@@ -1394,7 +1464,7 @@ export function ChartPanel({
               stroke={label.accentColor}
               strokeDasharray="4 4"
               strokeWidth={1.2}
-              strokeOpacity={activeAiAnnotation?.annotation.id === label.id ? 0.78 : 0.34}
+              strokeOpacity={highlightedAiAnnotation?.annotation.id === label.id ? 0.78 : 0.34}
             />
           )
         })}
@@ -1420,53 +1490,76 @@ export function ChartPanel({
           title="点击选中并固定该 annotation 的高亮效果"
         >
           <div className="font-semibold text-slate-900" style={{ color: label.accentColor }}>{label.shortText}</div>
-          <div className="truncate text-[10px] text-slate-500">{activeAiAnnotation?.annotation.id === label.id ? (isAiAnnotationPinned ? "已选中" : "悬停中") : label.typeLabel}</div>
+          <div className="truncate text-[10px] text-slate-500">{highlightedAiAnnotation?.annotation.id === label.id ? (isAiAnnotationPinned ? "已选中" : "悬停中") : label.typeLabel}</div>
         </button>
       ))}
-      {activeAiAnnotation ? (
-        <button
-          type="button"
+      {tooltipAiAnnotation ? (
+        <div
+          role="button"
+          tabIndex={0}
           onClick={(event) => {
             event.stopPropagation()
-            toggleSelectedAiAnnotation(activeAiAnnotation)
+            toggleSelectedAiAnnotation(tooltipAiAnnotation)
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return
+            event.preventDefault()
+            event.stopPropagation()
+            toggleSelectedAiAnnotation(tooltipAiAnnotation)
           }}
           className="pointer-events-auto absolute z-20 w-[260px] cursor-pointer rounded-2xl border border-slate-200 bg-white/95 p-3 text-left text-xs text-slate-700 shadow-[0_16px_40px_rgba(15,23,42,0.14)] backdrop-blur-sm transition hover:border-slate-300 hover:bg-white"
           style={{
-            left: Math.min(activeAiAnnotation.x + 18, Math.max(16, panelWidth - 280)),
-            top: Math.max(16, activeAiAnnotation.y - (activeAiAnnotation.annotation.kind === "point" ? 88 : 110)),
+            left: Math.min(tooltipAiAnnotation.x + 18, Math.max(16, panelWidth - 280)),
+            top: Math.max(16, tooltipAiAnnotation.y - (tooltipAiAnnotation.annotation.kind === "point" ? 88 : 110)),
           }}
         >
           <div className="mb-2 flex items-center gap-2">
             <span
               className="rounded-full px-2 py-0.5 text-[10px] font-semibold text-white"
-              style={{ backgroundColor: activeAiAnnotation.annotation.accentColor }}
+              style={{ backgroundColor: tooltipAiAnnotation.annotation.accentColor }}
             >
-              {activeAiAnnotation.annotation.typeLabel}
+              {tooltipAiAnnotation.annotation.typeLabel}
             </span>
-            <span className="text-[11px] font-semibold text-slate-900">{activeAiAnnotation.annotation.shortText}</span>
+            <span className="text-[11px] font-semibold text-slate-900">{tooltipAiAnnotation.annotation.shortText}</span>
           </div>
-          <div className="mb-2 leading-5 text-slate-700">{activeAiAnnotation.annotation.fullText || activeAiAnnotation.annotation.shortText}</div>
+          <div className="mb-2 leading-5 text-slate-700">{tooltipAiAnnotation.annotation.fullText || tooltipAiAnnotation.annotation.shortText}</div>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-500">
-            {activeAiAnnotation.annotation.kind === "point" ? (
+            {tooltipAiAnnotation.annotation.kind === "point" ? (
               <>
-                <div>时间：{formatRangeTime(activeAiAnnotation.annotation.anchorTimestamp)}</div>
-                <div>价位：{activeAiAnnotation.annotation.anchorValue.toFixed(2)}</div>
-                <div>标签：{activeAiAnnotation.annotation.shortText}</div>
-                <div>类型：{activeAiAnnotation.annotation.typeLabel}</div>
+                <div>时间：{formatRangeTime(tooltipAiAnnotation.annotation.anchorTimestamp)}</div>
+                <div>价位：{tooltipAiAnnotation.annotation.anchorValue.toFixed(2)}</div>
+                <div>标签：{tooltipAiAnnotation.annotation.shortText}</div>
+                <div>类型：{tooltipAiAnnotation.annotation.typeLabel}</div>
               </>
             ) : (
               <>
-                <div>开始：{formatRangeTime(activeAiAnnotation.annotation.startTimestamp)}</div>
-                <div>结束：{formatRangeTime(activeAiAnnotation.annotation.endTimestamp)}</div>
-                <div>低位：{activeAiAnnotation.annotation.minValue.toFixed(2)}</div>
-                <div>高位：{activeAiAnnotation.annotation.maxValue.toFixed(2)}</div>
+                <div>开始：{formatRangeTime(tooltipAiAnnotation.annotation.startTimestamp)}</div>
+                <div>结束：{formatRangeTime(tooltipAiAnnotation.annotation.endTimestamp)}</div>
+                <div>低位：{tooltipAiAnnotation.annotation.minValue.toFixed(2)}</div>
+                <div>高位：{tooltipAiAnnotation.annotation.maxValue.toFixed(2)}</div>
               </>
             )}
           </div>
-          <div className="mt-2 text-[10px] text-slate-400">
-            {isAiAnnotationPinned ? "点击取消选中" : "点击固定该 annotation 高亮"}
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="text-[10px] text-slate-400">
+              点击固定该 annotation 高亮
+            </div>
+            {onAnalyzeSelection ? (
+              <button
+                type="button"
+                className="pointer-events-auto px-0 text-[11px] font-semibold text-slate-700 transition hover:text-slate-950"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setSelectedAiAnnotation(tooltipAiAnnotation)
+                  setHoveredAiAnnotation(null)
+                  onAnalyzeSelection(buildSelectedAnnotationItem(tooltipAiAnnotation))
+                }}
+              >
+                Analysis
+              </button>
+            ) : null}
           </div>
-        </button>
+        </div>
       ) : null}
       {hoveredSignal ? (
         <div
@@ -1482,25 +1575,6 @@ export function ChartPanel({
           </div>
           <div>价格：{hoveredSignal.price.toFixed(2)}</div>
           <div>时间：{new Date(hoveredSignal.timestamp).toLocaleString("zh-CN", { hour12: false })}</div>
-        </div>
-      ) : null}
-      {selectedBarData ? (
-        <div
-          className="pointer-events-none absolute z-[15] min-w-[160px] rounded-xl border border-amber-200 bg-amber-50/95 px-3 py-2 text-xs text-slate-700 shadow-[0_8px_24px_rgba(245,158,11,0.15)]"
-          style={{
-            left: Math.min(selectedBarData.x + 18, Math.max(16, panelWidth - 200)),
-            top: Math.max(16, selectedBarData.y - 82),
-          }}
-        >
-          <div className="mb-1 text-[11px] font-semibold text-amber-700">K线详情（已选中）</div>
-          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
-            <div>时间：{formatRangeTime(selectedBarData.bar.timestamp)}</div>
-            <div>开：{selectedBarData.bar.open.toFixed(2)}</div>
-            <div>高：{selectedBarData.bar.high.toFixed(2)}</div>
-            <div>低：{selectedBarData.bar.low.toFixed(2)}</div>
-            <div>收：{selectedBarData.bar.close.toFixed(2)}</div>
-            <div>量：{(selectedBarData.bar.volume ?? 0).toLocaleString()}</div>
-          </div>
         </div>
       ) : null}
     </div>
