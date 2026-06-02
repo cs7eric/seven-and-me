@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Clock, FileJson, LineChart, Plus, RefreshCw, Save, Search, ShieldAlert, Sparkles, Trash2 } from "lucide-react"
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Clock, Compass, FileJson, LineChart, MapPin, Plus, RefreshCw, Save, Search, ShieldAlert, Sparkles, Target, Trash2 } from "lucide-react"
 
 import { WorkspaceShell } from "@/components/workspace-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -110,6 +110,15 @@ function fmtNumberWithCompact(value: number, digits = 2) {
     return `${sign}${fmtInt(abs)} · ${fmtCompactNumber(value, digits).replace(/^[+-]/, "")}`
   }
   return fmtCompactNumber(value, digits)
+}
+
+function toNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
 }
 
 function MetricCard({ label, value, icon: Icon, tone = "slate" }: { label: string; value: string; icon: typeof Bot; tone?: "slate" | "teal" | "violet" }) {
@@ -334,9 +343,9 @@ function CollapsibleCard({
                 ) : null}
               </div>
               {description ? <CardDescription className="mt-0.5 text-[11px] text-slate-500">{description}</CardDescription> : null}
+             </div>
             </div>
-          </div>
-          <Button
+            <Button
             type="button"
             size="icon-sm"
             variant="ghost"
@@ -350,6 +359,253 @@ function CollapsibleCard({
       </CardHeader>
       {!collapsed ? <CardContent className="pt-0">{children}</CardContent> : null}
     </Card>
+  )
+}
+
+const BIAS_TONE: Record<string, { label: string; cls: string }> = {
+  bullish: { label: "偏多", cls: "bg-rose-50 text-rose-700 border-rose-200" },
+  neutral_bullish: { label: "中性偏多", cls: "bg-rose-50/70 text-rose-700 border-rose-200" },
+  neutral: { label: "中性", cls: "bg-slate-50 text-slate-700 border-slate-200" },
+  neutral_bearish: { label: "中性偏空", cls: "bg-emerald-50/70 text-emerald-700 border-emerald-200" },
+  bearish: { label: "偏空", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  unclear: { label: "不可判断", cls: "bg-slate-50 text-slate-500 border-slate-200" },
+}
+
+function biasTone(bias: unknown) {
+  const key = typeof bias === "string" ? bias.toLowerCase() : ""
+  return BIAS_TONE[key] || BIAS_TONE.unclear
+}
+
+function safeRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+}
+
+function safeString(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0 ? value : ""
+}
+
+function AIDirectionCard({
+  shortTermTrend,
+  currentSituation,
+  collapsed,
+  onToggle,
+}: {
+  shortTermTrend: Record<string, unknown>
+  currentSituation: Record<string, unknown>
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const trend = safeRecord(shortTermTrend)
+  const situation = safeRecord(currentSituation)
+  const hasTrend = Object.keys(trend).length > 0
+  const hasSituation = Object.keys(situation).length > 0
+  if (!hasTrend && !hasSituation) return null
+
+  const stateLabel = fmt(trend.state)
+  const bias = biasTone(trend.bias)
+  const horizon = fmt(trend.horizon)
+  const score = fmt(trend.score)
+  const confidence = fmt(trend.confidence)
+  const momentum = safeRecord(trend.momentum)
+  const maPosition = safeRecord(trend.ma_position)
+  const pricePosition = safeRecord(trend.price_position)
+  const scenario = safeRecord(trend.scenario_analysis)
+  const evidence = textList(trend.key_evidence)
+  const invalidList = textList(trend.invalid_conditions)
+
+  const position = fmt(situation.position)
+  const spaceStructure = fmt(situation.space_structure)
+  const positionScore = fmt(situation.position_score)
+  const situationConfidence = fmt(situation.confidence)
+  const statusTags = textList(situation.status_tags)
+  const situationEvidence = textList(situation.key_evidence)
+  const situationNote = safeString(situation.note)
+
+  return (
+    <CollapsibleCard
+      title="AI 整体判断"
+      description="短期趋势与当前位置的结构化结论"
+      icon={Compass}
+      badge={stateLabel || position}
+      collapsed={collapsed}
+      onToggle={onToggle}
+    >
+      <div className="space-y-3">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+              <Sparkles className="size-3" />短期趋势
+            </div>
+            <div className="mt-1.5 flex items-center gap-2">
+              <div className="truncate text-sm font-semibold text-slate-900">{stateLabel || "—"}</div>
+              <Badge className={`rounded-full border px-2 py-0 text-[10px] font-medium ${bias.cls}`} variant="outline">
+                {bias.label}
+              </Badge>
+            </div>
+            <div className="mt-1.5 grid grid-cols-3 gap-1 text-[11px] text-slate-500">
+              <div>
+                <div className="text-slate-400">周期</div>
+                <div className="font-mono text-slate-700">{horizon || "—"}</div>
+              </div>
+              <div>
+                <div className="text-slate-400">分</div>
+                <div className="font-mono text-slate-700">{score}</div>
+              </div>
+              <div>
+                <div className="text-slate-400">置信</div>
+                <div className="font-mono text-slate-700">{confidence}</div>
+              </div>
+            </div>
+          </div>
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+              <MapPin className="size-3" />当前所处情况
+            </div>
+            <div className="mt-1.5 flex items-center gap-2">
+              <div className="truncate text-sm font-semibold text-slate-900">{position || "—"}</div>
+              <Badge className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0 text-[10px] text-slate-600" variant="outline">
+                {spaceStructure || "—"}
+              </Badge>
+            </div>
+            <div className="mt-1.5 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
+              <div>
+                <div className="text-slate-400">位置分</div>
+                <div className="font-mono text-slate-700">{positionScore}</div>
+              </div>
+              <div>
+                <div className="text-slate-400">置信</div>
+                <div className="font-mono text-slate-700">{situationConfidence}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {statusTags.length || situationNote ? (
+          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+              <Target className="size-3" />状态标签与备注
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {statusTags.length ? (
+                statusTags.map((tag) => (
+                  <Badge key={tag} className="rounded-full border-slate-200 bg-white px-2 py-0 text-[10px] text-slate-700" variant="outline">
+                    {tag}
+                  </Badge>
+                ))
+              ) : (
+                <span className="text-[11px] text-slate-400">无标签</span>
+              )}
+            </div>
+            {situationNote ? <div className="mt-2 text-[11px] leading-5 text-slate-600">{situationNote}</div> : null}
+          </div>
+        ) : null}
+
+        {hasTrend ? (
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+              <LineChart className="size-3" />动量 / 均线 / 位置
+            </div>
+            <div className="mt-1.5 grid gap-1 text-[11px] leading-5 text-slate-600 sm:grid-cols-2">
+              <div>
+                <span className="text-slate-400">3 日 / 5 日 / 10 日</span>{" "}
+                <span className="font-mono text-slate-700">
+                  {fmtPercent(toNumber(momentum.return_3d) ?? NaN)} · {fmtPercent(toNumber(momentum.return_5d) ?? NaN)} · {fmtPercent(toNumber(momentum.return_10d) ?? NaN)}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400">5 日涨跌</span>{" "}
+                <span className="font-mono text-slate-700">
+                  {fmt(momentum.up_days_5d)} 阳 / {fmt(momentum.down_days_5d)} 阴
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400">距 20 日高 / 低</span>{" "}
+                <span className="font-mono text-slate-700">
+                  {fmtPercent(toNumber(momentum.near_20d_high_pct) ?? NaN)} · {fmtPercent(toNumber(momentum.near_20d_low_pct) ?? NaN)}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400">短均线结构</span>{" "}
+                <span className="text-slate-700">{fmt(maPosition.short_ma_structure)}</span>
+              </div>
+              <div>
+                <span className="text-slate-400">价格位置</span>{" "}
+                <span className="text-slate-700">{fmt(pricePosition.position_vs_range_20d)}</span>
+              </div>
+              <div>
+                <span className="text-slate-400">量价 / 换手</span>{" "}
+                <span className="text-slate-700">{fmt(trend.volume_price_state)} · {fmt(trend.turnover_state)}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {hasTrend && Object.keys(scenario).length ? (
+          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
+              <Compass className="size-3" />情景分析
+            </div>
+            <div className="mt-1.5 grid gap-2 sm:grid-cols-3">
+              {(["upside", "base", "downside"] as const).map((key) => {
+                const block = safeRecord(scenario[key])
+                if (!Object.keys(block).length) return null
+                const tone =
+                  key === "upside" ? "border-rose-200 bg-rose-50/60" : key === "downside" ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-slate-50/60"
+                return (
+                  <div key={key} className={`rounded-xl border p-2.5 ${tone}`}>
+                    <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.08em] text-slate-500">
+                      <span>{key === "upside" ? "偏强情景" : key === "downside" ? "偏弱情景" : "中性情景"}</span>
+                      <span className="font-mono text-slate-600">置信 {fmt(block.confidence)}</span>
+                    </div>
+                    {safeString(block.condition) ? (
+                      <div className="mt-1 text-[11px] leading-5 text-slate-700">{safeString(block.condition)}</div>
+                    ) : null}
+                    {safeString(block.observation) ? (
+                      <div className="mt-1 text-[11px] leading-5 text-slate-500">观察：{safeString(block.observation)}</div>
+                    ) : null}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {evidence.length || invalidList.length ? (
+          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3">
+            {evidence.length ? (
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">关键证据</div>
+                <ul className="mt-1 list-disc pl-4 text-[11px] leading-5 text-slate-600">
+                  {evidence.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {invalidList.length ? (
+              <div className="mt-2">
+                <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">失效条件</div>
+                <ul className="mt-1 list-disc pl-4 text-[11px] leading-5 text-slate-600">
+                  {invalidList.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {situationEvidence.length ? (
+              <div className="mt-2">
+                <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">当前情况证据</div>
+                <ul className="mt-1 list-disc pl-4 text-[11px] leading-5 text-slate-600">
+                  {situationEvidence.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </CollapsibleCard>
   )
 }
 
@@ -425,6 +681,7 @@ export default function ApplicationAnalysisPage() {
   const [overviewCardCollapsed, setOverviewCardCollapsed] = useState(false)
   const [selectionCardCollapsed, setSelectionCardCollapsed] = useState(false)
   const [chartCardCollapsed, setChartCardCollapsed] = useState(false)
+  const [directionCardCollapsed, setDirectionCardCollapsed] = useState(false)
   const [selectedChartItems, setSelectedChartItems] = useState<ChartPanelSelectionItem[]>([])
   const [analysisFocusKey, setAnalysisFocusKey] = useState<string | null>(null)
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
@@ -559,6 +816,8 @@ export default function ApplicationAnalysisPage() {
   const summary = (analysis?.summary as Record<string, unknown> | undefined) || {}
   const dataQuality = (analysis?.data_quality as Record<string, unknown> | undefined) || {}
   const trendState = asRecord(analysis?.trend_state)
+  const shortTermTrend = useMemo(() => asRecord(analysis?.short_term_trend), [analysis])
+  const currentSituation = useMemo(() => asRecord(analysis?.current_situation), [analysis])
   const overlays = useMemo(() => asOverlayAnnotations(analysis?.overlay_annotations), [analysis])
   const warnings = textList(dataQuality.warnings)
   const errors = textList(dataQuality.errors)
@@ -1087,6 +1346,13 @@ export default function ApplicationAnalysisPage() {
                 )}
               </CollapsibleCard>
             </div>
+
+            <AIDirectionCard
+              shortTermTrend={shortTermTrend}
+              currentSituation={currentSituation}
+              collapsed={directionCardCollapsed}
+              onToggle={() => setDirectionCardCollapsed((value) => !value)}
+            />
           </div>
 
           <div className="space-y-6">
