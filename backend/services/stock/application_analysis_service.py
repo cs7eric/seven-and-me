@@ -29,6 +29,9 @@ APPLICATION_ANALYSIS_TEXT_CHUNK_CHARS = int(os.getenv('MINIMAX_APPLICATION_ANALY
 APPLICATION_ANALYSIS_TIMEOUT = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TIMEOUT') or '600')
 TARGET_DAILY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_DAILY') or '30')
 TARGET_WEEKLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_WEEKLY') or '10')
+TARGET_MONTHLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_MONTHLY') or '6')
+TARGET_HORIZON_DAYS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_HORIZON_DAYS') or '120')
+TARGET_HORIZON_SEGMENTS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_HORIZON_SEGMENTS') or '4')
 BENCHMARK_DAILY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_BENCHMARK_DAILY') or '10')
 BENCHMARK_WEEKLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_BENCHMARK_WEEKLY') or '5')
 BREADTH_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_BREADTH') or '10')
@@ -136,6 +139,183 @@ def _keep_tail(items: list[dict], limit: int) -> list[dict]:
     if limit <= 0:
         return []
     return items[-limit:]
+
+
+def _aggregate_to_period(daily: list[dict], period: str) -> list[dict]:
+    if not daily:
+        return []
+    from datetime import datetime
+    if period == 'weekly':
+        fmt = '%Y-%W'
+    elif period == 'monthly':
+        fmt = '%Y-%m'
+    else:
+        return list(daily)
+    by_bucket: dict[str, list[dict]] = {}
+    for bar in daily:
+        ts = _int_timestamp(bar.get('timestamp'))
+        if not ts:
+            continue
+        try:
+            d = datetime.utcfromtimestamp(ts / 1000)
+        except (OSError, ValueError, OverflowError):
+            continue
+        key = d.strftime(fmt)
+        by_bucket.setdefault(key, []).append(bar)
+    out: list[dict] = []
+    for key in sorted(by_bucket.keys()):
+        group = by_bucket[key]
+        if not group:
+            continue
+        first = group[0]
+        last = group[-1]
+        highs: list[float] = []
+        lows: list[float] = []
+        volume = 0.0
+        turnover = 0.0
+        for bar in group:
+            high_value = float(bar.get('high') or 0)
+            low_value = float(bar.get('low') or 0)
+            if high_value:
+                highs.append(high_value)
+            if low_value:
+                lows.append(low_value)
+            volume += float(bar.get('volume') or 0)
+            turnover += float(bar.get('turnover') or 0)
+        out.append({
+            'timestamp': _int_timestamp(last.get('timestamp')),
+            'open': float(first.get('open') or 0),
+            'high': max(highs) if highs else 0,
+            'low': min(lows) if lows else 0,
+            'close': float(last.get('close') or 0),
+            'volume': volume,
+            'turnover': turnover,
+        })
+    return out
+
+
+def _split_daily_into_segments(daily: list[dict], segments: int) -> list[list[dict]]:
+    if segments <= 1 or len(daily) <= segments:
+        return [daily]
+    total = len(daily)
+    chunk_size = total // segments
+    remainder = total - chunk_size * segments
+    out: list[list[dict]] = []
+    cursor = 0
+    for index in range(segments):
+        extra = 1 if index < remainder else 0
+        size = chunk_size + extra
+        out.append(daily[cursor:cursor + size])
+        cursor += size
+    return out
+
+
+def _filter_by_timestamp_range(items: list[dict], start_ts: int, end_ts: int) -> list[dict]:
+    if not items:
+        return []
+    return [item for item in items if start_ts <= _int_timestamp(item.get('timestamp')) <= end_ts]
+
+
+def build_horizon_analysis_input(
+    target_type: str,
+    symbol: str,
+    name: str,
+    adjust: str = 'qfq',
+    days: int = TARGET_HORIZON_DAYS,
+    segments: int = TARGET_HORIZON_SEGMENTS,
+    monthly_keep: int = TARGET_MONTHLY_KEEP,
+    weekly_keep: int = TARGET_WEEKLY_KEEP,
+) -> dict:
+    segments = max(1, segments)
+    days = max(segments, days)
+    daily, daily_source = _load_bars(target_type, symbol, '1d', adjust)
+    weekly, weekly_source = _load_bars(target_type, symbol, '1w', adjust)
+    monthly = _aggregate_to_period(daily, 'monthly')
+    daily_window = _keep_tail(daily, days)
+    weekly_for_ai = _keep_tail(weekly, weekly_keep)
+    monthly_for_ai = _keep_tail(monthly, monthly_keep)
+    daily_segments = _split_daily_into_segments(daily_window, segments)
+    benchmark_segments: dict[str, dict] = {}
+    benchmark_sources: dict[str, dict] = {}
+    for benchmark_symbol, benchmark_name in BENCHMARKS.items():
+        benchmark_daily, benchmark_daily_source = _load_bars('index', benchmark_symbol, '1d', adjust)
+        benchmark_weekly, benchmark_weekly_source = _load_bars('index', benchmark_symbol, '1w', adjust)
+        benchmark_monthly = _aggregate_to_period(benchmark_daily, 'monthly')
+        benchmark_segments[benchmark_symbol] = {
+            'name': benchmark_name,
+            'daily_segments': _split_daily_into_segments(_keep_tail(benchmark_daily, days), segments),
+            'weekly': _keep_tail(benchmark_weekly, max(weekly_keep, 12)),
+            'monthly': _keep_tail(benchmark_monthly, max(monthly_keep, 6)),
+        }
+        benchmark_sources[benchmark_symbol] = {
+            'daily': benchmark_daily_source,
+            'daily_total': len(benchmark_daily),
+            'weekly': benchmark_weekly_source,
+            'weekly_total': len(benchmark_weekly),
+            'monthly': 'aggregated',
+            'monthly_total': len(benchmark_monthly),
+        }
+    breadth_window = _keep_tail(_load_breadth_series(), max(60, days))
+    return {
+        'horizon': {
+            'days': days,
+            'segments': segments,
+            'monthly_keep': monthly_keep,
+            'weekly_keep': weekly_keep,
+        },
+        'target': {
+            'target_type': target_type,
+            'symbol': symbol,
+            'name': name,
+        },
+        'daily_segments': [
+            {
+                'segment_index': index,
+                'period': '1d',
+                'item_count': len(segment_items),
+                'first_timestamp': _int_timestamp(segment_items[0].get('timestamp')) if segment_items else 0,
+                'last_timestamp': _int_timestamp(segment_items[-1].get('timestamp')) if segment_items else 0,
+                'items': segment_items,
+            }
+            for index, segment_items in enumerate(daily_segments)
+        ],
+        'weekly_bars': {
+            'period': '1w',
+            'total_count': len(weekly),
+            'items': weekly_for_ai,
+        },
+        'monthly_bars': {
+            'period': '1m',
+            'total_count': len(monthly),
+            'items': monthly_for_ai,
+        },
+        'benchmark_bars': benchmark_segments,
+        'market_breadth_series': breadth_window,
+        'analysis_windows': [5, 10, 20, 30, 60, 120],
+        'enabled_features': {
+            'support_resistance': True,
+            'trend_detection': True,
+            'volume_price_analysis': True,
+            'turnover_analysis': True,
+            'pattern_candidates': True,
+            'multi_index_resonance': True,
+            'market_sentiment_overlay': True,
+        },
+        '_sources': {
+            'daily': daily_source,
+            'daily_total': len(daily),
+            'daily_window': len(daily_window),
+            'weekly': weekly_source,
+            'weekly_total': len(weekly),
+            'weekly_kept': len(weekly_for_ai),
+            'monthly': 'aggregated',
+            'monthly_total': len(monthly),
+            'monthly_kept': len(monthly_for_ai),
+            'benchmarks': benchmark_sources,
+            'market_breadth_series_kept': len(breadth_window),
+            'prompt': str(PROMPT_FILE),
+        },
+    }
 
 
 def build_application_analysis_input(target_type: str, symbol: str, name: str, adjust: str = 'qfq') -> dict:
@@ -572,3 +752,178 @@ def run_application_analysis(target_type: str, symbol: str, name: str, adjust: s
         'raw_root_keys': raw_keys,
         'dump_paths': dump_paths,
     }
+
+
+def _build_segment_input(horizon_input: dict, segment_index: int) -> dict:
+    segments = horizon_input.get('daily_segments') or []
+    target_segment = segments[segment_index] if 0 <= segment_index < len(segments) else None
+    benchmark_segments_filtered: dict[str, dict] = {}
+    for symbol, data in (horizon_input.get('benchmark_bars') or {}).items():
+        benchmark_daily_segments = data.get('daily_segments') or []
+        segment = benchmark_daily_segments[segment_index] if 0 <= segment_index < len(benchmark_daily_segments) else None
+        benchmark_segments_filtered[symbol] = {
+            **data,
+            'daily_segments': [segment] if segment else [],
+        }
+    start_ts = target_segment.get('first_timestamp') if target_segment else 0
+    end_ts = target_segment.get('last_timestamp') if target_segment else 0
+    breadth_filtered: list = []
+    if start_ts and end_ts:
+        breadth_filtered = _filter_by_timestamp_range(horizon_input.get('market_breadth_series') or [], start_ts, end_ts)
+        if not breadth_filtered:
+            breadth_filtered = _keep_tail(horizon_input.get('market_breadth_series') or [], 5)
+    return {
+        'target': horizon_input.get('target'),
+        'horizon': horizon_input.get('horizon'),
+        'bars': {
+            'daily': {
+                'period': '1d',
+                'segment_index': segment_index,
+                'items': (target_segment or {}).get('items') or [],
+            },
+            'weekly': {
+                'period': '1w',
+                'items': horizon_input.get('weekly_bars', {}).get('items') or [],
+            },
+            'monthly': {
+                'period': '1m',
+                'items': horizon_input.get('monthly_bars', {}).get('items') or [],
+            },
+        },
+        'benchmark_bars': benchmark_segments_filtered,
+        'market_breadth_series': breadth_filtered,
+        'analysis_windows': horizon_input.get('analysis_windows') or [5, 10, 20, 30, 60, 120],
+        'enabled_features': horizon_input.get('enabled_features') or {},
+    }
+
+
+def _merge_segment_results(segment_results: list[dict]) -> dict:
+    merged: dict = {}
+    trend_state: dict = {}
+    rolling_metrics: dict = {}
+    support_zones: list = []
+    pattern_candidates: list = []
+    overlay_annotations: list = []
+    multi_index_resonance: dict = {}
+    market_sentiment: dict = {}
+    data_quality_warnings: list = []
+    last_summary: dict = {}
+    total_segments = len(segment_results)
+    for index, segment in enumerate(segment_results):
+        if not isinstance(segment, dict):
+            continue
+        if isinstance(segment.get('trend_state'), dict):
+            trend_state[f'segment_{index}'] = segment['trend_state']
+        if isinstance(segment.get('rolling_metrics'), dict):
+            rolling_metrics[f'segment_{index}'] = segment['rolling_metrics']
+        if isinstance(segment.get('support_resistance_zones'), list):
+            support_zones.extend([item for item in segment['support_resistance_zones'] if isinstance(item, dict)])
+        if isinstance(segment.get('pattern_candidates'), list):
+            pattern_candidates.extend([item for item in segment['pattern_candidates'] if isinstance(item, dict)])
+        if isinstance(segment.get('overlay_annotations'), list):
+            for item in segment['overlay_annotations']:
+                if isinstance(item, dict):
+                    item['_segment'] = index
+                    overlay_annotations.append(item)
+        if isinstance(segment.get('multi_index_resonance'), dict) and index == total_segments - 1:
+            multi_index_resonance = segment['multi_index_resonance']
+        if isinstance(segment.get('market_sentiment'), dict) and index == total_segments - 1:
+            market_sentiment = segment['market_sentiment']
+        if isinstance(segment.get('data_quality'), dict):
+            warnings = segment['data_quality'].get('warnings') if isinstance(segment['data_quality'].get('warnings'), list) else []
+            data_quality_warnings.extend([f'segment_{index}:{w}' for w in warnings if isinstance(w, str)])
+        if isinstance(segment.get('summary'), dict) and index == total_segments - 1:
+            last_summary = segment['summary']
+    if trend_state:
+        merged['trend_state'] = trend_state
+    if rolling_metrics:
+        merged['rolling_metrics'] = rolling_metrics
+    if support_zones:
+        merged['support_resistance_zones'] = support_zones
+    if pattern_candidates:
+        merged['pattern_candidates'] = pattern_candidates
+    if overlay_annotations:
+        merged['overlay_annotations'] = overlay_annotations
+    if multi_index_resonance:
+        merged['multi_index_resonance'] = multi_index_resonance
+    if market_sentiment:
+        merged['market_sentiment'] = market_sentiment
+    if last_summary:
+        merged['summary'] = last_summary
+    merged['data_quality'] = {
+        'segments': total_segments,
+        'warnings': data_quality_warnings,
+    }
+    return merged
+
+
+def run_application_analysis_horizon(
+    target_type: str,
+    symbol: str,
+    name: str,
+    adjust: str = 'qfq',
+    days: int = TARGET_HORIZON_DAYS,
+    segments: int = TARGET_HORIZON_SEGMENTS,
+) -> dict:
+    import time
+
+    horizon_input = build_horizon_analysis_input(target_type, symbol, name, adjust, days, segments)
+    horizon_meta = horizon_input.get('horizon') or {}
+    actual_segments = len(horizon_input.get('daily_segments') or [])
+    prompt = _prompt_text()
+    print(f'[ApplicationAnalysisHorizon] start target={target_type}/{symbol} days={horizon_meta.get("days")} segments={actual_segments} prompt_chars={len(prompt)}', flush=True)
+    segment_results: list[dict] = []
+    segment_inputs: list[dict] = []
+    raw_keys_per_segment: list[list[str] | None] = []
+    errors: list[str] = []
+    started = time.monotonic()
+    for segment_index in range(actual_segments):
+        segment_input = _build_segment_input(horizon_input, segment_index)
+        segment_inputs.append(segment_input)
+        try:
+            raw_response, _ = _call_minimax_json(prompt, segment_input, target_type, symbol, f'{name}#seg{segment_index + 1}')
+            raw_keys = list(raw_response.keys()) if isinstance(raw_response, dict) else None
+            raw_keys_per_segment.append(raw_keys)
+            sanitized = _sanitize_annotations(raw_response)
+            analysis_result = sanitized.get('analysis_result') if isinstance(sanitized, dict) else None
+            if isinstance(analysis_result, dict):
+                segment_results.append(analysis_result)
+                print(f'[ApplicationAnalysisHorizon] segment {segment_index + 1}/{actual_segments} ok keys={list(analysis_result.keys())}', flush=True)
+            else:
+                segment_results.append({})
+                errors.append(f'segment_{segment_index + 1}:no analysis_result')
+        except Exception as exc:
+            print(f'[ApplicationAnalysisHorizon] segment {segment_index + 1}/{actual_segments} error: {exc}', flush=True)
+            segment_results.append({})
+            raw_keys_per_segment.append(None)
+            errors.append(f'segment_{segment_index + 1}:{exc}')
+    merged = _merge_segment_results(segment_results)
+    merged['target'] = horizon_input.get('target')
+    merged['horizon'] = horizon_meta
+    if errors:
+        merged.setdefault('data_quality', {})['errors'] = errors
+    elapsed = int(time.monotonic() - started)
+    print(f'[ApplicationAnalysisHorizon] done elapsed={elapsed}s segments={actual_segments} merged_keys={list(merged.keys())}', flush=True)
+    return {
+        'analysis_input': horizon_input,
+        'analysis_result': merged,
+        'raw_result': {'merged': merged, 'segment_results': segment_results, 'errors': errors},
+        'raw_root_keys': ['analysis_result'],
+        'segments': {
+            'count': actual_segments,
+            'inputs': segment_inputs,
+            'raw_keys_per_segment': raw_keys_per_segment,
+        },
+        'horizon': horizon_meta,
+        'elapsed_seconds': elapsed,
+    }
+
+
+def run_application_analysis_target(target: dict) -> dict:
+    target_type = str(target.get('target_type') or 'stock').strip() or 'stock'
+    symbol = str(target.get('symbol') or '').strip() or '000001'
+    name = str(target.get('name') or symbol).strip() or symbol
+    adjust = str(target.get('adjust') or 'qfq').strip() or 'qfq'
+    days = int(target.get('horizon_days') or TARGET_HORIZON_DAYS)
+    segments = int(target.get('horizon_segments') or TARGET_HORIZON_SEGMENTS)
+    return run_application_analysis_horizon(target_type, symbol, name, adjust, days, segments)

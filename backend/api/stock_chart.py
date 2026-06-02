@@ -8,6 +8,15 @@ from backend.repositories.stock.workspace_repo import stock_kline_cache_file
 from backend.services.stock.auction_service import fetch_stock_auction
 from backend.services.stock.kline_service import resolve_stock_klines
 from backend.services.stock.application_analysis_service import run_application_analysis
+from backend.services.stock.application_analysis_scheduler import (
+    get_application_analysis_scheduler_status,
+    list_application_analysis_results,
+    list_application_analysis_targets,
+    start_application_analysis_scheduler,
+    stop_application_analysis_scheduler,
+    trigger_application_analysis,
+)
+from backend.services.stock.application_analysis_store import load_targets, result_path, save_targets, list_history, read_result
 from backend.services.stock.market_overview_service import build_market_overview
 from backend.services.stock.search_service import search_stock_chart
 from backend.services.stock.workspace_service import (
@@ -119,6 +128,63 @@ def stock_chart_meta():
         return jsonify(fetch_stock_meta(target_type, symbol))
     except Exception as exc:
         return jsonify({'error': str(exc), 'symbol': symbol, 'capStyle': None, 'sectorIndexSymbol': None, 'sectorIndexName': None}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/targets', methods=['GET'])
+def list_application_analysis_targets_api():
+    return jsonify({'items': list_application_analysis_targets(), 'config': load_targets()})
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/targets', methods=['PUT'])
+def save_application_analysis_targets_api():
+    payload = request.get_json() or {}
+    saved = save_targets(payload)
+    return jsonify({'ok': True, 'config': saved})
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/results', methods=['GET'])
+def list_application_analysis_results_api():
+    return jsonify({'items': list_application_analysis_results()})
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/results/<target_id>', methods=['GET'])
+def get_application_analysis_result_api(target_id: str):
+    config = load_targets()
+    target = next((item for item in config.get('items', []) if item.get('id') == target_id), None)
+    if not target:
+        return jsonify({'error': f'target {target_id} not found'}), 404
+    result = read_result(target)
+    if not result:
+        return jsonify({'error': f'no result for {target_id}', 'path': str(result_path(target))}), 404
+    result['_meta_result_path'] = str(result_path(target))
+    history = list_history(target, limit=20)
+    result['_meta_history'] = history
+    return jsonify(result)
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/refresh', methods=['POST'])
+def refresh_application_analysis_api():
+    payload = request.get_json() or {}
+    target_id = payload.get('target_id') or request.args.get('target_id')
+    result = trigger_application_analysis(target_id, source='api')
+    return jsonify(result)
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/scheduler', methods=['GET'])
+def application_analysis_scheduler_status_api():
+    return jsonify(get_application_analysis_scheduler_status())
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/scheduler/start', methods=['POST'])
+def application_analysis_scheduler_start_api():
+    start_application_analysis_scheduler()
+    return jsonify({'ok': True, 'status': get_application_analysis_scheduler_status()})
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/scheduler/stop', methods=['POST'])
+def application_analysis_scheduler_stop_api():
+    stop_application_analysis_scheduler()
+    return jsonify({'ok': True, 'status': get_application_analysis_scheduler_status()})
 
 
 _BREADTH_CACHE_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'latest.json'

@@ -380,6 +380,79 @@ export async function runApplicationAnalysis(params: {
   return data
 }
 
+export interface ApplicationAnalysisTarget {
+  id: string
+  target_type: StockTargetType | string
+  symbol: string
+  name: string
+  adjust: string
+  enabled: boolean
+  interval_minutes: number
+  tags?: string[]
+  last_updated_at?: string | null
+  last_result_path?: string | null
+}
+
+export interface ApplicationAnalysisSchedulerStatus {
+  running: boolean
+  started_at?: string | null
+  tick_count?: number
+  runs_count?: number
+  enabled_target_count?: number
+  total_target_count?: number
+  inflight?: Record<string, string>
+  last_run?: Record<string, { status: string; finished_at?: string; elapsed_seconds?: number; overlay_count?: number; error?: string }>
+}
+
+export interface ApplicationAnalysisResultFile {
+  filename: string
+  path: string
+  size_bytes: number
+  updated_at: string
+}
+
+export async function fetchApplicationAnalysisTargets(): Promise<{ items: ApplicationAnalysisTarget[]; config: Record<string, unknown> }> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/targets`)
+  return (await res.json()) as { items: ApplicationAnalysisTarget[]; config: Record<string, unknown> }
+}
+
+export async function saveApplicationAnalysisTargets(payload: { horizon: Record<string, number>; items: ApplicationAnalysisTarget[] }): Promise<{ ok: boolean; config: Record<string, unknown> }> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/targets`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json()) as { ok: boolean; config: Record<string, unknown> }
+}
+
+export async function fetchApplicationAnalysisResult(targetId: string): Promise<ApplicationAnalysisResponse & { _meta_result_path: string; _meta_history: ApplicationAnalysisResultFile[] }> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/results/${encodeURIComponent(targetId)}`)
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || "拉取分析结果失败")
+  }
+  return (await res.json()) as ApplicationAnalysisResponse & { _meta_result_path: string; _meta_history: ApplicationAnalysisResultFile[] }
+}
+
+export async function triggerApplicationAnalysis(targetId: string | null): Promise<{ ok: boolean; target_id?: string; error?: string; items?: unknown[] }> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_id: targetId || null }),
+  })
+  return (await res.json()) as { ok: boolean; target_id?: string; error?: string; items?: unknown[] }
+}
+
+export async function fetchApplicationAnalysisSchedulerStatus(): Promise<ApplicationAnalysisSchedulerStatus> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/scheduler`)
+  return (await res.json()) as ApplicationAnalysisSchedulerStatus
+}
+
+export async function controlApplicationAnalysisScheduler(action: "start" | "stop"): Promise<{ ok: boolean; status: ApplicationAnalysisSchedulerStatus }> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/scheduler/${action}`, { method: "POST" })
+  return (await res.json()) as { ok: boolean; status: ApplicationAnalysisSchedulerStatus }
+}
+
 export async function fetchMarketOverview(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_BASE}/api/stock-chart/market-overview`)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null

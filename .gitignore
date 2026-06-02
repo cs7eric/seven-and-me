@@ -28,3 +28,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+runtime/
+
+reference/
+!reference/application-analysis/
+!reference/application-analysis/targets.json

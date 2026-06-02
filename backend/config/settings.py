@@ -19,6 +19,12 @@ STOCK_REFERENCE_ANNOTATION_INDEX_FILE = STOCK_REFERENCE_INDEX_FOLDER / 'annotati
 STOCK_REFERENCE_WORKSPACE_INDEX_FILE = STOCK_REFERENCE_INDEX_FOLDER / 'workspaces.json'
 STOCK_CHART_CONFIG_FILE = STOCK_REFERENCE_INDEX_FOLDER / 'stock_chart_config.json'
 
+APPLICATION_ANALYSIS_FOLDER = REFERENCE_FOLDER / 'application-analysis'
+APPLICATION_ANALYSIS_TARGETS_FILE = APPLICATION_ANALYSIS_FOLDER / 'targets.json'
+APPLICATION_ANALYSIS_RESULTS_FOLDER = APPLICATION_ANALYSIS_FOLDER / 'results'
+APPLICATION_ANALYSIS_HISTORY_FOLDER = APPLICATION_ANALYSIS_FOLDER / 'history'
+APPLICATION_ANALYSIS_SCHEDULER_FILE = APPLICATION_ANALYSIS_FOLDER / 'scheduler.json'
+
 UPLOAD_FOLDER = BASE_DIR / 'uploads'
 OUTPUT_FOLDER = BASE_DIR / 'outputs'
 
@@ -27,7 +33,7 @@ DOWNLOAD_HEADERS = {
     'Accept': '*/*',
     'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
     'Connection': 'keep-alive',
-    'Referer': 'https://www.bilibili.com/',
+    'Referer': 'https://www.douyin.com/',
 }
 
 STOCK_EASTMONEY_HEADERS = {
@@ -47,6 +53,8 @@ API_KEY = os.getenv('MINIMAX_API_KEY')
 GROUP_ID = os.getenv('MINIMAX_GROUP_ID')
 
 
+
+
 def ensure_app_directories() -> None:
     REFERENCE_FOLDER.mkdir(exist_ok=True)
     MP4_REFERENCE_DATA_FOLDER.mkdir(parents=True, exist_ok=True)
@@ -57,5 +65,8 @@ def ensure_app_directories() -> None:
     (STOCK_REFERENCE_CACHE_FOLDER / 'klines').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_CACHE_FOLDER / 'auction').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_CACHE_FOLDER / 'indicators').mkdir(parents=True, exist_ok=True)
+    APPLICATION_ANALYSIS_FOLDER.mkdir(parents=True, exist_ok=True)
+    APPLICATION_ANALYSIS_RESULTS_FOLDER.mkdir(parents=True, exist_ok=True)
+    APPLICATION_ANALYSIS_HISTORY_FOLDER.mkdir(parents=True, exist_ok=True)
     UPLOAD_FOLDER.mkdir(exist_ok=True)
     OUTPUT_FOLDER.mkdir(exist_ok=True)
