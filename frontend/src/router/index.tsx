@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router-dom"
 import App from "../App"
+import ApplicationAnalysisPage from "../views/application-analysis"
 import DownloaderPage from "../views/downloader"
 import HomePage from "../views/home"
 import Mp4ToWordPage from "../views/mp4-to-word"
@@ -40,6 +41,10 @@ export const router = createBrowserRouter([
       {
         path: "stock-overview",
         element: <StockOverviewPage />,
+      },
+      {
+        path: "stock-overview/application-analysis",
+        element: <ApplicationAnalysisPage />,
       },
       {
         path: "stock-review",

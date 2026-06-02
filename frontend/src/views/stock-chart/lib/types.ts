@@ -41,6 +41,43 @@ export interface StockAnnotation {
   updated_at: string
 }
 
+export interface StockOverlayAnnotation {
+  target_type?: StockTargetType
+  symbol?: string
+  period: string
+  overlay_type: "price_zone" | "trend_line" | "pattern_polyline" | "event_marker" | "gap_zone" | "ma_marker" | "sentiment_marker" | string
+  points: Array<{ timestamp: number; value: number }>
+  styles: Record<string, unknown>
+  text: string
+}
+
+export interface ApplicationAnalysisResponse {
+  analysis_input: Record<string, unknown>
+  analysis_result: Record<string, unknown> & {
+    target?: {
+      target_type: StockTargetType
+      symbol: string
+      name: string
+    }
+    data_quality?: Record<string, unknown> & { warnings?: string[] }
+    trend_state?: Record<string, unknown>
+    rolling_metrics?: Record<string, unknown>
+    support_resistance_zones?: Array<Record<string, unknown>>
+    pattern_candidates?: Array<Record<string, unknown>>
+    market_sentiment?: Record<string, unknown>
+    multi_index_resonance?: Record<string, unknown>
+    summary?: Record<string, unknown> & {
+      current_status?: string
+      main_support?: string[]
+      main_resistance?: string[]
+      main_risks?: string[]
+      main_observations?: string[]
+    }
+    overlay_annotations?: StockOverlayAnnotation[]
+  }
+  raw_result: Record<string, unknown>
+}
+
 export interface StockSignalPoint {
   id: string
   timestamp: number

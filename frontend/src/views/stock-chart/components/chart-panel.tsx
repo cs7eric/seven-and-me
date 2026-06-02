@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { dispose, init, registerOverlay, type Chart, type KLineData } from "klinecharts"
 
-import type { StockAnnotation, StockKlineBar, StockPeriod, StockSignalPoint } from "../lib/types"
+import type { StockAnnotation, StockKlineBar, StockOverlayAnnotation, StockPeriod, StockSignalPoint } from "../lib/types"
 
 const CHART_PERIOD_MAP: Record<StockPeriod, { type: "minute" | "day" | "week"; span: number }> = {
   "1m": { type: "minute", span: 1 },
@@ -18,11 +18,103 @@ const MAIN_PANE_ID = "candle_pane"
 const AMOUNT_PANE_ID = "amount_pane"
 const MACD_PANE_ID = "macd_pane"
 const BS_OVERLAY_NAME = "stock-bs-marker"
+const AI_OVERLAY_NAMES = ["price_zone", "trend_line", "pattern_polyline", "event_marker", "gap_zone", "ma_marker", "sentiment_marker"]
 const STOCK_UP_COLOR = "#dc2626"
 const STOCK_DOWN_COLOR = "#16a34a"
 const STOCK_NEUTRAL_COLOR = "#94a3b8"
 
 let bsOverlayRegistered = false
+let aiOverlaysRegistered = false
+
+function safeNumber(value: unknown, fallback = 0) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback
+}
+
+function safeText(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback
+}
+
+function ensureAiOverlaysRegistered() {
+  if (aiOverlaysRegistered) return
+
+  AI_OVERLAY_NAMES.forEach((name) => {
+    registerOverlay({
+      name,
+      totalStep: name === "price_zone" || name === "trend_line" || name === "gap_zone" ? 2 : 1,
+      needDefaultPointFigure: false,
+      needDefaultXAxisFigure: false,
+      needDefaultYAxisFigure: false,
+      createPointFigures: ({ coordinates, overlay }) => {
+        const styles = (overlay.styles ?? {}) as Record<string, unknown>
+        const text = safeText((overlay.extendData as { text?: unknown } | undefined)?.text)
+        const color = safeText(styles.color, name === "price_zone" ? "#64748b" : "#2563eb")
+        const opacity = safeNumber(styles.opacity, 0.75)
+
+        if (name === "price_zone" || name === "gap_zone") {
+          const first = coordinates[0]
+          const second = coordinates[1]
+          if (!first || !second) return []
+          const x = Math.min(first.x, second.x)
+          const y = Math.min(first.y, second.y)
+          const width = Math.max(Math.abs(second.x - first.x), 80)
+          const height = Math.max(Math.abs(second.y - first.y), 8)
+          return [
+            {
+              type: "rect",
+              attrs: { x, y, width, height },
+              styles: { style: "fill", color, alpha: opacity },
+            },
+            {
+              type: "text",
+              attrs: { x: x + 8, y: y + Math.max(12, height / 2), text, align: "left", baseline: "middle" },
+              styles: { color: "#0f172a", size: 11, weight: "bold" },
+            },
+          ]
+        }
+
+        if (name === "trend_line") {
+          if (coordinates.length < 2) return []
+          return [
+            {
+              type: "line",
+              attrs: { coordinates },
+              styles: { color, size: 2, style: "solid", alpha: opacity },
+            },
+          ]
+        }
+
+        if (name === "pattern_polyline") {
+          if (coordinates.length < 2) return []
+          return [
+            {
+              type: "line",
+              attrs: { coordinates },
+              styles: { color, size: 2, style: "dashed", dashedValue: [4, 4], alpha: opacity },
+            },
+          ]
+        }
+
+        const point = coordinates[0]
+        if (!point) return []
+        const markerColor = name === "sentiment_marker" ? "#10b981" : name === "event_marker" ? "#f97316" : color
+        return [
+          {
+            type: "circle",
+            attrs: { x: point.x, y: point.y, r: 5 },
+            styles: { style: "fill", color: markerColor, alpha: opacity },
+          },
+          {
+            type: "text",
+            attrs: { x: point.x + 8, y: point.y - 8, text, align: "left", baseline: "bottom" },
+            styles: { color: markerColor, size: 11, weight: "bold" },
+          },
+        ]
+      },
+    })
+  })
+
+  aiOverlaysRegistered = true
+}
 
 function ensureBsOverlayRegistered() {
   if (bsOverlayRegistered) return
@@ -178,6 +270,7 @@ function syncIndicators(chart: Chart, indicators: string[], maLines: number[], h
 export function ChartPanel({
   bars,
   annotations,
+  overlayAnnotations = [],
   bsSignals,
   manualSignalMode,
   onManualSignalCreate,
@@ -188,6 +281,7 @@ export function ChartPanel({
 }: {
   bars: StockKlineBar[]
   annotations: StockAnnotation[]
+  overlayAnnotations?: StockOverlayAnnotation[]
   bsSignals: StockSignalPoint[]
   manualSignalMode: "B" | "S" | null
   onManualSignalCreate: (signal: StockSignalPoint) => void
@@ -319,6 +413,7 @@ export function ChartPanel({
     if (!containerRef.current || chartRef.current) return
 
     ensureBsOverlayRegistered()
+    ensureAiOverlaysRegistered()
 
     const chart = init(containerRef.current, {
       styles: {
@@ -408,6 +503,7 @@ export function ChartPanel({
     if (!chart) return
 
     chart.removeOverlay({ groupId: "annotations" })
+    chart.removeOverlay({ groupId: "ai-annotations" })
     chart.removeOverlay({ groupId: "bs-signals" })
 
     annotations.forEach((annotation) => {
@@ -424,6 +520,25 @@ export function ChartPanel({
         modeSensitivity: 16,
         lock: false,
         zLevel: 20,
+        extendData: { text: annotation.text },
+      })
+    })
+
+    overlayAnnotations.forEach((annotation, index) => {
+      chart.createOverlay({
+        id: `ai-${annotation.overlay_type}-${index}`,
+        groupId: "ai-annotations",
+        name: annotation.overlay_type,
+        points: annotation.points.map((point) => ({
+          timestamp: point.timestamp,
+          value: point.value,
+        })),
+        styles: annotation.styles,
+        mode: "strong_magnet",
+        modeSensitivity: 16,
+        lock: true,
+        visible: true,
+        zLevel: 24,
         extendData: { text: annotation.text },
       })
     })
@@ -453,7 +568,7 @@ export function ChartPanel({
         }))
       )
     }
-  }, [annotations, bsSignals])
+  }, [annotations, overlayAnnotations, bsSignals])
 
   return (
     <div className="relative">

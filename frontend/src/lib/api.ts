@@ -1,6 +1,6 @@
 import type { Phase, SSEEvent, QAResponse, TransferProgress } from "./types";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
-import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace } from "@/views/stock-chart/lib/types";
+import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace, ApplicationAnalysisResponse } from "@/views/stock-chart/lib/types";
 
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
@@ -355,6 +355,29 @@ export async function fetchMarketBreadthSeries(): Promise<Array<{
     new20LowCount: (item.new20LowCount as number) ?? null,
     date: String(item.date ?? ""),
   }))
+}
+
+export async function runApplicationAnalysis(params: {
+  targetType: StockTargetType
+  symbol: string
+  name: string
+  adjust: StockAdjust
+}): Promise<ApplicationAnalysisResponse> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      target_type: params.targetType,
+      symbol: params.symbol,
+      name: params.name,
+      adjust: params.adjust,
+    }),
+  })
+  const data = (await res.json().catch(() => null)) as ApplicationAnalysisResponse | { error?: string } | null
+  if (!res.ok || !data || !("analysis_result" in data)) {
+    throw new Error((data && "error" in data && data.error) || "Application Analysis 失败")
+  }
+  return data
 }
 
 export async function fetchMarketOverview(): Promise<Record<string, unknown>> {

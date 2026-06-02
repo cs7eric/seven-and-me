@@ -7,6 +7,7 @@ from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
 from backend.repositories.stock.workspace_repo import stock_kline_cache_file
 from backend.services.stock.auction_service import fetch_stock_auction
 from backend.services.stock.kline_service import resolve_stock_klines
+from backend.services.stock.application_analysis_service import run_application_analysis
 from backend.services.stock.market_overview_service import build_market_overview
 from backend.services.stock.search_service import search_stock_chart
 from backend.services.stock.workspace_service import (
@@ -186,6 +187,19 @@ def stock_chart_breadth_series():
     if not series:
         return jsonify({'items': []})
     return jsonify({'items': series})
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis', methods=['POST'])
+def stock_chart_application_analysis():
+    data = request.get_json() or {}
+    target_type = str(data.get('target_type', 'stock')).strip() or 'stock'
+    symbol = str(data.get('symbol', '000001')).strip() or '000001'
+    name = str(data.get('name', symbol)).strip() or symbol
+    adjust = str(data.get('adjust', 'qfq')).strip() or 'qfq'
+    try:
+        return jsonify(run_application_analysis(target_type, symbol, name, adjust))
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 502
 
 
 @stock_chart_bp.route('/api/stock-chart/market-overview')
