@@ -13,14 +13,13 @@ import {
   fetchApplicationAnalysisSchedulerStatus,
   fetchApplicationAnalysisTargets,
   fetchStockKlines,
-  listApplicationAnalysisRecent30,
-  readApplicationAnalysisRecent30,
+  listApplicationAnalysisRecent30Full,
   refreshApplicationAnalysisRecent30,
   runApplicationAnalysis,
   saveApplicationAnalysisTargets,
   triggerApplicationAnalysis,
-  type ApplicationAnalysisDailySnapshotFile,
   type ApplicationAnalysisDailySnapshotResponse,
+  type ApplicationAnalysisRecent30FullItem,
   type ApplicationAnalysisSchedulerStatus,
   type ApplicationAnalysisTarget,
 } from "@/lib/api"
@@ -43,10 +42,8 @@ import { TargetCard, type HorizonPatch } from "./components/target-card"
 import { DEFAULT_HORIZON, SELECTION_COLORS } from "./lib/constants"
 import {
   asOverlayAnnotations,
-  asRecord,
   textList,
 } from "./lib/format"
-import type { ApplicationAnalysisDailySnapshot } from "./lib/types"
 
 export default function ApplicationAnalysisPage() {
   type MainTab = "chart" | "ai-direction" | "analysis"
@@ -70,12 +67,10 @@ export default function ApplicationAnalysisPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [targetCardCollapsed, setTargetCardCollapsed] = useState(false)
   const [selectionCardCollapsed, setSelectionCardCollapsed] = useState(false)
-  const [dailySnapshots, setDailySnapshots] = useState<ApplicationAnalysisDailySnapshotFile[]>([])
+  const [dailySnapshotsFull, setDailySnapshotsFull] = useState<ApplicationAnalysisRecent30FullItem[]>([])
   const [dailySnapshotsLoading, setDailySnapshotsLoading] = useState(false)
   const [dailyRefreshing, setDailyRefreshing] = useState(false)
   const [dailyLastRefreshAt, setDailyLastRefreshAt] = useState<string | null>(null)
-  const [dailySelectedDate, setDailySelectedDate] = useState<string | null>(null)
-  const [dailySelectedSnapshot, setDailySelectedSnapshot] = useState<ApplicationAnalysisDailySnapshot | null>(null)
   const [selectedChartItems, setSelectedChartItems] = useState<ChartPanelSelectionItem[]>([])
   const [analysisFocusKey, setAnalysisFocusKey] = useState<string | null>(null)
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
@@ -199,8 +194,6 @@ export default function ApplicationAnalysisPage() {
 
   const analysis = result?.analysis_result
   const dataQuality = (analysis?.data_quality as Record<string, unknown> | undefined) || {}
-  const shortTermTrend = useMemo(() => asRecord(analysis?.short_term_trend), [analysis])
-  const currentSituation = useMemo(() => asRecord(analysis?.current_situation), [analysis])
   const overlays = useMemo(() => asOverlayAnnotations(analysis?.overlay_annotations), [analysis])
   const warnings = textList(dataQuality.warnings)
   const errors = textList(dataQuality.errors)
@@ -289,23 +282,21 @@ export default function ApplicationAnalysisPage() {
   const refreshDailySnapshots = useCallback(async (targetId: string) => {
     try {
       setDailySnapshotsLoading(true)
-      const data = await listApplicationAnalysisRecent30(targetId, 60)
-      const items = (data.snapshots || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1))
-      setDailySnapshots(items)
+      const data = await listApplicationAnalysisRecent30Full(targetId, 60)
+      const items = (data.items || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1))
+      setDailySnapshotsFull(items)
       if (items.length) {
-        if (!dailySelectedDate || !items.some((item) => item.date === dailySelectedDate)) {
-          setDailySelectedDate(items[0].date)
-        }
+        setDailyLastRefreshAt(items[0].updated_at)
       } else {
-        setDailySelectedDate(null)
-        setDailySelectedSnapshot(null)
+        setDailyLastRefreshAt(null)
       }
     } catch {
-      setDailySnapshots([])
+      setDailySnapshotsFull([])
+      setDailyLastRefreshAt(null)
     } finally {
       setDailySnapshotsLoading(false)
     }
-  }, [dailySelectedDate])
+  }, [])
 
   const handleRefreshDaily = useCallback(async () => {
     if (!selected) return
@@ -324,7 +315,6 @@ export default function ApplicationAnalysisPage() {
         setError(res.error || "刷新当日 AI 整体判断失败")
         return
       }
-      setDailyLastRefreshAt(new Date().toISOString())
       if (res.updated === false) {
         // AI 报无数据 / 返回字段缺失：不改写文件，沿用旧判断
         const reasonLabel =
@@ -335,79 +325,26 @@ export default function ApplicationAnalysisPage() {
           `${selected.name} 今日整体判断已保持原样（${res.date || "今日"}）：${reasonLabel}，未做更新。`,
         )
         await refreshDailySnapshots(selected.id)
-        if (res.date) {
-          setDailySelectedDate(res.date)
-        }
         return
       }
       setInfo(`已为 ${selected.name} 重新生成当日 AI 整体判断（${res.date || "今日"}）`)
-      // 同步把 daily 的 analysis_result 写回 result，保证顶部 短期趋势/当前情况 也用最新值
-      if (res.short_term_trend || res.current_situation) {
-        const baseResult = (result as Record<string, unknown> | null) || {}
-        const analysisResult = (baseResult.analysis_result as Record<string, unknown> | undefined) || {}
-        setResult({
-          ...(baseResult as Record<string, unknown>),
-          analysis_result: {
-            ...analysisResult,
-            short_term_trend: res.short_term_trend || null,
-            current_situation: res.current_situation || null,
-          },
-        } as unknown as typeof result)
-      }
+      // AI response 已写入对应日期的 JSON；从 JSON 重新拉取列表即可
       await refreshDailySnapshots(selected.id)
-      if (res.date) {
-        setDailySelectedDate(res.date)
-        setDailySelectedSnapshot({
-          short_term_trend: res.short_term_trend || null,
-          current_situation: res.current_situation || null,
-          updated_at: new Date().toISOString(),
-        })
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "刷新当日 AI 整体判断失败")
     } finally {
       setDailyRefreshing(false)
     }
-  }, [refreshDailySnapshots, result, selected])
+  }, [refreshDailySnapshots, selected])
 
   useEffect(() => {
     if (!selected) {
-      setDailySnapshots([])
-      setDailySelectedDate(null)
-      setDailySelectedSnapshot(null)
+      setDailySnapshotsFull([])
+      setDailyLastRefreshAt(null)
       return
     }
     void refreshDailySnapshots(selected.id)
   }, [selected, refreshDailySnapshots])
-
-  useEffect(() => {
-    if (!selected || !dailySelectedDate) {
-      setDailySelectedSnapshot(null)
-      return
-    }
-    const cached = dailySnapshots.find((item) => item.date === dailySelectedDate)
-    if (!cached) {
-      setDailySelectedSnapshot(null)
-      return
-    }
-    // 本地快照仅含 meta 字段，要再读一次详细 JSON
-    let cancelled = false
-    void (async () => {
-      const data = await readApplicationAnalysisRecent30(selected.id, dailySelectedDate)
-      if (cancelled) return
-      if (data?.ok && data.snapshot) {
-        setDailySelectedSnapshot({
-          short_term_trend: data.snapshot.short_term_trend || null,
-          current_situation: data.snapshot.current_situation || null,
-          summary: data.snapshot.summary || null,
-          updated_at: data.snapshot.updated_at,
-        })
-      }
-    })().catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [dailySelectedDate, dailySnapshots, selected])
 
   const handleTriggerTarget = async (targetId: string) => {
     setError(null)
@@ -652,18 +589,13 @@ export default function ApplicationAnalysisPage() {
                 className="m-0 h-full min-h-0 overflow-auto"
               >
                 <AIDirectionCard
-                  shortTermTrend={shortTermTrend}
-                  currentSituation={currentSituation}
                   collapsed={false}
                   onToggle={() => {}}
-                  dailySnapshots={dailySnapshots}
+                  dailySnapshotsFull={dailySnapshotsFull}
                   dailySnapshotsLoading={dailySnapshotsLoading}
                   dailyRefreshing={dailyRefreshing}
                   dailyLastRefreshAt={dailyLastRefreshAt}
                   onRefreshDaily={() => void handleRefreshDaily()}
-                  dailySelectedDate={dailySelectedDate}
-                  onSelectDailyDate={setDailySelectedDate}
-                  dailySelectedSnapshot={dailySelectedSnapshot}
                 />
               </TabsContent>
 

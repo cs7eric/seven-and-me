@@ -1,6 +1,7 @@
 import type { Phase, SSEEvent, QAResponse, TransferProgress } from "./types";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
 import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace, ApplicationAnalysisResponse } from "@/views/stock-chart/lib/types";
+import type { ApplicationAnalysisDailySnapshot } from "@/views/application-analysis/lib/types";
 
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
@@ -672,4 +673,26 @@ export async function sendDownloaderResultToParse(payload: RemoteParsePayload): 
     task_id: data.task_id,
     file_name: data.file_name,
   };
+}
+
+
+export type ApplicationAnalysisRecent30FullItem = ApplicationAnalysisDailySnapshotFile & {
+  snapshot: ApplicationAnalysisDailySnapshot
+}
+
+export type ApplicationAnalysisRecent30FullResponse = {
+  ok: boolean
+  target_id?: string
+  items?: ApplicationAnalysisRecent30FullItem[]
+  error?: string
+}
+
+export async function listApplicationAnalysisRecent30Full(
+  targetId: string,
+  limit = 60,
+): Promise<ApplicationAnalysisRecent30FullResponse> {
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/application-analysis/recent30/${encodeURIComponent(targetId)}/full?limit=${encodeURIComponent(String(limit))}`,
+  )
+  return (await res.json()) as ApplicationAnalysisRecent30FullResponse
 }

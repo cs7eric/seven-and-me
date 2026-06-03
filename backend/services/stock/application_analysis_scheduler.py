@@ -356,6 +356,28 @@ def list_recent30_snapshots(target_id: str, limit: int = 30) -> dict[str, Any]:
     return {'ok': True, 'target_id': target_id, 'items': list_daily_snapshots(target, limit=limit)}
 
 
+def list_recent30_snapshots_full(target_id: str, limit: int = 30) -> dict[str, Any]:
+    """
+    批量返回所有快照的完整内容（直接从 JSON 读取）。
+    服务默认从此处读取 AI Direction 数据，前端不再依赖实时 analysis result。
+    """
+    from backend.services.stock.application_analysis_service import (
+        list_daily_snapshots,
+        read_daily_snapshot,
+    )
+    targets = {item['id']: item for item in load_targets().get('items', []) if item.get('id')}
+    target = targets.get(target_id)
+    if not target:
+        return {'ok': False, 'target_id': target_id, 'error': f'target {target_id} not found'}
+    meta_items = list_daily_snapshots(target, limit=limit)
+    items: list[dict[str, Any]] = []
+    for meta in meta_items:
+        snapshot = read_daily_snapshot(target, meta['date'])
+        if snapshot:
+            items.append({**meta, 'snapshot': snapshot})
+    return {'ok': True, 'target_id': target_id, 'items': items}
+
+
 def read_recent30_snapshot(target_id: str, date_key: str) -> dict[str, Any]:
     from backend.services.stock.application_analysis_service import read_daily_snapshot
     targets = {item['id']: item for item in load_targets().get('items', []) if item.get('id')}

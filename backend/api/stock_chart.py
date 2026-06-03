@@ -13,6 +13,7 @@ from backend.services.stock.application_analysis_scheduler import (
     list_application_analysis_results,
     list_application_analysis_targets,
     list_recent30_snapshots,
+    list_recent30_snapshots_full,
     read_recent30_snapshot,
     run_recent30_for_target,
     start_application_analysis_scheduler,
@@ -292,6 +293,19 @@ def list_recent30_application_analysis_api(target_id: str):
     except (TypeError, ValueError):
         limit = 60
     return jsonify(list_recent30_snapshots(target_id, limit=max(1, min(limit, 200))))
+
+
+@stock_chart_bp.route('/api/stock-chart/application-analysis/recent30/<target_id>/full', methods=['GET'])
+def list_recent30_application_analysis_full_api(target_id: str):
+    """
+    批量返回所有快照的完整内容（直接从 JSON 读取）。
+    服务默认从此处读取 AI Direction 数据，前端不再依赖实时 analysis。
+    """
+    try:
+        limit = int(request.args.get('limit') or 60)
+    except (TypeError, ValueError):
+        limit = 60
+    return jsonify(list_recent30_snapshots_full(target_id, limit=max(1, min(limit, 200))))
 
 
 @stock_chart_bp.route('/api/stock-chart/application-analysis/recent30/<target_id>/<date_key>', methods=['GET'])
