@@ -1385,12 +1385,12 @@ export function ChartPanel({
   })()
 
   return (
-    <div className="relative" onMouseLeave={handleChartMouseLeave}>
+    <div className="relative h-full min-h-0" onMouseLeave={handleChartMouseLeave}>
       <div
         ref={containerRef}
         onClick={handleChartClick}
         onMouseMove={handleChartMouseMove}
-        className="h-[720px] w-full rounded-2xl bg-background"
+        className="h-full min-h-[360px] w-full rounded-2xl bg-background"
       />
       {activeRangeVisual ? (
         <svg className="pointer-events-none absolute inset-0 z-[8] h-full w-full">

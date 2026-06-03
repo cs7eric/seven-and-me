@@ -1,11 +1,14 @@
-import { RefreshCw, Sparkles } from "lucide-react"
+import { Clock, RefreshCw, Sparkles } from "lucide-react"
 
+import type { ApplicationAnalysisTarget } from "@/lib/api"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { StockAdjust } from "../../stock-chart/lib/types"
 
 export function ChartHeader({
+  target,
   selectedLabel,
   adjust,
   onAdjustChange,
@@ -14,6 +17,7 @@ export function ChartHeader({
   onTrigger,
   onManualRun,
 }: {
+  target?: ApplicationAnalysisTarget | null
   selectedLabel: string
   adjust: StockAdjust
   onAdjustChange: (value: StockAdjust) => void
@@ -22,6 +26,7 @@ export function ChartHeader({
   onTrigger: () => void
   onManualRun: () => void
 }) {
+  const title = target ? `${target.name} · ${target.symbol}` : selectedLabel || "请选择左侧目标"
   return (
     <Card className="rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
       <CardHeader className="pb-3">
@@ -30,12 +35,47 @@ export function ChartHeader({
             <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm">
               <Sparkles className="size-4" />
             </div>
-            <div className="min-w-0 space-y-0.5">
-              <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                {selectedLabel}
-              </div>
-              <CardTitle className="truncate text-lg font-semibold tracking-[-0.02em] text-slate-950">AI K 线结构标注分析</CardTitle>
+            <div className="min-w-0 space-y-1">
+              <CardTitle className="truncate text-lg font-semibold tracking-[-0.02em] text-slate-950">
+                {title}
+              </CardTitle>
+              {target ? (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+                  <span className="inline-flex items-center gap-1">
+                    <Clock className="size-3" />
+                    <span>每 {target.interval_minutes} 分钟</span>
+                  </span>
+                  <span className="text-slate-300">·</span>
+                  {target.enabled ? (
+                    <Badge
+                      className="rounded-full border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] text-emerald-700"
+                      variant="outline"
+                    >
+                      启用
+                    </Badge>
+                  ) : (
+                    <Badge
+                      className="rounded-full border-slate-200 bg-slate-100 px-1.5 py-0 text-[10px] text-slate-500"
+                      variant="outline"
+                    >
+                      停用
+                    </Badge>
+                  )}
+                  {target.last_updated_at ? (
+                    <>
+                      <span className="text-slate-300">·</span>
+                      <span>最近 {new Date(target.last_updated_at).toLocaleString()}</span>
+                    </>
+                  ) : null}
+                  <span className="text-slate-300">·</span>
+                  <Badge
+                    className="rounded-full border-slate-200 bg-slate-50 px-1.5 py-0 text-[10px] text-slate-600"
+                    variant="outline"
+                  >
+                    {target.target_type}
+                  </Badge>
+                </div>
+              ) : null}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 xl:justify-end">

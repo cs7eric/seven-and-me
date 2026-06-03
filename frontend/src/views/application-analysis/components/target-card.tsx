@@ -1,19 +1,22 @@
-import { ChevronDown, ChevronRight, Clock, Plus, RefreshCw, Save, Search, Trash2 } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { ChevronDown, ChevronRight, Clock, Plus, RefreshCw, Save, Search, Target, Trash2 } from "lucide-react"
 
 import AnimatedList from "@/components/AnimatedList"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import type { ApplicationAnalysisSchedulerStatus, ApplicationAnalysisTarget } from "@/lib/api"
-import { SymbolSearch } from "../../stock-chart/components/symbol-search"
+import { searchStockChart, type ApplicationAnalysisSchedulerStatus, type ApplicationAnalysisTarget } from "@/lib/api"
 import type { StockSearchItem } from "../../stock-chart/lib/types"
 
 export type HorizonPatch = Partial<Record<"days" | "segments" | "monthly_keep" | "weekly_keep", number>>
 
+type ListItem =
+  | { kind: "target"; data: ApplicationAnalysisTarget }
+  | { kind: "search"; data: StockSearchItem }
+
 export function TargetCard({
   targets,
-  filteredTargets,
   searchKeyword,
   setSearchKeyword,
   selectedId,
@@ -22,8 +25,6 @@ export function TargetCard({
   setExpandedId,
   collapsed,
   setCollapsed,
-  showAddForm,
-  setShowAddForm,
   horizon,
   onHorizonChange,
   scheduler,
@@ -37,7 +38,6 @@ export function TargetCard({
   onRefreshAll,
 }: {
   targets: ApplicationAnalysisTarget[]
-  filteredTargets: ApplicationAnalysisTarget[]
   searchKeyword: string
   setSearchKeyword: (value: string) => void
   selectedId: string | null
@@ -46,8 +46,6 @@ export function TargetCard({
   setExpandedId: React.Dispatch<React.SetStateAction<string | null>>
   collapsed: boolean
   setCollapsed: React.Dispatch<React.SetStateAction<boolean>>
-  showAddForm: boolean
-  setShowAddForm: React.Dispatch<React.SetStateAction<boolean>>
   horizon: Record<string, number>
   onHorizonChange: (patch: HorizonPatch) => void
   scheduler: ApplicationAnalysisSchedulerStatus | null
@@ -60,64 +58,108 @@ export function TargetCard({
   onToggleScheduler: () => void
   onRefreshAll: () => void
 }) {
+  const [stockSearchResults, setStockSearchResults] = useState<StockSearchItem[]>([])
+
+  useEffect(() => {
+    const keyword = searchKeyword.trim()
+    if (!keyword) {
+      setStockSearchResults([])
+      return
+    }
+    let active = true
+    const timer = window.setTimeout(() => {
+      void searchStockChart(keyword)
+        .then((items) => {
+          if (active) setStockSearchResults(items)
+        })
+        .catch(() => {
+          if (active) setStockSearchResults([])
+        })
+    }, 200)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [searchKeyword])
+
+  const targetIdSet = useMemo(
+    () => new Set(targets.map((t) => `${t.target_type}-${t.symbol}`)),
+    [targets],
+  )
+
+  const mergedList = useMemo<ListItem[]>(() => {
+    const keyword = searchKeyword.trim().toLowerCase()
+    const matchedTargets: ListItem[] = targets
+      .filter((t) => {
+        if (!keyword) return true
+        const haystack = `${t.id} ${t.symbol} ${t.name} ${t.target_type} ${(t.tags || []).join(" ")}`.toLowerCase()
+        return haystack.includes(keyword)
+      })
+      .map((t) => ({ kind: "target" as const, data: t }))
+
+    const searchOnly: ListItem[] = keyword
+      ? stockSearchResults
+          .filter((item) => !targetIdSet.has(`${item.target_type}-${item.symbol}`))
+          .map((item) => ({ kind: "search" as const, data: item }))
+      : []
+
+    return [...matchedTargets, ...searchOnly]
+  }, [targets, stockSearchResults, searchKeyword, targetIdSet])
+
   return (
     <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
-          <div>
-            <CardTitle className="text-base">分析目标</CardTitle>
-            <CardDescription>参考 reference/application-analysis/targets.json</CardDescription>
+          <div className="min-w-0">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Target className="size-4 text-slate-600" />
+              Watchlist
+            </CardTitle>
+            <CardDescription>reference/application-analysis/targets.json</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <Button className="rounded-xl" size="sm" variant="outline" onClick={() => setShowAddForm((value) => !value)}>
-              <Plus className="mr-1 size-3.5" />新增
-            </Button>
             <Button
               className="rounded-xl"
               size="icon-sm"
               variant="ghost"
               onClick={() => setCollapsed((value) => !value)}
-              aria-label={collapsed ? "展开分析目标" : "折叠分析目标"}
+              aria-label={collapsed ? "展开 Watchlist" : "折叠 Watchlist"}
             >
               {collapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
             </Button>
           </div>
         </div>
       </CardHeader>
-      {!collapsed ? (
-        <CardContent className="space-y-3">
-          {showAddForm ? (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-              <SymbolSearch
-                onSelect={onAddFromSearch}
-                knownIds={targets.map((item) => item.id)}
-              />
-            </div>
-          ) : null}
-          <div className="space-y-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-              <input
-                type="search"
-                value={searchKeyword}
-                onChange={(event) => setSearchKeyword(event.target.value)}
-                placeholder="搜索目标 · 名称 / 代码 / 标签"
-                className="w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-              />
-            </div>
-            <AnimatedList
-              items={filteredTargets}
-              selectedIndex={filteredTargets.findIndex((item) => item.id === selectedId)}
-              onItemSelect={(_item, index) => {
-                const target = filteredTargets[index]
-                if (!target) return
-                setSelectedId(target.id)
-                setExpandedId((current) => (current === target.id ? null : target.id))
-              }}
-              renderItem={(item, index) => {
-                const target = item as ApplicationAnalysisTarget
-                if (!target?.id) return null
-                const isExpanded = expandedId === target.id
+      <CardContent className="space-y-3">
+        <div className="space-y-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={searchKeyword}
+              onChange={(event) => setSearchKeyword(event.target.value)}
+              placeholder="搜索目标 / 股票 · 名称 / 代码"
+              className="w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+            />
+          </div>
+          {collapsed && !searchKeyword.trim() ? null : (
+          <AnimatedList
+            items={mergedList}
+            selectedIndex={mergedList.findIndex((item) => item.kind === "target" && item.data.id === selectedId)}
+            onItemSelect={(item) => {
+              if (item.kind === "target") {
+                setSelectedId(item.data.id)
+                if (!collapsed) {
+                  setExpandedId((current) => (current === item.data.id ? null : item.data.id))
+                }
+              } else {
+                onAddFromSearch(item.data)
+              }
+            }}
+            renderItem={(item) => {
+              if (item.kind === "target") {
+                const target = item.data
+                const isExpanded = !collapsed && expandedId === target.id
                 const isSelected = target.id === selectedId
                 return (
                   <div
@@ -127,7 +169,9 @@ export function TargetCard({
                   >
                     <div className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left">
                       <div className="flex min-w-0 items-center gap-2">
-                        {isExpanded ? <ChevronDown className="size-3.5 text-slate-500" /> : <ChevronRight className="size-3.5 text-slate-500" />}
+                        {!collapsed ? (
+                          isExpanded ? <ChevronDown className="size-3.5 text-slate-500" /> : <ChevronRight className="size-3.5 text-slate-500" />
+                        ) : null}
                         <div className="min-w-0">
                           <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
                             <span className="truncate">{target.name}</span>
@@ -187,16 +231,60 @@ export function TargetCard({
                         </div>
                       </div>
                     ) : null}
-                    <div className="sr-only">{index}</div>
                   </div>
                 )
-              }}
-              emptyMessage={targets.length === 0 ? "还没有目标，点击右上角新增。" : "没有匹配的目标。"}
-              maxHeight="max-h-[60vh]"
-              className=""
-              itemClassName=""
-            />
-          </div>
+              }
+
+              const searchItem = item.data
+              return (
+                <div
+                  className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 transition hover:border-slate-400 hover:bg-slate-50"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Plus className="size-3.5 shrink-0 text-slate-400" />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                          <span className="truncate">{searchItem.name}</span>
+                          <span className="text-slate-400">· {searchItem.symbol}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
+                          <Clock className="size-3" />每 60 分钟
+                          <Badge className="rounded-full border-slate-200 bg-slate-100 text-slate-500" variant="outline">停用</Badge>
+                          <span>· 未添加到目标</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge className="rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{searchItem.target_type}</Badge>
+                      <button
+                        type="button"
+                        aria-label="添加到目标"
+                        className="inline-flex size-7 items-center justify-center rounded-full border border-slate-900 bg-slate-950 text-white transition hover:bg-slate-800"
+                        onClick={() => onAddFromSearch(searchItem)}
+                      >
+                        <Plus className="size-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            }}
+            emptyMessage={
+              searchKeyword.trim()
+                ? "没有匹配的目标或股票。"
+                : targets.length === 0
+                  ? "还没有目标，输入关键词搜索添加股票。"
+                  : "没有匹配的目标。"
+            }
+            maxHeight={collapsed ? "max-h-[28vh]" : "max-h-[40vh]"}
+            className=""
+            itemClassName=""
+          />
+          )}
+        </div>
+        {!collapsed ? (
           <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold text-slate-600">数据范围（horizon）</div>
             <div className="grid grid-cols-2 gap-2 text-xs">
@@ -259,8 +347,8 @@ export function TargetCard({
                 : "调度器状态未知"}
             </div>
           </div>
-        </CardContent>
-      ) : null}
+        ) : null}
+      </CardContent>
     </Card>
   )
 }

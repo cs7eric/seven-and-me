@@ -13,6 +13,7 @@ export function CollapsibleCard({
   collapsed,
   onToggle,
   children,
+  className,
 }: {
   title: string
   description?: string
@@ -21,10 +22,13 @@ export function CollapsibleCard({
   collapsed: boolean
   onToggle: () => void
   children: React.ReactNode
+  className?: string
 }) {
   return (
-    <Card className="rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-      <CardHeader className="pb-3">
+    <Card
+      className={`flex h-full min-h-0 flex-col rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] ${className ?? ""}`}
+    >
+      <CardHeader className="shrink-0 pb-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2.5">
             {Icon ? (
@@ -56,7 +60,9 @@ export function CollapsibleCard({
           </Button>
         </div>
       </CardHeader>
-      {!collapsed ? <CardContent className="pt-0">{children}</CardContent> : null}
+      {!collapsed ? (
+        <CardContent className="flex min-h-0 flex-1 flex-col overflow-auto pt-0">{children}</CardContent>
+      ) : null}
     </Card>
   )
 }

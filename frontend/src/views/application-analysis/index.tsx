@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs"
 import { WorkspaceShell } from "@/components/workspace-shell"
 import {
   controlApplicationAnalysisScheduler,
@@ -32,7 +38,6 @@ import { Alerts } from "./components/alerts"
 import { AnalysisDetail } from "./components/analysis-detail"
 import { ChartCard } from "./components/chart-card"
 import { ChartHeader } from "./components/chart-header"
-import { OverviewCard } from "./components/overview-card"
 import { SelectionPanel } from "./components/selection-panel"
 import { TargetCard, type HorizonPatch } from "./components/target-card"
 import { DEFAULT_HORIZON, SELECTION_COLORS } from "./lib/constants"
@@ -44,6 +49,8 @@ import {
 import type { ApplicationAnalysisDailySnapshot } from "./lib/types"
 
 export default function ApplicationAnalysisPage() {
+  type MainTab = "chart" | "ai-direction" | "analysis"
+  const [activeMainTab, setActiveMainTab] = useState<MainTab>("chart")
   const [targets, setTargets] = useState<ApplicationAnalysisTarget[]>([])
   const [horizon, setHorizon] = useState<Record<string, number>>(DEFAULT_HORIZON)
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -59,14 +66,10 @@ export default function ApplicationAnalysisPage() {
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
   const [scheduler, setScheduler] = useState<ApplicationAnalysisSchedulerStatus | null>(null)
-  const [showAddForm, setShowAddForm] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState("")
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [targetCardCollapsed, setTargetCardCollapsed] = useState(true)
-  const [overviewCardCollapsed, setOverviewCardCollapsed] = useState(false)
+  const [targetCardCollapsed, setTargetCardCollapsed] = useState(false)
   const [selectionCardCollapsed, setSelectionCardCollapsed] = useState(false)
-  const [chartCardCollapsed, setChartCardCollapsed] = useState(false)
-  const [directionCardCollapsed, setDirectionCardCollapsed] = useState(false)
   const [dailySnapshots, setDailySnapshots] = useState<ApplicationAnalysisDailySnapshotFile[]>([])
   const [dailySnapshotsLoading, setDailySnapshotsLoading] = useState(false)
   const [dailyRefreshing, setDailyRefreshing] = useState(false)
@@ -78,15 +81,6 @@ export default function ApplicationAnalysisPage() {
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
 
   const selected = useMemo(() => targets.find((item) => item.id === selectedId) || null, [targets, selectedId])
-
-  const filteredTargets = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase()
-    if (!keyword) return targets
-    return targets.filter((item) => {
-      const haystack = `${item.id} ${item.symbol} ${item.name} ${item.target_type} ${(item.tags || []).join(" ")}`.toLowerCase()
-      return haystack.includes(keyword)
-    })
-  }, [targets, searchKeyword])
 
   const refreshTargets = useCallback(async () => {
     try {
@@ -217,6 +211,15 @@ export default function ApplicationAnalysisPage() {
       ) as Record<string, string>,
     [selectedChartItems],
   )
+
+  // 用户在 K 线上新增选中时，自动折叠左侧 Watchlist，给右侧更多空间
+  const prevSelectionCountRef = useRef(0)
+  useEffect(() => {
+    if (selectedChartItems.length > prevSelectionCountRef.current) {
+      setTargetCardCollapsed(true)
+    }
+    prevSelectionCountRef.current = selectedChartItems.length
+  }, [selectedChartItems])
 
   const selectedBarPrevClose = useMemo(() => {
     const map: Record<string, number | null> = {}
@@ -468,7 +471,6 @@ export default function ApplicationAnalysisPage() {
       return updated
     })
     setSelectedId(id)
-    setShowAddForm(false)
     schedulePersist()
   }
 
@@ -528,9 +530,7 @@ export default function ApplicationAnalysisPage() {
 
   const handleAnalyzeSelection = useCallback((item: ChartPanelSelectionItem) => {
     setAnalysisFocusKey(item.key)
-    window.requestAnimationFrame(() => {
-      selectionPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" })
-    })
+    setActiveMainTab("analysis")
   }, [])
 
   useEffect(() => {
@@ -541,12 +541,12 @@ export default function ApplicationAnalysisPage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis">
-      <div className="relative -mx-2 -my-4 rounded-3xl border border-slate-200 bg-[#f6f7f9] p-3 sm:p-5 xl:p-6">
-        <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <div className="space-y-4 xl:sticky xl:top-6 xl:self-start xl:max-h-[calc(100svh-7rem)] xl:overflow-y-auto xl:pr-1">
+      <div className="relative -mx-2 -my-4 h-[calc(100svh-7rem)] overflow-hidden rounded-3xl border border-slate-200 bg-[#f6f7f9] p-3 sm:p-5 xl:p-6">
+        <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+          {/* 左侧：信息辅助区 */}
+          <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
             <TargetCard
               targets={targets}
-              filteredTargets={filteredTargets}
               searchKeyword={searchKeyword}
               setSearchKeyword={setSearchKeyword}
               selectedId={selectedId}
@@ -555,8 +555,6 @@ export default function ApplicationAnalysisPage() {
               setExpandedId={setExpandedId}
               collapsed={targetCardCollapsed}
               setCollapsed={setTargetCardCollapsed}
-              showAddForm={showAddForm}
-              setShowAddForm={setShowAddForm}
               horizon={horizon}
               onHorizonChange={handleHorizonChange}
               scheduler={scheduler}
@@ -568,17 +566,6 @@ export default function ApplicationAnalysisPage() {
               onSave={() => void handleSave()}
               onToggleScheduler={() => void handleToggleScheduler()}
               onRefreshAll={handleRefreshAll}
-            />
-
-            <OverviewCard
-              collapsed={overviewCardCollapsed}
-              onToggle={() => setOverviewCardCollapsed((value) => !value)}
-              selectedName={selected?.name ?? null}
-              selectedSymbol={selected?.symbol ?? null}
-              barsCount={bars.length}
-              running={running}
-              resultReady={Boolean(result)}
-              overlayCount={overlays.length}
             />
 
             <SelectionPanel
@@ -593,56 +580,103 @@ export default function ApplicationAnalysisPage() {
               panelRef={selectionPanelRef}
             />
 
-            <AIDirectionCard
-              shortTermTrend={shortTermTrend}
-              currentSituation={currentSituation}
-              collapsed={directionCardCollapsed}
-              onToggle={() => setDirectionCardCollapsed((value) => !value)}
-              dailySnapshots={dailySnapshots}
-              dailySnapshotsLoading={dailySnapshotsLoading}
-              dailyRefreshing={dailyRefreshing}
-              dailyLastRefreshAt={dailyLastRefreshAt}
-              onRefreshDaily={() => void handleRefreshDaily()}
-              dailySelectedDate={dailySelectedDate}
-              onSelectDailyDate={setDailySelectedDate}
-              dailySelectedSnapshot={dailySelectedSnapshot}
-            />
-          </div>
-
-          <div className="space-y-6">
             <Alerts
               error={error}
               info={info}
               warnings={warnings}
               errors={errors}
             />
-
-            <ChartHeader
-              selectedLabel={selected ? `${selected.name} · ${selected.symbol}` : "请选择左侧目标"}
-              adjust={adjust}
-              onAdjustChange={setAdjust}
-              running={running}
-              canRun={Boolean(selected)}
-              onTrigger={() => selected && void handleTriggerTarget(selected.id)}
-              onManualRun={() => void handleRun()}
-            />
-
-            {selected ? (
-              <ChartCard
-                collapsed={chartCardCollapsed}
-                onToggle={() => setChartCardCollapsed((value) => !value)}
-                selectedSymbol={selected.symbol}
-                bars={bars}
-                overlays={overlays}
-                selectionColors={selectionColorMap}
-                onSelectionChange={setSelectedChartItems}
-                onAnalyzeSelection={handleAnalyzeSelection}
-                loadingBars={loadingBars}
-              />
-            ) : null}
-
-            {analysis ? <AnalysisDetail analysis={analysis} overlays={overlays} /> : null}
           </div>
+
+          {/* 右侧：顶部区（标题栏 + Tab 栏） + 主内容区 */}
+          <Tabs
+            value={activeMainTab}
+            onValueChange={(value) => setActiveMainTab(value as MainTab)}
+            className="flex h-full min-h-0 flex-col gap-4"
+          >
+            <header className="flex min-h-0 shrink-0 flex-col gap-3">
+              {/* 标题栏：当前目标 + 操作按钮 */}
+              <ChartHeader
+                target={selected}
+                selectedLabel={
+                  selected ? `${selected.name} · ${selected.symbol}` : "请选择左侧目标"
+                }
+                adjust={adjust}
+                onAdjustChange={setAdjust}
+                running={running}
+                canRun={Boolean(selected)}
+                onTrigger={() => selected && void handleTriggerTarget(selected.id)}
+                onManualRun={() => void handleRun()}
+              />
+
+              {/* Tab 栏 */}
+              <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
+                <TabsList>
+                  <TabsTrigger value="chart">图表</TabsTrigger>
+                  <TabsTrigger value="ai-direction">AI 方向</TabsTrigger>
+                  <TabsTrigger value="analysis">分析详情</TabsTrigger>
+                </TabsList>
+                <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                  <span>K 线 {bars.length}</span>
+                  <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
+                  <span>{running ? "分析中" : result ? "已完成" : "待执行"}</span>
+                  <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
+                  <span>标注 {overlays.length}</span>
+                </div>
+              </div>
+            </header>
+
+            {/* 主内容区：填充剩余高度 */}
+            <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+              <TabsContent
+                value="chart"
+                className="m-0 flex h-full min-h-0 flex-col overflow-hidden"
+              >
+                {selected ? (
+                  <ChartCard
+                    collapsed={false}
+                    onToggle={() => {}}
+                    selectedSymbol={selected.symbol}
+                    bars={bars}
+                    overlays={overlays}
+                    selectionColors={selectionColorMap}
+                    onSelectionChange={setSelectedChartItems}
+                    onAnalyzeSelection={handleAnalyzeSelection}
+                    loadingBars={loadingBars}
+                  />
+                ) : null}
+              </TabsContent>
+
+              <TabsContent
+                value="ai-direction"
+                className="m-0 h-full min-h-0 overflow-auto"
+              >
+                <AIDirectionCard
+                  shortTermTrend={shortTermTrend}
+                  currentSituation={currentSituation}
+                  collapsed={false}
+                  onToggle={() => {}}
+                  dailySnapshots={dailySnapshots}
+                  dailySnapshotsLoading={dailySnapshotsLoading}
+                  dailyRefreshing={dailyRefreshing}
+                  dailyLastRefreshAt={dailyLastRefreshAt}
+                  onRefreshDaily={() => void handleRefreshDaily()}
+                  dailySelectedDate={dailySelectedDate}
+                  onSelectDailyDate={setDailySelectedDate}
+                  dailySelectedSnapshot={dailySelectedSnapshot}
+                />
+              </TabsContent>
+
+              <TabsContent
+                value="analysis"
+                className="m-0 h-full min-h-0 overflow-auto"
+              >
+                {analysis ? (
+                  <AnalysisDetail analysis={analysis} overlays={overlays} />
+                ) : null}
+              </TabsContent>
+            </main>
+          </Tabs>
         </div>
       </div>
     </WorkspaceShell>

@@ -85,7 +85,7 @@ export function AIDirectionCard({
 
   return (
     <CollapsibleCard
-      title="AI 整体判断"
+      title="AI Direction"
       description="短期趋势与当前位置的结构化结论，按日持久化、倒序展示"
       icon={Compass}
       badge={dailySelectedDate || stateLabel || position}
