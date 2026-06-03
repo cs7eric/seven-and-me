@@ -326,7 +326,7 @@ def run_recent30_for_target(target_id: str, source: str = 'manual_recent30', dat
     targets = {item['id']: item for item in load_targets().get('items', []) if item.get('id')}
     target = targets.get(target_id)
     if not target:
-        return {'ok': False, 'error': f'target {target_id} not found'}
+        return {'ok': False, 'target_id': target_id, 'error': f'target {target_id} not found'}
     try:
         result = run_application_analysis_recent30_and_snapshot(target, date_key=date_key)
         snapshots = list_daily_snapshots(target, limit=60)
@@ -338,10 +338,13 @@ def run_recent30_for_target(target_id: str, source: str = 'manual_recent30', dat
             'date': result.get('date'),
             'short_term_trend': result.get('short_term_trend'),
             'current_situation': result.get('current_situation'),
+            'updated': bool(result.get('updated')),
+            'skip_reason': result.get('skip_reason'),
             'snapshots': snapshots,
         }
     except Exception as exc:
-        return {'ok': False, 'target_id': target_id, 'error': str(exc)}
+        # AI 报错时，不改写文件，保留旧数据
+        return {'ok': False, 'target_id': target_id, 'error': str(exc), 'updated': False}
 
 
 def list_recent30_snapshots(target_id: str, limit: int = 30) -> dict[str, Any]:

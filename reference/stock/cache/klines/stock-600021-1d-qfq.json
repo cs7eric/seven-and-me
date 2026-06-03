@@ -3,7 +3,7 @@
   "target_type": "stock",
   "period": "1d",
   "adjust": "qfq",
-  "updated_at": "2026-06-03T01:17:13.385761",
+  "updated_at": "2026-06-03T18:29:19.414982",
   "source": "tencent",
   "items": [
     {
@@ -5504,6 +5504,17 @@
       "volume": 1452792.0,
       "turnover": 0,
       "volume_ratio": 0.66,
+      "turnover_rate": 0
+    },
+    {
+      "timestamp": 1780416000000,
+      "open": 19.39,
+      "close": 20.86,
+      "high": 20.89,
+      "low": 19.16,
+      "volume": 1724031.0,
+      "turnover": 0,
+      "volume_ratio": 0.91,
       "turnover_rate": 0
     }
   ]

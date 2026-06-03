@@ -1074,15 +1074,91 @@ def _iso_now() -> str:
     return datetime.now().isoformat()
 
 
+def _is_meaningful_payload(value: Any) -> bool:
+    """判断 AI 返回字段是否「有数据」（非空 dict / 非空 list / 非空字符串）。"""
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        return len(value) > 0
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, str):
+        return value.strip() != ''
+    return True
+
+
+def _deep_merge(base: Any, overlay: Any) -> Any:
+    """深度合并：overlay 中的标量/列表整体覆盖 base；dict 递归合并。"""
+    if isinstance(overlay, dict) and isinstance(base, dict):
+        out: dict = {key: value for key, value in base.items()}
+        for key, value in overlay.items():
+            if key in out:
+                out[key] = _deep_merge(out[key], value)
+            else:
+                out[key] = value
+        return out
+    return overlay
+
+
+def _extract_warnings(analysis_result: Any) -> list[str]:
+    if not isinstance(analysis_result, dict):
+        return []
+    data_quality = analysis_result.get('data_quality')
+    if not isinstance(data_quality, dict):
+        return []
+    warnings = data_quality.get('warnings')
+    if not isinstance(warnings, list):
+        return []
+    return [str(item) for item in warnings if str(item).strip()]
+
+
 def write_daily_snapshot(target: dict[str, Any], payload: dict[str, Any], date_key: str | None = None) -> dict[str, Any]:
+    """
+    将 AI 整体判断结果按日期持久化到文件，支持增量更新。
+
+    行为：
+    - 每次写入都先把「目标元信息 / 日期 / recent_window / updated_at」对齐到最新一次调用。
+    - 仅当新数据包含有效的 short_term_trend / current_situation / summary 时，才覆盖对应字段；
+      缺哪一项就保留旧文件的对应字段。
+    - 旧文件里的其他字段（如历史的 analysis_result 子字段、累积的 data_quality.warnings）会保留。
+    - 若新数据里 short_term_trend / current_situation 都为空（None / 空 dict），视为「无数据」，
+      跳过写入、返回 updated=False，调用方不应改写文件。
+    - 抛错（AI 报错）由上层捕获，此处不会发生。
+    """
     directory = _daily_snapshot_target_dir(target)
     directory.mkdir(parents=True, exist_ok=True)
     key = (date_key or _today_key()).strip() or _today_key()
     snapshot_path = directory / f'{key}.json'
-    analysis_result = payload.get('analysis_result') or {}
-    short_term = analysis_result.get('short_term_trend') if isinstance(analysis_result, dict) else None
-    situation = analysis_result.get('current_situation') if isinstance(analysis_result, dict) else None
+
+    new_analysis_result = payload.get('analysis_result') or {}
+    if not isinstance(new_analysis_result, dict):
+        new_analysis_result = {}
+    new_short_term = new_analysis_result.get('short_term_trend') if isinstance(new_analysis_result.get('short_term_trend'), dict) else None
+    new_situation = new_analysis_result.get('current_situation') if isinstance(new_analysis_result.get('current_situation'), dict) else None
+    new_summary = new_analysis_result.get('summary') if isinstance(new_analysis_result.get('summary'), dict) else None
+
+    has_new_data = _is_meaningful_payload(new_short_term) or _is_meaningful_payload(new_situation) or _is_meaningful_payload(new_summary)
+    if not has_new_data:
+        # 无新数据 → 不写文件（避免覆盖已有的整体判断）
+        return {'snapshot_path': str(snapshot_path), 'date': key, 'updated': False, 'reason': 'no_new_data'}
+
+    # 读取已有快照，作为增量合并的底
+    existing = read_json_file(snapshot_path, None) or {}
+    if not isinstance(existing, dict):
+        existing = {}
+
+    new_warnings = _extract_warnings(new_analysis_result)
+    existing_warnings = _extract_warnings(existing.get('analysis_result')) if isinstance(existing.get('analysis_result'), dict) else []
+    # 累积 warnings（去重、保序）
+    merged_warnings: list[str] = list(existing_warnings)
+    seen = {item for item in merged_warnings}
+    for warning in new_warnings:
+        if warning not in seen:
+            merged_warnings.append(warning)
+            seen.add(warning)
+
     serialized = {
+        **existing,
         'target': {
             'id': target.get('id'),
             'target_type': target.get('target_type'),
@@ -1092,14 +1168,31 @@ def write_daily_snapshot(target: dict[str, Any], payload: dict[str, Any], date_k
         },
         'date': key,
         'updated_at': _iso_now(),
-        'recent_window': payload.get('recent_window'),
-        'short_term_trend': short_term,
-        'current_situation': situation,
-        'summary': analysis_result.get('summary') if isinstance(analysis_result, dict) else None,
-        'analysis_result': analysis_result,
+        'recent_window': payload.get('recent_window') or existing.get('recent_window'),
     }
+    if _is_meaningful_payload(new_short_term):
+        serialized['short_term_trend'] = new_short_term
+    elif 'short_term_trend' in existing:
+        serialized['short_term_trend'] = existing.get('short_term_trend')
+    if _is_meaningful_payload(new_situation):
+        serialized['current_situation'] = new_situation
+    elif 'current_situation' in existing:
+        serialized['current_situation'] = existing.get('current_situation')
+    if _is_meaningful_payload(new_summary):
+        serialized['summary'] = new_summary
+    elif 'summary' in existing:
+        serialized['summary'] = existing.get('summary')
+
+    old_analysis_result = existing.get('analysis_result') if isinstance(existing.get('analysis_result'), dict) else {}
+    merged_analysis_result = _deep_merge(old_analysis_result, new_analysis_result)
+    if merged_warnings:
+        data_quality = merged_analysis_result.get('data_quality') if isinstance(merged_analysis_result.get('data_quality'), dict) else {}
+        data_quality['warnings'] = merged_warnings
+        merged_analysis_result['data_quality'] = data_quality
+    serialized['analysis_result'] = merged_analysis_result
+
     _atomic_write_json_local(snapshot_path, serialized)
-    return {'snapshot_path': str(snapshot_path), 'date': key}
+    return {'snapshot_path': str(snapshot_path), 'date': key, 'updated': True}
 
 
 def list_daily_snapshots(target: dict[str, Any], limit: int = 30) -> list[dict[str, Any]]:
@@ -1138,10 +1231,13 @@ def run_application_analysis_recent30_and_snapshot(target: dict[str, Any], date_
     adjust = str(target.get('adjust') or 'qfq').strip() or 'qfq'
     payload = run_application_analysis_recent30(target_type, symbol, name, adjust)
     paths = write_daily_snapshot(target, payload, date_key=date_key)
+    analysis_result = payload.get('analysis_result') or {}
     return {
-        'analysis_result': payload.get('analysis_result'),
-        'short_term_trend': (payload.get('analysis_result') or {}).get('short_term_trend'),
-        'current_situation': (payload.get('analysis_result') or {}).get('current_situation'),
+        'analysis_result': analysis_result,
+        'short_term_trend': analysis_result.get('short_term_trend') if isinstance(analysis_result, dict) else None,
+        'current_situation': analysis_result.get('current_situation') if isinstance(analysis_result, dict) else None,
         'snapshot_path': paths.get('snapshot_path'),
         'date': paths.get('date'),
+        'updated': bool(paths.get('updated')),
+        'skip_reason': paths.get('reason'),
     }

@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Clock, Compass, FileJson, LineChart, MapPin, Plus, RefreshCw, Save, Search, ShieldAlert, Sparkles, Target, Trash2 } from "lucide-react"
 
 import { WorkspaceShell } from "@/components/workspace-shell"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import AnimatedList from "@/components/AnimatedList"
 import {
   controlApplicationAnalysisScheduler,
   fetchApplicationAnalysisResult,
@@ -21,736 +14,34 @@ import {
   saveApplicationAnalysisTargets,
   triggerApplicationAnalysis,
   type ApplicationAnalysisDailySnapshotFile,
+  type ApplicationAnalysisDailySnapshotResponse,
   type ApplicationAnalysisSchedulerStatus,
   type ApplicationAnalysisTarget,
 } from "@/lib/api"
-import { ChartPanel, type ChartPanelSelectionItem } from "../stock-chart/components/chart-panel"
-import { SymbolSearch } from "../stock-chart/components/symbol-search"
+import type { ChartPanelSelectionItem } from "../stock-chart/components/chart-panel"
 import type {
   ApplicationAnalysisResponse,
   StockAdjust,
   StockKlineBar,
-  StockOverlayAnnotation,
+  StockSearchItem,
   StockTargetType,
 } from "../stock-chart/lib/types"
 
-const DEFAULT_HORIZON = { days: 120, segments: 4, monthly_keep: 6, weekly_keep: 12 }
-const SELECTION_COLORS = ["#0f766e", "#2563eb", "#7c3aed", "#ea580c", "#be123c", "#0891b2", "#4f46e5", "#65a30d"]
-
-function textList(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return value.map((item) => String(item ?? "").trim()).filter(Boolean)
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-}
-
-function asOverlayAnnotations(value: unknown): StockOverlayAnnotation[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is StockOverlayAnnotation =>
-    Boolean(item && typeof item === "object" && Array.isArray((item as StockOverlayAnnotation).points)),
-  )
-}
-
-function fmt(value: unknown) {
-  if (value === null || value === undefined || value === "") return "—"
-  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(2)
-  return String(value)
-}
-
-function fmtDateTime(timestamp: number) {
-  if (!Number.isFinite(timestamp)) return "—"
-  return new Date(timestamp).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })
-}
-
-function fmtPercent(value: number, digits = 2) {
-  if (!Number.isFinite(value)) return "—"
-  const sign = value > 0 ? "+" : value < 0 ? "" : ""
-  return `${sign}${value.toFixed(digits)}%`
-}
-
-function fmtSigned(value: number, digits = 2) {
-  if (!Number.isFinite(value)) return "—"
-  const sign = value > 0 ? "+" : value < 0 ? "" : ""
-  return `${sign}${value.toFixed(digits)}`
-}
-
-function fmtInt(value: number) {
-  if (!Number.isFinite(value)) return "—"
-  return Math.round(value).toLocaleString("en-US")
-}
-
-// 中文紧凑计数：优先显示「x亿」，再「x千万」/「x百万」/「x万」/原值
-function fmtCompactNumber(value: number, digits = 2) {
-  if (!Number.isFinite(value)) return "—"
-  const abs = Math.abs(value)
-  const sign = value < 0 ? "-" : value > 0 ? "+" : ""
-  if (abs >= 1e8) {
-    const v = abs / 1e8
-    return `${sign}${v.toFixed(digits)}亿`
-  }
-  if (abs >= 1e7) {
-    const v = abs / 1e7
-    return `${sign}${v.toFixed(digits)}千万`
-  }
-  if (abs >= 1e6) {
-    const v = abs / 1e6
-    return `${sign}${v.toFixed(digits)}百万`
-  }
-  if (abs >= 1e4) {
-    const v = abs / 1e4
-    return `${sign}${v.toFixed(digits)}万`
-  }
-  return `${sign}${fmtInt(abs)}`
-}
-
-// 同时给出原值与紧凑单位：例如 105,521,815 · 1.06亿
-function fmtNumberWithCompact(value: number, digits = 2) {
-  if (!Number.isFinite(value)) return "—"
-  const abs = Math.abs(value)
-  const sign = value < 0 ? "-" : value > 0 ? "+" : ""
-  if (abs >= 1e4) {
-    return `${sign}${fmtInt(abs)} · ${fmtCompactNumber(value, digits).replace(/^[+-]/, "")}`
-  }
-  return fmtCompactNumber(value, digits)
-}
-
-function toNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : null
-  }
-  return null
-}
-
-function MetricCard({ label, value, icon: Icon, tone = "slate" }: { label: string; value: string; icon: typeof Bot; tone?: "slate" | "teal" | "violet" }) {
-  const toneClass =
-    tone === "teal"
-      ? "bg-gradient-to-br from-teal-50 to-white text-teal-700"
-      : tone === "violet"
-        ? "bg-gradient-to-br from-violet-50 to-white text-violet-700"
-        : "bg-gradient-to-br from-slate-50 to-white text-slate-700"
-  return (
-    <div className={`flex items-center gap-3 rounded-2xl border border-slate-200/80 px-3 py-2.5 shadow-[0_2px_8px_rgba(15,23,42,0.04)] ${toneClass}`}>
-      <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-white/80 ring-1 ring-slate-200/70">
-        <Icon className="size-4" />
-      </div>
-      <div className="min-w-0 leading-tight">
-        <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">{label}</div>
-        <div className="truncate text-sm font-semibold tracking-[-0.01em] text-slate-900">{value}</div>
-      </div>
-    </div>
-  )
-}
-
-function BarSummary({
-  bar,
-  prevClose,
-  prevVolume,
-  prevTurnover,
-  color,
-  focused,
-}: {
-  bar: StockKlineBar
-  prevClose: number | null
-  prevVolume: number | null
-  prevTurnover: number | null
-  color: string
-  focused: boolean
-}) {
-  const hasPrev = typeof prevClose === "number" && Number.isFinite(prevClose)
-  const change = hasPrev ? bar.close - (prevClose as number) : null
-  const changePct = hasPrev && (prevClose as number) !== 0 ? ((change as number) / (prevClose as number)) * 100 : null
-  const amplitude = bar.open !== 0 ? ((bar.high - bar.low) / bar.open) * 100 : null
-  const upTone = change !== null && change > 0
-  const downTone = change !== null && change < 0
-  // A 股配色：涨红跌绿
-  const toneText = upTone ? "text-rose-600" : downTone ? "text-emerald-600" : "text-slate-600"
-  const toneBg = upTone
-    ? "bg-rose-50 border-rose-200"
-    : downTone
-      ? "bg-emerald-50 border-emerald-200"
-      : "bg-slate-50 border-slate-200"
-  // 较昨日放/缩量
-  const hasPrevVol = typeof prevVolume === "number" && Number.isFinite(prevVolume) && (prevVolume as number) > 0
-  const volDelta = hasPrevVol ? bar.volume - (prevVolume as number) : null
-  const volDeltaPct = hasPrevVol ? ((volDelta as number) / (prevVolume as number)) * 100 : null
-  const volUpTone = volDelta !== null && volDelta > 0
-  const volDownTone = volDelta !== null && volDelta < 0
-  const volToneText = volUpTone ? "text-rose-600" : volDownTone ? "text-emerald-600" : "text-slate-600"
-  const volToneBg = volUpTone
-    ? "bg-rose-50 border-rose-200"
-    : volDownTone
-      ? "bg-emerald-50 border-emerald-200"
-      : "bg-slate-50 border-slate-200"
-  // 较昨日放/缩额
-  const hasTurnover = typeof bar.turnover === "number"
-  const hasPrevTurnover = typeof prevTurnover === "number" && Number.isFinite(prevTurnover) && (prevTurnover as number) > 0
-  const turnoverDelta = hasTurnover && hasPrevTurnover ? (bar.turnover as number) - (prevTurnover as number) : null
-  const turnoverDeltaPct = hasTurnover && hasPrevTurnover && (prevTurnover as number) !== 0
-    ? ((turnoverDelta as number) / (prevTurnover as number)) * 100
-    : null
-  const turnoverUpTone = turnoverDelta !== null && turnoverDelta > 0
-  const turnoverDownTone = turnoverDelta !== null && turnoverDelta < 0
-  const turnoverToneText = turnoverUpTone ? "text-rose-600" : turnoverDownTone ? "text-emerald-600" : "text-slate-600"
-  const turnoverToneBg = turnoverUpTone
-    ? "bg-rose-50 border-rose-200"
-    : turnoverDownTone
-      ? "bg-emerald-50 border-emerald-200"
-      : "bg-slate-50 border-slate-200"
-  return (
-    <>
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-slate-900">K 柱 · {fmtDateTime(bar.timestamp)}</div>
-        <Badge
-          className="rounded-full bg-white text-[10px]"
-          style={{ borderColor: color, color }}
-          variant="outline"
-        >
-          K Line
-        </Badge>
-      </div>
-      <div className="grid gap-0.5 text-[11px] leading-5 text-slate-600">
-        <div>
-          <span className="text-slate-400">开</span>{" "}
-          <span className="font-mono text-slate-700">{bar.open.toFixed(2)}</span>
-          <span className="mx-1.5 text-slate-300">·</span>
-          <span className="text-slate-400">高</span>{" "}
-          <span className="font-mono text-slate-700">{bar.high.toFixed(2)}</span>
-          <span className="mx-1.5 text-slate-300">·</span>
-          <span className="text-slate-400">低</span>{" "}
-          <span className="font-mono text-slate-700">{bar.low.toFixed(2)}</span>
-          <span className="mx-1.5 text-slate-300">·</span>
-          <span className="text-slate-400">收</span>{" "}
-          <span className="font-mono text-slate-700">{bar.close.toFixed(2)}</span>
-        </div>
-        <div>
-          <span className="text-slate-400">成交量</span>{" "}
-          <span className="font-mono text-slate-700">{bar.volume.toLocaleString()}</span>
-          {hasPrevVol ? (
-            <>
-              <span className="mx-1.5 text-slate-300">·</span>
-              <span className="text-slate-400">昨量</span>{" "}
-              <span className="font-mono text-slate-700">{(prevVolume as number).toLocaleString()}</span>
-            </>
-          ) : null}
-          {hasTurnover ? (
-            <>
-              <span className="mx-1.5 text-slate-300">·</span>
-              <span className="text-slate-400">成交额</span>{" "}
-              <span className="font-mono text-slate-700">{(bar.turnover as number).toLocaleString()}</span>
-              {hasPrevTurnover ? (
-                <>
-                  <span className="mx-1.5 text-slate-300">·</span>
-                  <span className="text-slate-400">昨额</span>{" "}
-                  <span className="font-mono text-slate-700">{(prevTurnover as number).toLocaleString()}</span>
-                </>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-        <div>
-          <span className="text-slate-400">振幅</span>{" "}
-          <span className="font-mono text-slate-700">{fmtPercent(amplitude ?? NaN)}</span>
-          {hasPrev ? (
-            <>
-              <span className="mx-1.5 text-slate-300">·</span>
-              <span className="text-slate-400">昨收</span>{" "}
-              <span className="font-mono text-slate-700">{(prevClose as number).toFixed(2)}</span>
-            </>
-          ) : null}
-        </div>
-        {change !== null && changePct !== null ? (
-          <div className={`mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${toneBg} ${toneText}`}>
-            <span>{upTone ? "▲" : downTone ? "▼" : "■"}</span>
-            <span className="font-mono">{fmtSigned(change)}</span>
-            <span className="font-mono">{fmtPercent(changePct)}</span>
-            <span className="text-slate-400">{upTone ? "涨幅" : downTone ? "跌幅" : "持平"}</span>
-          </div>
-        ) : (
-          <div className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
-            <span>■</span>
-            <span className="font-mono">—</span>
-            <span className="text-slate-400">无昨收参考</span>
-          </div>
-        )}
-        {volDelta !== null && volDeltaPct !== null ? (
-          <div className={`mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${volToneBg} ${volToneText}`}>
-            <span>{volUpTone ? "▲" : volDownTone ? "▼" : "■"}</span>
-            <span className="font-mono">{fmtNumberWithCompact(volDelta)}</span>
-            <span className="font-mono">{fmtPercent(volDeltaPct)}</span>
-            <span className="text-slate-400">{volUpTone ? "放量" : volDownTone ? "缩量" : "持平"}</span>
-          </div>
-        ) : (
-          <div className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
-            <span>■</span>
-            <span className="font-mono">—</span>
-            <span className="text-slate-400">无昨量参考</span>
-          </div>
-        )}
-        {turnoverDelta !== null && turnoverDeltaPct !== null ? (
-          <div className={`mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${turnoverToneBg} ${turnoverToneText}`}>
-            <span>{turnoverUpTone ? "▲" : turnoverDownTone ? "▼" : "■"}</span>
-            <span className="font-mono">{fmtNumberWithCompact(turnoverDelta)}</span>
-            <span className="font-mono">{fmtPercent(turnoverDeltaPct)}</span>
-            <span className="text-slate-400">{turnoverUpTone ? "放额" : turnoverDownTone ? "缩额" : "持平"}</span>
-          </div>
-        ) : hasTurnover ? (
-          <div className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
-            <span>■</span>
-            <span className="font-mono">—</span>
-            <span className="text-slate-400">无昨额参考</span>
-          </div>
-        ) : null}
-        {focused ? <div className="mt-0.5 text-[10px] text-slate-400">已聚焦 · 可在右侧继续叠加分析项</div> : null}
-      </div>
-    </>
-  )
-}
-
-function CollapsibleCard({
-  title,
-  description,
-  icon: Icon,
-  badge,
-  collapsed,
-  onToggle,
-  children,
-}: {
-  title: string
-  description?: string
-  icon?: typeof Bot
-  badge?: string
-  collapsed: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <Card className="rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2.5">
-            {Icon ? (
-              <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                <Icon className="size-3.5" />
-              </div>
-            ) : null}
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <CardTitle className="truncate text-sm font-semibold text-slate-900">{title}</CardTitle>
-                {badge ? (
-                  <Badge className="rounded-full border-slate-200 bg-slate-100 px-2 py-0 text-[10px] text-slate-600" variant="outline">
-                    {badge}
-                  </Badge>
-                ) : null}
-              </div>
-              {description ? <CardDescription className="mt-0.5 text-[11px] text-slate-500">{description}</CardDescription> : null}
-             </div>
-            </div>
-            <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            className="size-7 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-            onClick={onToggle}
-            aria-label={collapsed ? `展开 ${title}` : `折叠 ${title}`}
-          >
-            {collapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-          </Button>
-        </div>
-      </CardHeader>
-      {!collapsed ? <CardContent className="pt-0">{children}</CardContent> : null}
-    </Card>
-  )
-}
-
-const BIAS_TONE: Record<string, { label: string; cls: string }> = {
-  bullish: { label: "偏多", cls: "bg-rose-50 text-rose-700 border-rose-200" },
-  neutral_bullish: { label: "中性偏多", cls: "bg-rose-50/70 text-rose-700 border-rose-200" },
-  neutral: { label: "中性", cls: "bg-slate-50 text-slate-700 border-slate-200" },
-  neutral_bearish: { label: "中性偏空", cls: "bg-emerald-50/70 text-emerald-700 border-emerald-200" },
-  bearish: { label: "偏空", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  unclear: { label: "不可判断", cls: "bg-slate-50 text-slate-500 border-slate-200" },
-}
-
-function biasTone(bias: unknown) {
-  const key = typeof bias === "string" ? bias.toLowerCase() : ""
-  return BIAS_TONE[key] || BIAS_TONE.unclear
-}
-
-function safeRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-}
-
-function safeString(value: unknown): string {
-  return typeof value === "string" && value.trim().length > 0 ? value : ""
-}
-
-function AIDirectionCard({
-  shortTermTrend,
-  currentSituation,
-  collapsed,
-  onToggle,
-  dailySnapshots,
-  dailySnapshotsLoading,
-  dailyRefreshing,
-  dailyLastRefreshAt,
-  onRefreshDaily,
-  dailySelectedDate,
-  onSelectDailyDate,
-  dailySelectedSnapshot,
-}: {
-  shortTermTrend: Record<string, unknown>
-  currentSituation: Record<string, unknown>
-  collapsed: boolean
-  onToggle: () => void
-  dailySnapshots: ApplicationAnalysisDailySnapshotFile[]
-  dailySnapshotsLoading: boolean
-  dailyRefreshing: boolean
-  dailyLastRefreshAt: string | null
-  onRefreshDaily: () => void
-  dailySelectedDate: string | null
-  onSelectDailyDate: (date: string) => void
-  dailySelectedSnapshot: {
-    short_term_trend?: Record<string, unknown> | null
-    current_situation?: Record<string, unknown> | null
-    summary?: Record<string, unknown> | null
-    updated_at?: string
-  } | null
-}) {
-  const trend = safeRecord(shortTermTrend)
-  const situation = safeRecord(currentSituation)
-
-  // 历史快照：仅当所选日期已读到带数据的对象时，才切换为历史视图
-  const historicalTrendRecord =
-    dailySelectedSnapshot && dailySelectedSnapshot.short_term_trend
-      ? safeRecord(dailySelectedSnapshot.short_term_trend)
-      : null
-  const historicalSituationRecord =
-    dailySelectedSnapshot && dailySelectedSnapshot.current_situation
-      ? safeRecord(dailySelectedSnapshot.current_situation)
-      : null
-  const useHistorical = Boolean(dailySelectedDate && (historicalTrendRecord || historicalSituationRecord))
-  const activeTrend = useHistorical && historicalTrendRecord ? historicalTrendRecord : trend
-  const activeSituation = useHistorical && historicalSituationRecord ? historicalSituationRecord : situation
-  const hasActiveTrend = Object.keys(activeTrend).length > 0
-  const hasActiveSituation = Object.keys(activeSituation).length > 0
-
-  const stateLabel = fmt(activeTrend.state)
-  const bias = biasTone(activeTrend.bias)
-  const horizon = fmt(activeTrend.horizon)
-  const score = fmt(activeTrend.score)
-  const confidence = fmt(activeTrend.confidence)
-  const momentum = safeRecord(activeTrend.momentum)
-  const maPosition = safeRecord(activeTrend.ma_position)
-  const pricePosition = safeRecord(activeTrend.price_position)
-  const scenario = safeRecord(activeTrend.scenario_analysis)
-  const evidence = textList(activeTrend.key_evidence)
-  const invalidList = textList(activeTrend.invalid_conditions)
-
-  const position = fmt(activeSituation.position)
-  const spaceStructure = fmt(activeSituation.space_structure)
-  const positionScore = fmt(activeSituation.position_score)
-  const situationConfidence = fmt(activeSituation.confidence)
-  const statusTags = textList(activeSituation.status_tags)
-  const situationEvidence = textList(activeSituation.key_evidence)
-  const situationNote = safeString(activeSituation.note)
-
-  const lastRefreshText = dailyLastRefreshAt
-    ? new Date(dailyLastRefreshAt).toLocaleString("zh-CN", { hour12: false })
-    : "尚未手动触发"
-
-  return (
-    <CollapsibleCard
-      title="AI 整体判断"
-      description="短期趋势与当前位置的结构化结论，按日持久化、倒序展示"
-      icon={Compass}
-      badge={dailySelectedDate || stateLabel || position}
-      collapsed={collapsed}
-      onToggle={onToggle}
-    >
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200/80 bg-slate-50/60 px-3 py-2">
-          <div className="text-[11px] text-slate-500">
-            入口：最近 30 根日 K · 每天 16:00 定时刷新 · 持久化到 <span className="font-mono">reference/application-analysis/snapshots/</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-400">上次刷新 {lastRefreshText}</span>
-            <Button
-              size="sm"
-              variant="default"
-              className="h-7 rounded-lg bg-slate-950 px-2.5 text-[11px] text-white hover:bg-slate-800"
-              onClick={onRefreshDaily}
-              disabled={dailyRefreshing}
-            >
-              <RefreshCw className={`mr-1 size-3 ${dailyRefreshing ? "animate-spin" : ""}`} />
-              {dailyRefreshing ? "生成中" : "重新生成当日判断"}
-            </Button>
-          </div>
-        </div>
-
-        {dailySnapshots.length ? (
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.08em] text-slate-500">
-              <span>按日历史 · 倒序</span>
-              <span className="text-slate-400">{dailySnapshotsLoading ? "加载中" : `${dailySnapshots.length} 条`}</span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {dailySnapshots.map((item) => {
-                const isActive = item.date === dailySelectedDate
-                return (
-                  <button
-                    type="button"
-                    key={`${item.path}-${item.date}`}
-                    onClick={() => onSelectDailyDate(item.date)}
-                    className={`rounded-full border px-2.5 py-0.5 text-[11px] transition ${
-                      isActive
-                        ? "border-slate-900 bg-slate-900 text-white"
-                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-400"
-                    }`}
-                  >
-                    {item.date}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        {hasActiveTrend || hasActiveSituation ? (
-          <div className="grid gap-2 sm:grid-cols-2">
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-                <Sparkles className="size-3" />短期趋势
-              </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <div className="truncate text-sm font-semibold text-slate-900">{stateLabel || "—"}</div>
-                <Badge className={`rounded-full border px-2 py-0 text-[10px] font-medium ${bias.cls}`} variant="outline">
-                  {bias.label}
-                </Badge>
-              </div>
-              <div className="mt-1.5 grid grid-cols-3 gap-1 text-[11px] text-slate-500">
-                <div>
-                  <div className="text-slate-400">周期</div>
-                  <div className="font-mono text-slate-700">{horizon || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400">分</div>
-                  <div className="font-mono text-slate-700">{score}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400">置信</div>
-                  <div className="font-mono text-slate-700">{confidence}</div>
-                </div>
-              </div>
-            </div>
-            <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-                <MapPin className="size-3" />当前所处情况
-              </div>
-              <div className="mt-1.5 flex items-center gap-2">
-                <div className="truncate text-sm font-semibold text-slate-900">{position || "—"}</div>
-                <Badge className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0 text-[10px] text-slate-600" variant="outline">
-                  {spaceStructure || "—"}
-                </Badge>
-              </div>
-              <div className="mt-1.5 grid grid-cols-2 gap-1 text-[11px] text-slate-500">
-                <div>
-                  <div className="text-slate-400">位置分</div>
-                  <div className="font-mono text-slate-700">{positionScore}</div>
-                </div>
-                <div>
-                  <div className="text-slate-400">置信</div>
-                  <div className="font-mono text-slate-700">{situationConfidence}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-[11px] text-slate-500">
-            还没有 AI 整体判断数据，点击上方 “重新生成当日判断” 按钮触发一次，或等待每天 16:00 的定时任务。
-          </div>
-        )}
-
-        {hasActiveSituation && (statusTags.length || situationNote) ? (
-          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-              <Target className="size-3" />状态标签与备注
-            </div>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {statusTags.length ? (
-                statusTags.map((tag) => (
-                  <Badge key={tag} className="rounded-full border-slate-200 bg-white px-2 py-0 text-[10px] text-slate-700" variant="outline">
-                    {tag}
-                  </Badge>
-                ))
-              ) : (
-                <span className="text-[11px] text-slate-400">无标签</span>
-              )}
-            </div>
-            {situationNote ? <div className="mt-2 text-[11px] leading-5 text-slate-600">{situationNote}</div> : null}
-          </div>
-        ) : null}
-
-        {hasActiveTrend ? (
-          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-              <LineChart className="size-3" />动量 / 均线 / 位置
-            </div>
-            <div className="mt-1.5 grid gap-1 text-[11px] leading-5 text-slate-600 sm:grid-cols-2">
-              <div>
-                <span className="text-slate-400">3 日 / 5 日 / 10 日</span>{" "}
-                <span className="font-mono text-slate-700">
-                  {fmtPercent(toNumber(momentum.return_3d) ?? NaN)} · {fmtPercent(toNumber(momentum.return_5d) ?? NaN)} · {fmtPercent(toNumber(momentum.return_10d) ?? NaN)}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400">5 日涨跌</span>{" "}
-                <span className="font-mono text-slate-700">
-                  {fmt(momentum.up_days_5d)} 阳 / {fmt(momentum.down_days_5d)} 阴
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400">距 20 日高 / 低</span>{" "}
-                <span className="font-mono text-slate-700">
-                  {fmtPercent(toNumber(momentum.near_20d_high_pct) ?? NaN)} · {fmtPercent(toNumber(momentum.near_20d_low_pct) ?? NaN)}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400">短均线结构</span>{" "}
-                <span className="text-slate-700">{fmt(maPosition.short_ma_structure)}</span>
-              </div>
-              <div>
-                <span className="text-slate-400">价格位置</span>{" "}
-                <span className="text-slate-700">{fmt(pricePosition.position_vs_range_20d)}</span>
-              </div>
-              <div>
-                <span className="text-slate-400">量价 / 换手</span>{" "}
-                <span className="text-slate-700">{fmt(activeTrend.volume_price_state)} · {fmt(activeTrend.turnover_state)}</span>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
-        {hasActiveTrend && Object.keys(scenario).length ? (
-          <div className="rounded-2xl border border-slate-200/80 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.08em] text-slate-500">
-              <Compass className="size-3" />情景分析
-            </div>
-            <div className="mt-1.5 grid gap-2 sm:grid-cols-3">
-              {(["upside", "base", "downside"] as const).map((key) => {
-                const block = safeRecord(scenario[key])
-                if (!Object.keys(block).length) return null
-                const tone =
-                  key === "upside" ? "border-rose-200 bg-rose-50/60" : key === "downside" ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-slate-50/60"
-                return (
-                  <div key={key} className={`rounded-xl border p-2.5 ${tone}`}>
-                    <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.08em] text-slate-500">
-                      <span>{key === "upside" ? "偏强情景" : key === "downside" ? "偏弱情景" : "中性情景"}</span>
-                      <span className="font-mono text-slate-600">置信 {fmt(block.confidence)}</span>
-                    </div>
-                    {safeString(block.condition) ? (
-                      <div className="mt-1 text-[11px] leading-5 text-slate-700">{safeString(block.condition)}</div>
-                    ) : null}
-                    {safeString(block.observation) ? (
-                      <div className="mt-1 text-[11px] leading-5 text-slate-500">观察：{safeString(block.observation)}</div>
-                    ) : null}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        {evidence.length || invalidList.length || situationEvidence.length ? (
-          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3">
-            {evidence.length ? (
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">关键证据</div>
-                <ul className="mt-1 list-disc pl-4 text-[11px] leading-5 text-slate-600">
-                  {evidence.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {invalidList.length ? (
-              <div className="mt-2">
-                <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">失效条件</div>
-                <ul className="mt-1 list-disc pl-4 text-[11px] leading-5 text-slate-600">
-                  {invalidList.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-            {situationEvidence.length ? (
-              <div className="mt-2">
-                <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">当前情况证据</div>
-                <ul className="mt-1 list-disc pl-4 text-[11px] leading-5 text-slate-600">
-                  {situationEvidence.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-    </CollapsibleCard>
-  )
-}
-
-function SummaryList({ title, items, tone }: { title: string; items: string[]; tone: "success" | "danger" | "neutral" }) {
-  const toneClass = tone === "success" ? "border-l-emerald-500" : tone === "danger" ? "border-l-red-500" : "border-l-slate-500"
-  return (
-    <div className={`rounded-2xl border border-slate-200 border-l-4 bg-white p-4 ${toneClass}`}>
-      <div className="mb-3 text-sm font-semibold text-slate-800">{title}</div>
-      <div className="space-y-2">
-        {items.length ? items.map((item) => (
-          <div key={item} className="rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">{item}</div>
-        )) : <div className="text-sm text-slate-400">暂无内容</div>}
-      </div>
-    </div>
-  )
-}
-
-function TrendBlock({ title, data }: { title: string; data: Record<string, unknown> }) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div className="text-sm font-semibold text-slate-800">{title}</div>
-        <Badge className="rounded-full border-slate-200 bg-slate-50 text-slate-700" variant="outline">{fmt(data.state)}</Badge>
-      </div>
-      <div className="grid gap-2 text-sm text-slate-600">
-        <div>趋势分：{fmt(data.score)} · 置信度：{fmt(data.confidence)}</div>
-        <div>均线：{fmt(data.ma_structure)}</div>
-        <div>价格结构：{fmt(data.price_structure)}</div>
-        <div>量能：{fmt(data.volume_state)}</div>
-        <div>换手：{fmt(data.turnover_state)}</div>
-      </div>
-    </div>
-  )
-}
-
-function OverlayTable({ items }: { items: StockOverlayAnnotation[] }) {
-  return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-      <div className="border-b border-slate-100 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">AI 可渲染标注 · {items.length}</div>
-      <div className="divide-y divide-slate-100">
-        {items.length ? items.map((item, index) => (
-          <div key={`${item.overlay_type}-${index}`} className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[160px_1fr_120px]">
-            <Badge className="w-fit rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{item.overlay_type}</Badge>
-            <div className="text-slate-700">{item.text || "未命名标注"}</div>
-            <div className="text-slate-400">{item.points.length} points</div>
-          </div>
-        )) : <div className="px-4 py-8 text-sm text-slate-400">AI 没有返回可渲染标注。</div>}
-      </div>
-    </div>
-  )
-}
+import { AIDirectionCard } from "./components/ai-direction-card"
+import { Alerts } from "./components/alerts"
+import { AnalysisDetail } from "./components/analysis-detail"
+import { ChartCard } from "./components/chart-card"
+import { ChartHeader } from "./components/chart-header"
+import { OverviewCard } from "./components/overview-card"
+import { SelectionPanel } from "./components/selection-panel"
+import { TargetCard, type HorizonPatch } from "./components/target-card"
+import { DEFAULT_HORIZON, SELECTION_COLORS } from "./lib/constants"
+import {
+  asOverlayAnnotations,
+  asRecord,
+  textList,
+} from "./lib/format"
+import type { ApplicationAnalysisDailySnapshot } from "./lib/types"
 
 export default function ApplicationAnalysisPage() {
   const [targets, setTargets] = useState<ApplicationAnalysisTarget[]>([])
@@ -781,12 +72,7 @@ export default function ApplicationAnalysisPage() {
   const [dailyRefreshing, setDailyRefreshing] = useState(false)
   const [dailyLastRefreshAt, setDailyLastRefreshAt] = useState<string | null>(null)
   const [dailySelectedDate, setDailySelectedDate] = useState<string | null>(null)
-  const [dailySelectedSnapshot, setDailySelectedSnapshot] = useState<{
-    short_term_trend?: Record<string, unknown> | null
-    current_situation?: Record<string, unknown> | null
-    summary?: Record<string, unknown> | null
-    updated_at?: string
-  } | null>(null)
+  const [dailySelectedSnapshot, setDailySelectedSnapshot] = useState<ApplicationAnalysisDailySnapshot | null>(null)
   const [selectedChartItems, setSelectedChartItems] = useState<ChartPanelSelectionItem[]>([])
   const [analysisFocusKey, setAnalysisFocusKey] = useState<string | null>(null)
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
@@ -918,9 +204,7 @@ export default function ApplicationAnalysisPage() {
   }, [selected, selectedId])
 
   const analysis = result?.analysis_result
-  const summary = (analysis?.summary as Record<string, unknown> | undefined) || {}
   const dataQuality = (analysis?.data_quality as Record<string, unknown> | undefined) || {}
-  const trendState = asRecord(analysis?.trend_state)
   const shortTermTrend = useMemo(() => asRecord(analysis?.short_term_trend), [analysis])
   const currentSituation = useMemo(() => asRecord(analysis?.current_situation), [analysis])
   const overlays = useMemo(() => asOverlayAnnotations(analysis?.overlay_annotations), [analysis])
@@ -1026,12 +310,33 @@ export default function ApplicationAnalysisPage() {
       setDailyRefreshing(true)
       setError(null)
       setInfo(null)
-      const res = await refreshApplicationAnalysisRecent30(selected.id)
+      const rawRes = await refreshApplicationAnalysisRecent30(selected.id)
+      // 后端刷新接口额外返回 updated / skip_reason 字段，目前 ApplicationAnalysisDailySnapshotResponse
+      // 还未包含，这里只在 application-analysis 内做局部增强，不改动共享 api.ts。
+      const res = rawRes as ApplicationAnalysisDailySnapshotResponse & {
+        updated?: boolean
+        skip_reason?: string
+      }
       if (!res.ok) {
         setError(res.error || "刷新当日 AI 整体判断失败")
         return
       }
       setDailyLastRefreshAt(new Date().toISOString())
+      if (res.updated === false) {
+        // AI 报无数据 / 返回字段缺失：不改写文件，沿用旧判断
+        const reasonLabel =
+          res.skip_reason === "no_new_data"
+            ? "AI 未返回有效的整体判断字段"
+            : "AI 未返回有效结果"
+        setInfo(
+          `${selected.name} 今日整体判断已保持原样（${res.date || "今日"}）：${reasonLabel}，未做更新。`,
+        )
+        await refreshDailySnapshots(selected.id)
+        if (res.date) {
+          setDailySelectedDate(res.date)
+        }
+        return
+      }
       setInfo(`已为 ${selected.name} 重新生成当日 AI 整体判断（${res.date || "今日"}）`)
       // 同步把 daily 的 analysis_result 写回 result，保证顶部 短期趋势/当前情况 也用最新值
       if (res.short_term_trend || res.current_situation) {
@@ -1144,7 +449,7 @@ export default function ApplicationAnalysisPage() {
     }, 300)
   }, [flushPersist])
 
-  const handleAddFromSearch = (item: { target_type: StockTargetType; symbol: string; name: string }) => {
+  const handleAddFromSearch = (item: StockSearchItem) => {
     const id = `${item.target_type}-${item.symbol}`
     if (latestTargetsRef.current.some((t) => t.id === id)) return
     const next: ApplicationAnalysisTarget = {
@@ -1188,6 +493,15 @@ export default function ApplicationAnalysisPage() {
     schedulePersist()
   }
 
+  const handleHorizonChange = (patch: HorizonPatch) => {
+    setHorizon((prev) => {
+      const updated = { ...prev, ...patch }
+      latestHorizonRef.current = updated
+      return updated
+    })
+    schedulePersist()
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setError(null)
@@ -1208,6 +522,10 @@ export default function ApplicationAnalysisPage() {
     setScheduler(res.status)
   }
 
+  const handleRefreshAll = () => {
+    void triggerApplicationAnalysis(null)
+  }
+
   const handleAnalyzeSelection = useCallback((item: ChartPanelSelectionItem) => {
     setAnalysisFocusKey(item.key)
     window.requestAnimationFrame(() => {
@@ -1226,333 +544,54 @@ export default function ApplicationAnalysisPage() {
       <div className="relative -mx-2 -my-4 rounded-3xl border border-slate-200 bg-[#f6f7f9] p-3 sm:p-5 xl:p-6">
         <div className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
           <div className="space-y-4 xl:sticky xl:top-6 xl:self-start xl:max-h-[calc(100svh-7rem)] xl:overflow-y-auto xl:pr-1">
-            <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-              <CardHeader>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <CardTitle className="text-base">分析目标</CardTitle>
-                    <CardDescription>参考 reference/application-analysis/targets.json</CardDescription>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button className="rounded-xl" size="sm" variant="outline" onClick={() => setShowAddForm((value) => !value)}>
-                      <Plus className="mr-1 size-3.5" />新增
-                    </Button>
-                    <Button
-                      className="rounded-xl"
-                      size="icon-sm"
-                      variant="ghost"
-                      onClick={() => setTargetCardCollapsed((value) => !value)}
-                      aria-label={targetCardCollapsed ? "展开分析目标" : "折叠分析目标"}
-                    >
-                      {targetCardCollapsed ? <ChevronRight className="size-4" /> : <ChevronDown className="size-4" />}
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              {!targetCardCollapsed ? (
-                <CardContent className="space-y-3">
-                  {showAddForm ? (
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                      <SymbolSearch
-                        onSelect={handleAddFromSearch}
-                        knownIds={targets.map((item) => item.id)}
-                      />
-                    </div>
-                  ) : null}
-                  <div className="space-y-2">
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
-                      <input
-                        type="search"
-                        value={searchKeyword}
-                        onChange={(event) => setSearchKeyword(event.target.value)}
-                        placeholder="搜索目标 · 名称 / 代码 / 标签"
-                        className="w-full rounded-xl border border-slate-200 bg-white pl-7 pr-3 py-1.5 text-xs text-slate-700 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-                      />
-                    </div>
-                    <AnimatedList
-                      items={filteredTargets}
-                      selectedIndex={filteredTargets.findIndex((item) => item.id === selectedId)}
-                      onItemSelect={(_item, index) => {
-                        const target = filteredTargets[index]
-                        if (!target) return
-                        setSelectedId(target.id)
-                        setExpandedId((current) => (current === target.id ? null : target.id))
-                      }}
-                      renderItem={(item, index) => {
-                        const target = item as ApplicationAnalysisTarget
-                        if (!target?.id) return null
-                        const isExpanded = expandedId === target.id
-                        const isSelected = target.id === selectedId
-                        return (
-                          <div
-                            className={`rounded-2xl border transition ${
-                              isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-400"
-                            }`}
-                          >
-                            <div className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left">
-                              <div className="flex min-w-0 items-center gap-2">
-                                {isExpanded ? <ChevronDown className="size-3.5 text-slate-500" /> : <ChevronRight className="size-3.5 text-slate-500" />}
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                                    <span className="truncate">{target.name}</span>
-                                    <span className="text-slate-400">· {target.symbol}</span>
-                                  </div>
-                                  <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                                    <Clock className="size-3" />每 {target.interval_minutes} 分钟
-                                    {target.enabled ? <Badge className="rounded-full border-emerald-200 bg-emerald-50 text-emerald-700" variant="outline">启用</Badge> : <Badge className="rounded-full border-slate-200 bg-slate-100 text-slate-500" variant="outline">停用</Badge>}
-                                    {target.last_updated_at ? <span>· 最近 {new Date(target.last_updated_at).toLocaleString()}</span> : null}
-                                  </div>
-                                </div>
-                              </div>
-                              <Badge className="rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{target.target_type}</Badge>
-                            </div>
-                            {isExpanded ? (
-                              <div className="space-y-3 border-t border-slate-100 bg-slate-50/60 px-3 py-3" onClick={(event) => event.stopPropagation()}>
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                                    调整
-                                    <Select value={target.adjust} onValueChange={(value) => handleUpdateTarget(target.id, { adjust: value })}>
-                                      <SelectTrigger className="h-7 w-20"><SelectValue /></SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="qfq">前复权</SelectItem>
-                                        <SelectItem value="none">不复权</SelectItem>
-                                        <SelectItem value="hfq">后复权</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </label>
-                                  <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                                    周期
-                                    <Select
-                                      value={target.interval_minutes.toString()}
-                                      onValueChange={(value) => handleUpdateTarget(target.id, { interval_minutes: Number(value) })}
-                                    >
-                                      <SelectTrigger className="h-7 w-24"><SelectValue /></SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="15">15 分钟</SelectItem>
-                                        <SelectItem value="30">30 分钟</SelectItem>
-                                        <SelectItem value="60">1 小时</SelectItem>
-                                        <SelectItem value="120">2 小时</SelectItem>
-                                        <SelectItem value="240">4 小时</SelectItem>
-                                        <SelectItem value="1440">1 天</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </label>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-2 text-xs">
-                                  <Button size="sm" variant="outline" className="rounded-xl" onClick={() => handleUpdateTarget(target.id, { enabled: !target.enabled })}>
-                                    {target.enabled ? "停用" : "启用"}
-                                  </Button>
-                                  <Button size="sm" variant="outline" className="rounded-xl" onClick={() => void handleTriggerTarget(target.id)}>
-                                    <RefreshCw className="mr-1 size-3.5" />立即刷新
-                                  </Button>
-                                  <Button size="sm" variant="ghost" className="rounded-xl text-slate-500" onClick={() => handleRemove(target.id)}>
-                                    <Trash2 className="mr-1 size-3.5" />删除
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : null}
-                            <div className="sr-only">{index}</div>
-                          </div>
-                        )
-                      }}
-                      emptyMessage={targets.length === 0 ? "还没有目标，点击右上角新增。" : "没有匹配的目标。"}
-                      maxHeight="max-h-[60vh]"
-                      className=""
-                      itemClassName=""
-                    />
-                  </div>
-                  <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="text-xs font-semibold text-slate-600">数据范围（horizon）</div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                        天数<input
-                          type="number"
-                          min={30}
-                          value={horizon.days}
-                          onChange={(event) => {
-                            const value = Number(event.target.value) || 120
-                            setHorizon((prev) => {
-                              const updated = { ...prev, days: value }
-                              latestHorizonRef.current = updated
-                              return updated
-                            })
-                            schedulePersist()
-                          }}
-                          className="w-16 rounded-md border border-slate-200 px-1 text-right"
-                        />
-                      </label>
-                      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                        段数<input
-                          type="number"
-                          min={1}
-                          value={horizon.segments}
-                          onChange={(event) => {
-                            const value = Number(event.target.value) || 4
-                            setHorizon((prev) => {
-                              const updated = { ...prev, segments: value }
-                              latestHorizonRef.current = updated
-                              return updated
-                            })
-                            schedulePersist()
-                          }}
-                          className="w-16 rounded-md border border-slate-200 px-1 text-right"
-                        />
-                      </label>
-                      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                        月 K<input
-                          type="number"
-                          min={1}
-                          value={horizon.monthly_keep}
-                          onChange={(event) => {
-                            const value = Number(event.target.value) || 6
-                            setHorizon((prev) => {
-                              const updated = { ...prev, monthly_keep: value }
-                              latestHorizonRef.current = updated
-                              return updated
-                            })
-                            schedulePersist()
-                          }}
-                          className="w-16 rounded-md border border-slate-200 px-1 text-right"
-                        />
-                      </label>
-                      <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
-                        周 K<input
-                          type="number"
-                          min={1}
-                          value={horizon.weekly_keep}
-                          onChange={(event) => {
-                            const value = Number(event.target.value) || 12
-                            setHorizon((prev) => {
-                              const updated = { ...prev, weekly_keep: value }
-                              latestHorizonRef.current = updated
-                              return updated
-                            })
-                            schedulePersist()
-                          }}
-                          className="w-16 rounded-md border border-slate-200 px-1 text-right"
-                        />
-                      </label>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button className="rounded-xl" size="sm" disabled={saving} onClick={() => void handleSave()}>
-                        <Save className="mr-1 size-3.5" />{saving ? "保存中" : "保存配置"}
-                      </Button>
-                      <Button
-                        className="rounded-xl"
-                        size="sm"
-                        variant={scheduler?.running ? "destructive" : "default"}
-                        onClick={() => void handleToggleScheduler()}
-                      >
-                        {scheduler?.running ? "停止调度" : "启动调度"}
-                      </Button>
-                      <Button className="rounded-xl" size="sm" variant="outline" onClick={() => void triggerApplicationAnalysis(null)}>
-                        全部刷新
-                      </Button>
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {scheduler
-                        ? `调度器 ${scheduler.running ? "运行中" : "已停止"} · 累计 ${scheduler.runs_count ?? 0} 次 · 启用 ${scheduler.enabled_target_count ?? 0}/${scheduler.total_target_count ?? 0}`
-                        : "调度器状态未知"}
-                    </div>
-                  </div>
-                </CardContent>
-              ) : null}
-            </Card>
+            <TargetCard
+              targets={targets}
+              filteredTargets={filteredTargets}
+              searchKeyword={searchKeyword}
+              setSearchKeyword={setSearchKeyword}
+              selectedId={selectedId}
+              setSelectedId={setSelectedId}
+              expandedId={expandedId}
+              setExpandedId={setExpandedId}
+              collapsed={targetCardCollapsed}
+              setCollapsed={setTargetCardCollapsed}
+              showAddForm={showAddForm}
+              setShowAddForm={setShowAddForm}
+              horizon={horizon}
+              onHorizonChange={handleHorizonChange}
+              scheduler={scheduler}
+              saving={saving}
+              onAddFromSearch={handleAddFromSearch}
+              onRemove={handleRemove}
+              onUpdateTarget={handleUpdateTarget}
+              onTriggerTarget={handleTriggerTarget}
+              onSave={() => void handleSave()}
+              onToggleScheduler={() => void handleToggleScheduler()}
+              onRefreshAll={handleRefreshAll}
+            />
 
-            <CollapsibleCard
-              title="分析概览"
-              description="当前目标的基础状态信息"
-              icon={LineChart}
+            <OverviewCard
               collapsed={overviewCardCollapsed}
               onToggle={() => setOverviewCardCollapsed((value) => !value)}
-            >
-              <div className="grid gap-2 sm:grid-cols-2">
-                <MetricCard icon={LineChart} tone="teal" label="当前目标" value={selected ? `${selected.name} · ${selected.symbol}` : "—"} />
-                <MetricCard icon={FileJson} tone="violet" label="日 K 数量" value={String(bars.length)} />
-                <MetricCard icon={Bot} label="AI 状态" value={running ? "分析中" : result ? "已完成" : "待执行"} />
-                <MetricCard icon={CheckCircle2} tone="teal" label="可渲染标注" value={String(overlays.length)} />
-              </div>
-            </CollapsibleCard>
+              selectedName={selected?.name ?? null}
+              selectedSymbol={selected?.symbol ?? null}
+              barsCount={bars.length}
+              running={running}
+              resultReady={Boolean(result)}
+              overlayCount={overlays.length}
+            />
 
-            <div ref={selectionPanelRef}>
-              <CollapsibleCard
-                title="选中分析项"
-                description="图上可多选 K 柱；选中后不再在图中显示 tooltip，详情统一在这里展示"
-                icon={Sparkles}
-                badge={String(selectedChartItems.length)}
-                collapsed={selectionCardCollapsed}
-                onToggle={() => setSelectionCardCollapsed((value) => !value)}
-              >
-                {selectedChartItems.length ? (
-                  <div className="space-y-2.5">
-                    {selectedChartItems.map((item) => {
-                      const color = selectionColorMap[item.key] || "#94a3b8"
-                      return (
-                        <div
-                          key={item.key}
-                          className={`relative rounded-xl border p-3 transition ${
-                            analysisFocusKey === item.key
-                              ? "border-slate-300 bg-white shadow-[0_4px_16px_rgba(15,23,42,0.06)]"
-                              : "border-slate-200/80 bg-slate-50/60 hover:bg-white"
-                          }`}
-                        >
-                          <span
-                            className="absolute inset-y-2 left-0 w-1 rounded-r-full"
-                            style={{ backgroundColor: color }}
-                          />
-                          <div className="pl-3">
-                            {item.kind === "bar" ? (
-                                 <BarSummary
-                                   bar={item.bar}
-                                   prevClose={selectedBarPrevClose[item.key] ?? null}
-                                   prevVolume={selectedBarPrevVolume[item.key] ?? null}
-                                   prevTurnover={selectedBarPrevTurnover[item.key] ?? null}
-                                   color={color}
-                                   focused={analysisFocusKey === item.key}
-                                 />
-                               ) : (
-                              <>
-                                <div className="mb-1.5 flex items-center justify-between gap-2">
-                                  <div className="truncate text-sm font-semibold text-slate-900">{item.typeLabel} · {item.shortText}</div>
-                                  <Badge
-                                    className="rounded-full bg-white text-[10px]"
-                                    style={{ borderColor: color, color }}
-                                    variant="outline"
-                                  >
-                                    {item.overlayType}
-                                  </Badge>
-                                </div>
-                                <div className="grid gap-0.5 text-[11px] leading-5 text-slate-600">
-                                  <div className="line-clamp-2">{item.fullText || "未提供 annotation 描述"}</div>
-                                  <div>
-                                    <span className="text-slate-400">区间</span>{" "}
-                                    <span className="font-mono text-slate-700">
-                                      {fmtDateTime(item.startTimestamp)} → {fmtDateTime(item.endTimestamp)}
-                                    </span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400">价格</span>{" "}
-                                    <span className="font-mono text-slate-700">
-                                      {item.minValue.toFixed(2)} - {item.maxValue.toFixed(2)}
-                                    </span>{" "}
-                                    <span className="text-slate-400">· 点位 {item.annotation.points.length}</span>
-                                  </div>
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-[11px] text-slate-500">
-                    先在右侧 K 线图中点击 K 柱，或点选 annotation 标签，这里会展示当前选中的分析对象。
-                  </div>
-                )}
-              </CollapsibleCard>
-            </div>
+            <SelectionPanel
+              collapsed={selectionCardCollapsed}
+              onToggle={() => setSelectionCardCollapsed((value) => !value)}
+              items={selectedChartItems}
+              selectionColorMap={selectionColorMap}
+              analysisFocusKey={analysisFocusKey}
+              prevCloseMap={selectedBarPrevClose}
+              prevVolumeMap={selectedBarPrevVolume}
+              prevTurnoverMap={selectedBarPrevTurnover}
+              panelRef={selectionPanelRef}
+            />
 
             <AIDirectionCard
               shortTermTrend={shortTermTrend}
@@ -1571,140 +610,38 @@ export default function ApplicationAnalysisPage() {
           </div>
 
           <div className="space-y-6">
-            {error ? (
-              <Alert variant="destructive" className="rounded-2xl border-red-200 bg-red-50">
-                <ShieldAlert className="size-4" />
-                <AlertTitle>分析失败</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            ) : null}
-            {info ? (
-              <Alert className="rounded-2xl border-emerald-200 bg-emerald-50 text-emerald-900">
-                <CheckCircle2 className="size-4" />
-                <AlertTitle>提示</AlertTitle>
-                <AlertDescription>{info}</AlertDescription>
-              </Alert>
-            ) : null}
-            {warnings.length || errors.length ? (
-              <Alert className="rounded-2xl border-amber-200 bg-amber-50 text-amber-900">
-                <AlertTriangle className="size-4" />
-                <AlertTitle>数据质量 / 错误</AlertTitle>
-                <AlertDescription>{[...warnings, ...errors].join("；")}</AlertDescription>
-              </Alert>
-            ) : null}
+            <Alerts
+              error={error}
+              info={info}
+              warnings={warnings}
+              errors={errors}
+            />
 
-            <Card className="rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-              <CardHeader className="pb-3">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm">
-                      <Sparkles className="size-4" />
-                    </div>
-                    <div className="min-w-0 space-y-0.5">
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                        <span className="inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                        {selected ? `${selected.name} · ${selected.symbol}` : "请选择左侧目标"}
-                      </div>
-                      <CardTitle className="truncate text-lg font-semibold tracking-[-0.02em] text-slate-950">AI K 线结构标注分析</CardTitle>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 xl:justify-end">
-                    <Select value={adjust} onValueChange={(value) => setAdjust(value as StockAdjust)}>
-                      <SelectTrigger className="h-8 w-28 rounded-lg text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="qfq">前复权</SelectItem>
-                        <SelectItem value="none">不复权</SelectItem>
-                        <SelectItem value="hfq">后复权</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      className="h-8 rounded-lg bg-slate-950 px-3 text-xs text-white hover:bg-slate-800"
-                      onClick={() => selected && void handleTriggerTarget(selected.id)}
-                      disabled={!selected || running}
-                    >
-                      <RefreshCw className={`mr-1.5 size-3.5 ${running ? "animate-spin" : ""}`} />120 日 / 4 段刷新
-                    </Button>
-                    <Button
-                      className="h-8 rounded-lg px-3 text-xs"
-                      variant="outline"
-                      onClick={() => void handleRun()}
-                      disabled={!selected || running}
-                    >
-                      手动单次
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-            </Card>
+            <ChartHeader
+              selectedLabel={selected ? `${selected.name} · ${selected.symbol}` : "请选择左侧目标"}
+              adjust={adjust}
+              onAdjustChange={setAdjust}
+              running={running}
+              canRun={Boolean(selected)}
+              onTrigger={() => selected && void handleTriggerTarget(selected.id)}
+              onManualRun={() => void handleRun()}
+            />
 
             {selected ? (
-              <CollapsibleCard
-                title="K 线分析"
-                description={loadingBars ? "正在加载真实 K 线..." : "AI overlay_annotations 会直接叠加到 K 线图"}
-                icon={LineChart}
-                badge={String(overlays.length)}
+              <ChartCard
                 collapsed={chartCardCollapsed}
                 onToggle={() => setChartCardCollapsed((value) => !value)}
-              >
-                <div className="-mx-1">
-                  <ChartPanel
-                    bars={bars}
-                    annotations={[]}
-                    overlayAnnotations={overlays}
-                    bsSignals={[]}
-                    manualSignalMode={null}
-                    onManualSignalCreate={() => undefined}
-                    symbol={selected.symbol}
-                    period="1d"
-                    indicators={["MA", "AMOUNT"]}
-                    maLines={[5, 10, 20, 60]}
-                    selectionMode="multiple"
-                    selectionColors={selectionColorMap}
-                    onSelectionChange={setSelectedChartItems}
-                    onAnalyzeSelection={handleAnalyzeSelection}
-                  />
-                </div>
-              </CollapsibleCard>
+                selectedSymbol={selected.symbol}
+                bars={bars}
+                overlays={overlays}
+                selectionColors={selectionColorMap}
+                onSelectionChange={setSelectedChartItems}
+                onAnalyzeSelection={handleAnalyzeSelection}
+                loadingBars={loadingBars}
+              />
             ) : null}
 
-            {analysis ? (
-              <>
-                {trendState && Object.keys(trendState).length ? (
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {Object.entries(trendState).map(([key, value]) => (
-                      <TrendBlock key={key} title={`段 ${key.replace("segment_", "")} 趋势`} data={asRecord(value)} />
-                    ))}
-                  </div>
-                ) : null}
-
-                <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-                  <CardHeader>
-                    <CardTitle>结构摘要</CardTitle>
-                    <CardDescription>仅展示 AI JSON 中的摘要字段，不额外编造结论。</CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-4 md:grid-cols-2">
-                    <SummaryList title="主要支撑" tone="success" items={textList(summary.main_support)} />
-                    <SummaryList title="主要压力" tone="danger" items={textList(summary.main_resistance)} />
-                    <SummaryList title="主要风险" tone="danger" items={textList(summary.main_risks)} />
-                    <SummaryList title="主要观察" tone="neutral" items={textList(summary.main_observations)} />
-                  </CardContent>
-                </Card>
-
-                <OverlayTable items={overlays} />
-
-                <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-                  <CardHeader>
-                    <CardTitle>严格 JSON 结果</CardTitle>
-                    <CardDescription>用于核对 AI 返回是否符合 annotation.md schema。</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <pre className="max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-slate-950 p-4 text-xs leading-5 text-slate-100">
-                      {JSON.stringify(analysis, null, 2)}
-                    </pre>
-                  </CardContent>
-                </Card>
-              </>
-            ) : null}
+            {analysis ? <AnalysisDetail analysis={analysis} overlays={overlays} /> : null}
           </div>
         </div>
       </div>
