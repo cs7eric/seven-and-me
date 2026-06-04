@@ -11,6 +11,7 @@ export function ChartCard({
   bars,
   overlays,
   selectionColors,
+  selectedBarTimestamps,
   onSelectionChange,
   onAnalyzeSelection,
   loadingBars,
@@ -21,6 +22,7 @@ export function ChartCard({
   bars: StockKlineBar[]
   overlays: StockOverlayAnnotation[]
   selectionColors: Record<string, string>
+  selectedBarTimestamps: number[]
   onSelectionChange: (items: ChartPanelSelectionItem[]) => void
   onAnalyzeSelection: (item: ChartPanelSelectionItem) => void
   loadingBars: boolean
@@ -48,6 +50,7 @@ export function ChartCard({
           maLines={[5, 10, 20, 60]}
           selectionMode="multiple"
           selectionColors={selectionColors}
+          selectedBarTimestamps={selectedBarTimestamps}
           onSelectionChange={onSelectionChange}
           onAnalyzeSelection={onAnalyzeSelection}
         />

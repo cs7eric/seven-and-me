@@ -618,6 +618,7 @@ export function ChartPanel({
   maLines,
   selectionMode = "single",
   selectionColors,
+  selectedBarTimestamps,
   onSelectionChange,
   onAnalyzeSelection,
 }: {
@@ -633,6 +634,7 @@ export function ChartPanel({
   maLines: number[]
   selectionMode?: "single" | "multiple"
   selectionColors?: Record<string, string>
+  selectedBarTimestamps?: number[]
   onSelectionChange?: (items: ChartPanelSelectionItem[]) => void
   onAnalyzeSelection?: (item: ChartPanelSelectionItem) => void
 }) {
@@ -643,6 +645,7 @@ export function ChartPanel({
   const [selectedAiAnnotation, setSelectedAiAnnotation] = useState<HoveredAiAnnotation | null>(null)
   const [annotationLabels, setAnnotationLabels] = useState<AiAnnotationLabelPosition[]>([])
   const [selectedBarIndexes, setSelectedBarIndexes] = useState<number[]>([])
+  const [hoveredBarCard, setHoveredBarCard] = useState<{ bar: StockKlineBar; x: number; y: number } | null>(null)
   const [chartSizeTick, setChartSizeTick] = useState(0)
   const hasTurnover = useMemo(() => bars.some((bar) => typeof bar.turnover === "number" && bar.turnover > 0), [bars])
 
@@ -845,6 +848,19 @@ export function ChartPanel({
     onSelectionChange?.(selectedItems)
   }, [bars, onSelectionChange, selectedAiAnnotation, selectedBarIndexes])
 
+  useEffect(() => {
+    if (!Array.isArray(selectedBarTimestamps)) return
+    const nextIndexes = selectedBarTimestamps
+      .map((timestamp) => bars.findIndex((bar) => bar.timestamp === timestamp))
+      .filter((index) => index >= 0)
+    setSelectedBarIndexes((current) => {
+      if (current.length === nextIndexes.length && current.every((value, idx) => value === nextIndexes[idx])) {
+        return current
+      }
+      return nextIndexes
+    })
+  }, [bars, selectedBarTimestamps])
+
   const handleChartClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const chart = chartRef.current
     const container = containerRef.current
@@ -898,7 +914,7 @@ export function ChartPanel({
     setSelectedBarIndexes((current) => {
       const exists = current.includes(dataIndex)
       if (selectionMode === "multiple") {
-        return exists ? current.filter((index) => index !== dataIndex) : [...current, dataIndex].sort((left, right) => left - right)
+        return exists ? current.filter((index) => index !== dataIndex) : [dataIndex, ...current.filter((index) => index !== dataIndex)]
       }
 
       return exists ? [] : [dataIndex]
@@ -992,6 +1008,7 @@ export function ChartPanel({
   const handleChartMouseLeave = () => {
     setHoveredSignal(null)
     setHoveredAiAnnotation(null)
+    setHoveredBarCard(null)
   }
 
 
@@ -1559,6 +1576,22 @@ export function ChartPanel({
               </button>
             ) : null}
           </div>
+        </div>
+      ) : null}
+      {hoveredBarCard ? (
+        <div
+          className="pointer-events-none absolute z-20 min-w-[180px] rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs text-slate-700 shadow-lg"
+          style={{
+            left: Math.min(hoveredBarCard.x + 14, Math.max(16, panelWidth - 220)),
+            top: Math.max(16, hoveredBarCard.y - 92),
+          }}
+        >
+          <div className="mb-1 font-medium text-slate-900">K 线</div>
+          <div>时间：{new Date(hoveredBarCard.bar.timestamp).toLocaleString("zh-CN", { hour12: false })}</div>
+          <div>开高低收：{hoveredBarCard.bar.open.toFixed(2)} / {hoveredBarCard.bar.high.toFixed(2)} / {hoveredBarCard.bar.low.toFixed(2)} / {hoveredBarCard.bar.close.toFixed(2)}</div>
+          <div>成交量：{hoveredBarCard.bar.volume.toLocaleString()}</div>
+          {typeof hoveredBarCard.bar.turnover === "number" ? <div>成交额：{hoveredBarCard.bar.turnover.toLocaleString()}</div> : null}
+          {typeof hoveredBarCard.bar.turnover_rate === "number" ? <div>换手率：{hoveredBarCard.bar.turnover_rate.toFixed(2)}%</div> : null}
         </div>
       ) : null}
       {hoveredSignal ? (

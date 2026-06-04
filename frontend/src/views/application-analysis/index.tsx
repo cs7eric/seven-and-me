@@ -35,10 +35,13 @@ import type {
 import { AIDirectionCard } from "./components/ai-direction-card"
 import { Alerts } from "./components/alerts"
 import { AnalysisDetail } from "./components/analysis-detail"
+import { AuctionTab } from "./components/auction-tab"
 import { ChartCard } from "./components/chart-card"
 import { ChartHeader } from "./components/chart-header"
+import { FundFlowTab } from "./components/fund-flow-tab"
 import { SelectionPanel } from "./components/selection-panel"
 import { TargetCard, type HorizonPatch } from "./components/target-card"
+import { TechnicalIndicatorTab } from "./components/technical-indicator-tab"
 import { DEFAULT_HORIZON, SELECTION_COLORS } from "./lib/constants"
 import {
   asOverlayAnnotations,
@@ -46,7 +49,7 @@ import {
 } from "./lib/format"
 
 export default function ApplicationAnalysisPage() {
-  type MainTab = "chart" | "ai-direction" | "analysis"
+  type MainTab = "chart" | "ai-direction" | "analysis" | "auction" | "ma-support" | "fund-flow"
   const [activeMainTab, setActiveMainTab] = useState<MainTab>("chart")
   const [targets, setTargets] = useState<ApplicationAnalysisTarget[]>([])
   const [horizon, setHorizon] = useState<Record<string, number>>(DEFAULT_HORIZON)
@@ -72,6 +75,9 @@ export default function ApplicationAnalysisPage() {
   const [dailyRefreshing, setDailyRefreshing] = useState(false)
   const [dailyLastRefreshAt, setDailyLastRefreshAt] = useState<string | null>(null)
   const [selectedChartItems, setSelectedChartItems] = useState<ChartPanelSelectionItem[]>([])
+  const selectedBarTimestamps: number[] = selectedChartItems
+    .filter((item): item is Extract<ChartPanelSelectionItem, { kind: "bar" }> => item.kind === "bar")
+    .map((item) => item.bar.timestamp)
   const [analysisFocusKey, setAnalysisFocusKey] = useState<string | null>(null)
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
 
@@ -255,6 +261,16 @@ export default function ApplicationAnalysisPage() {
     })
     return map
   }, [selectedChartItems, bars])
+
+  const handleRemoveSelectionItem = useCallback((item: ChartPanelSelectionItem) => {
+    setSelectedChartItems((current) => current.filter((candidate) => candidate.key !== item.key))
+    setAnalysisFocusKey((current) => (current === item.key ? null : current))
+  }, [])
+
+  const handleClearSelectionItems = useCallback(() => {
+    setSelectedChartItems([])
+    setAnalysisFocusKey(null)
+  }, [])
 
   const handleRun = async () => {
     if (!selected) return
@@ -515,6 +531,8 @@ export default function ApplicationAnalysisPage() {
               prevVolumeMap={selectedBarPrevVolume}
               prevTurnoverMap={selectedBarPrevTurnover}
               panelRef={selectionPanelRef}
+              onRemoveItem={handleRemoveSelectionItem}
+              onClearAll={handleClearSelectionItems}
             />
 
             <Alerts
@@ -552,6 +570,9 @@ export default function ApplicationAnalysisPage() {
                   <TabsTrigger value="chart">图表</TabsTrigger>
                   <TabsTrigger value="ai-direction">AI 方向</TabsTrigger>
                   <TabsTrigger value="analysis">分析详情</TabsTrigger>
+                  <TabsTrigger value="auction">集合竞价</TabsTrigger>
+                  <TabsTrigger value="ma-support">技术指标</TabsTrigger>
+                  <TabsTrigger value="fund-flow">资金</TabsTrigger>
                 </TabsList>
                 <div className="flex items-center gap-3 text-[11px] text-slate-500">
                   <span>K 线 {bars.length}</span>
@@ -577,6 +598,7 @@ export default function ApplicationAnalysisPage() {
                     bars={bars}
                     overlays={overlays}
                     selectionColors={selectionColorMap}
+                    selectedBarTimestamps={selectedBarTimestamps}
                     onSelectionChange={setSelectedChartItems}
                     onAnalyzeSelection={handleAnalyzeSelection}
                     loadingBars={loadingBars}
@@ -605,6 +627,48 @@ export default function ApplicationAnalysisPage() {
               >
                 {analysis ? (
                   <AnalysisDetail analysis={analysis} overlays={overlays} />
+                ) : null}
+              </TabsContent>
+
+              <TabsContent
+                value="auction"
+                className="m-0 h-full min-h-0 overflow-auto"
+              >
+                {selected ? (
+                  <AuctionTab
+                    targetType={selected.target_type as StockTargetType}
+                    symbol={selected.symbol}
+                    name={selected.name}
+                    adjust={(selected.adjust as StockAdjust) || adjust}
+                  />
+                ) : null}
+              </TabsContent>
+
+              <TabsContent
+                value="ma-support"
+                className="m-0 h-full min-h-0 overflow-auto"
+              >
+                {selected ? (
+                  <TechnicalIndicatorTab
+                    targetType={selected.target_type as StockTargetType}
+                    symbol={selected.symbol}
+                    name={selected.name}
+                    period="1d"
+                    adjust={(selected.adjust as StockAdjust) || adjust}
+                  />
+                ) : null}
+              </TabsContent>
+
+              <TabsContent
+                value="fund-flow"
+                className="m-0 h-full min-h-0 overflow-auto"
+              >
+                {selected ? (
+                  <FundFlowTab
+                    targetType={selected.target_type as StockTargetType}
+                    symbol={selected.symbol}
+                    name={selected.name}
+                  />
                 ) : null}
               </TabsContent>
             </main>

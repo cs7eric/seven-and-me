@@ -32,5 +32,39 @@
     "source": "cfi",
     "cachedAt": 1780412577.644401,
     "date": "2026-06-02"
+  },
+  {
+    "upCount": 1528,
+    "downCount": 3465,
+    "limitUpCount": 103,
+    "limitDownCount": 13,
+    "totalCount": 5060,
+    "breakRate": null,
+    "maxLianBan": null,
+    "yesterdayLimitUpReturn": null,
+    "totalTurnover": null,
+    "downOver5Count": null,
+    "new20HighCount": null,
+    "new20LowCount": null,
+    "source": "cfi",
+    "cachedAt": 1780497036.7169,
+    "date": "2026-06-03"
+  },
+  {
+    "upCount": 1092,
+    "downCount": 3945,
+    "limitUpCount": 80,
+    "limitDownCount": 11,
+    "totalCount": 5090,
+    "breakRate": null,
+    "maxLianBan": null,
+    "yesterdayLimitUpReturn": null,
+    "totalTurnover": null,
+    "downOver5Count": null,
+    "new20HighCount": null,
+    "new20LowCount": null,
+    "source": "cfi",
+    "cachedAt": 1780545144.882184,
+    "date": "2026-06-04"
   }
 ]

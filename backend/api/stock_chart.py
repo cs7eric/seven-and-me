@@ -5,9 +5,20 @@ from flask import Blueprint, jsonify, request
 from backend.adapters.market.eastmoney import fetch_stock_meta, fetch_market_breadth
 from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
 from backend.repositories.stock.workspace_repo import stock_kline_cache_file
+from backend.services.stock.turnover_repo import load_turnover
 from backend.services.stock.auction_service import fetch_stock_auction
+from backend.services.scheduler.auction_analysis_scheduler import (
+    get_auction_analysis_scheduler,
+    get_auction_analysis_scheduler_status,
+)
+from backend.services.stock.auction_ai_analysis_service import (
+    list_auction_analysis_snapshots,
+    read_auction_analysis_snapshot,
+    run_auction_ai_analysis_target,
+)
 from backend.services.stock.kline_service import resolve_stock_klines
 from backend.services.stock.application_analysis_service import run_application_analysis
+from backend.services.stock.feature_summary import build_stock_feature_summary
 from backend.services.stock.application_analysis_scheduler import (
     get_application_analysis_scheduler_status,
     list_application_analysis_results,
@@ -40,6 +51,45 @@ def sample_stock_klines(symbol: str, period: str) -> list[dict]:
     from backend.services.stock.sample_data_service import sample_stock_klines as app_sample_stock_klines
     return app_sample_stock_klines(symbol, period)
 
+def _merge_turnover_into_kline_items(target_type: str, symbol: str, items: list[dict]) -> list[dict]:
+    payload = load_turnover(target_type, symbol)
+    if not payload:
+        return items
+    entries = payload.get('entries') if isinstance(payload, dict) else None
+    if not isinstance(entries, list) or not entries:
+        return items
+
+    by_timestamp: dict[int, dict] = {}
+    by_trade_date: dict[str, dict] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        ts = entry.get('timestamp')
+        td = entry.get('trade_date')
+        if isinstance(ts, (int, float)):
+            by_timestamp[int(ts)] = entry
+        if isinstance(td, str) and td.strip():
+            by_trade_date[td.strip()] = entry
+
+    merged: list[dict] = []
+    for bar in items:
+        row = dict(bar)
+        ts = row.get('timestamp')
+        match = by_timestamp.get(int(ts)) if isinstance(ts, (int, float)) else None
+        if match is None:
+            trade_date = str(row.get('trade_date') or row.get('date') or '').strip()
+            if trade_date:
+                match = by_trade_date.get(trade_date)
+        if match:
+            row['turnover_rate'] = match.get('turnover_rate')
+            if not row.get('trade_date') and match.get('trade_date'):
+                row['trade_date'] = match.get('trade_date')
+            if not row.get('turnover') and isinstance(match.get('amount'), (int, float)):
+                row['turnover'] = match.get('amount')
+        merged.append(row)
+    return merged
+
+
 
 @stock_chart_bp.route('/api/stock-chart/search')
 def stock_chart_search():
@@ -58,6 +108,7 @@ def stock_chart_klines():
     period = str(request.args.get('period', '1d')).strip() or '1d'
     adjust = str(request.args.get('adjust', 'qfq')).strip() or 'qfq'
     items, source = resolve_stock_klines(target_type, symbol, period, adjust, sample_stock_klines)
+    items = _merge_turnover_into_kline_items(target_type, symbol, items)
     cache_file = stock_kline_cache_file(target_type, symbol, period, adjust)
     payload = {
         'symbol': symbol,
@@ -122,6 +173,99 @@ def delete_stock_chart_annotation(annotation_id):
 def stock_chart_auction():
     symbol = str(request.args.get('symbol', '000001')).strip() or '000001'
     return jsonify(fetch_stock_auction(symbol))
+
+
+@stock_chart_bp.route('/api/stock-chart/feature-summary')
+def stock_chart_feature_summary():
+    target_type = str(request.args.get('target_type', 'stock')).strip() or 'stock'
+    symbol = str(request.args.get('symbol', '000001')).strip() or '000001'
+    name = str(request.args.get('name', symbol)).strip() or symbol
+    adjust = str(request.args.get('adjust', 'qfq')).strip() or 'qfq'
+    try:
+        max_chars = int(request.args.get('max_chars') or 1000000)
+    except (TypeError, ValueError):
+        max_chars = 1000000
+    try:
+        return jsonify(build_stock_feature_summary(
+            target_type=target_type,
+            symbol=symbol,
+            name=name,
+            adjust=adjust,
+            max_chars=max_chars,
+        ))
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 502
+
+
+@stock_chart_bp.route('/api/stock-chart/auction-ai-analysis', methods=['POST'])
+def stock_chart_auction_ai_analysis():
+    data = request.get_json(silent=True) or {}
+    target_type = str(data.get('target_type') or request.args.get('target_type') or 'stock').strip() or 'stock'
+    symbol = str(data.get('symbol') or request.args.get('symbol') or '000001').strip() or '000001'
+    name = str(data.get('name') or request.args.get('name') or symbol).strip() or symbol
+    adjust = str(data.get('adjust') or request.args.get('adjust') or 'qfq').strip() or 'qfq'
+    try:
+        max_chars = int(data.get('max_chars') or request.args.get('max_chars') or 1000000)
+    except (TypeError, ValueError):
+        max_chars = 1000000
+    try:
+        # max_chars is kept for API compatibility; the persisted scheduler path uses
+        # the configured service budget.
+        _ = max_chars
+        return jsonify(run_auction_ai_analysis_target({
+            'id': f'{target_type}-{symbol}',
+            'target_type': target_type,
+            'symbol': symbol,
+            'name': name,
+            'adjust': adjust,
+            'enabled': True,
+        }))
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 502
+
+
+@stock_chart_bp.route('/api/stock-chart/auction-ai-analysis', methods=['GET'])
+def read_stock_chart_auction_ai_analysis():
+    target_type = str(request.args.get('target_type', 'stock')).strip() or 'stock'
+    symbol = str(request.args.get('symbol', '000001')).strip() or '000001'
+    date_key = request.args.get('date') or None
+    snapshot = read_auction_analysis_snapshot(target_type, symbol, date_key)
+    if not snapshot:
+        return jsonify({
+            'ok': False,
+            'has_snapshot': False,
+            'target_type': target_type,
+            'symbol': symbol,
+            'date': date_key,
+            'error': '今日暂无持久化竞价 AI 分析结果',
+        }), 404
+    return jsonify({'ok': True, 'has_snapshot': True, **snapshot})
+
+
+@stock_chart_bp.route('/api/stock-chart/auction-ai-analysis/history', methods=['GET'])
+def list_stock_chart_auction_ai_analysis_history():
+    target_type = str(request.args.get('target_type', 'stock')).strip() or 'stock'
+    symbol = str(request.args.get('symbol', '000001')).strip() or '000001'
+    try:
+        limit = int(request.args.get('limit') or 30)
+    except (TypeError, ValueError):
+        limit = 30
+    return jsonify({
+        'ok': True,
+        'target_type': target_type,
+        'symbol': symbol,
+        'items': list_auction_analysis_snapshots(target_type, symbol, limit=limit),
+    })
+
+
+@stock_chart_bp.route('/api/stock-chart/auction-ai-analysis/scheduler', methods=['GET'])
+def stock_chart_auction_ai_analysis_scheduler_status():
+    return jsonify(get_auction_analysis_scheduler_status())
+
+
+@stock_chart_bp.route('/api/stock-chart/auction-ai-analysis/scheduler/trigger', methods=['POST'])
+def stock_chart_auction_ai_analysis_scheduler_trigger():
+    return jsonify(get_auction_analysis_scheduler().trigger_now())
 
 
 @stock_chart_bp.route('/api/stock-chart/stock-meta')

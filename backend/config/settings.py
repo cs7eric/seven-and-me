@@ -26,6 +26,23 @@ APPLICATION_ANALYSIS_HISTORY_FOLDER = APPLICATION_ANALYSIS_FOLDER / 'history'
 APPLICATION_ANALYSIS_DAILY_SNAPSHOT_FOLDER = APPLICATION_ANALYSIS_FOLDER / 'snapshots'
 APPLICATION_ANALYSIS_SCHEDULER_FILE = APPLICATION_ANALYSIS_FOLDER / 'scheduler.json'
 
+# 每日盘后定时跑"近 30 天应用分析快照"的时间窗口（北京时间）。
+#: 默认在 A 股收盘 15:30 后开始跑，盘后 30 分钟内触发。
+APPLICATION_ANALYSIS_DAILY_DEFAULT_HOUR = 15
+APPLICATION_ANALYSIS_DAILY_DEFAULT_MINUTE = 30
+#: 北京时间相对 UTC 的偏移小时数。
+APPLICATION_ANALYSIS_DAILY_TIMEZONE_OFFSET_HOURS = 8
+
+# ---- 换手率单独持久化目录（不再写进 K 线主文件） ----
+STOCK_TURNOVER_DIR = REFERENCE_FOLDER / 'stock' / 'turnover'
+
+# ---- scheduler 维护目录（F:\dev-repo\mp4-to-word-new\scheduler） ----
+SCHEDULER_DIR = BASE_DIR / 'scheduler'
+SCHEDULER_JOBS_FILE = SCHEDULER_DIR / 'jobs.json'
+SCHEDULER_TURNOVER_JOB_FILE = SCHEDULER_DIR / 'turnover_job.json'
+SCHEDULER_AUCTION_ANALYSIS_JOB_FILE = SCHEDULER_DIR / 'auction_analysis_job.json'
+APPLICATION_ANALYSIS_AUCTION_FOLDER = APPLICATION_ANALYSIS_FOLDER / 'auction'
+
 UPLOAD_FOLDER = BASE_DIR / 'uploads'
 OUTPUT_FOLDER = BASE_DIR / 'outputs'
 
@@ -66,9 +83,12 @@ def ensure_app_directories() -> None:
     (STOCK_REFERENCE_CACHE_FOLDER / 'klines').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_CACHE_FOLDER / 'auction').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_CACHE_FOLDER / 'indicators').mkdir(parents=True, exist_ok=True)
+    STOCK_TURNOVER_DIR.mkdir(parents=True, exist_ok=True)
     APPLICATION_ANALYSIS_FOLDER.mkdir(parents=True, exist_ok=True)
     APPLICATION_ANALYSIS_RESULTS_FOLDER.mkdir(parents=True, exist_ok=True)
     APPLICATION_ANALYSIS_HISTORY_FOLDER.mkdir(parents=True, exist_ok=True)
     APPLICATION_ANALYSIS_DAILY_SNAPSHOT_FOLDER.mkdir(parents=True, exist_ok=True)
+    APPLICATION_ANALYSIS_AUCTION_FOLDER.mkdir(parents=True, exist_ok=True)
+    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_FOLDER.mkdir(exist_ok=True)
     OUTPUT_FOLDER.mkdir(exist_ok=True)

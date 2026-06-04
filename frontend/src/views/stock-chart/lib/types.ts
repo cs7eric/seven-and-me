@@ -10,12 +10,14 @@ export interface StockSearchItem {
 
 export interface StockKlineBar {
   timestamp: number
+  trade_date?: string
   open: number
   high: number
   low: number
   close: number
   volume: number
   turnover?: number
+  turnover_rate?: number
   volume_ratio?: number
 }
 

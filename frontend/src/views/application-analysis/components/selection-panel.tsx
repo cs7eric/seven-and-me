@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react"
+import { Sparkles, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 
@@ -7,17 +7,7 @@ import { CollapsibleCard } from "./collapsible-card"
 import { fmtDateTime } from "../lib/format"
 import type { ChartPanelSelectionItem } from "../../stock-chart/components/chart-panel"
 
-export function SelectionPanel({
-  collapsed,
-  onToggle,
-  items,
-  selectionColorMap,
-  analysisFocusKey,
-  prevCloseMap,
-  prevVolumeMap,
-  prevTurnoverMap,
-  panelRef,
-}: {
+export function SelectionPanel(props: {
   collapsed: boolean
   onToggle: () => void
   items: ChartPanelSelectionItem[]
@@ -27,7 +17,21 @@ export function SelectionPanel({
   prevVolumeMap: Record<string, number | null>
   prevTurnoverMap: Record<string, number | null>
   panelRef: React.RefObject<HTMLDivElement | null>
+  onRemoveItem: (item: ChartPanelSelectionItem) => void
+  onClearAll: () => void
 }) {
+  const {
+    collapsed,
+    onToggle,
+    items,
+    selectionColorMap,
+    analysisFocusKey,
+    prevCloseMap,
+    prevVolumeMap,
+    prevTurnoverMap,
+    panelRef,
+    onClearAll,
+  } = props
   return (
     <div ref={panelRef}>
       <CollapsibleCard
@@ -40,6 +44,16 @@ export function SelectionPanel({
       >
         {items.length ? (
           <div className="space-y-2.5">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={onClearAll}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+              >
+                <X className="h-3.5 w-3.5" />
+                <span>取消全部</span>
+              </button>
+            </div>
             {items.map((item) => {
               const color = selectionColorMap[item.key] || "#94a3b8"
               return (
@@ -55,7 +69,16 @@ export function SelectionPanel({
                     className="absolute inset-y-2 left-0 w-1 rounded-r-full"
                     style={{ backgroundColor: color }}
                   />
-                  <div className="pl-3">
+                  <button
+                    type="button"
+                    onClick={() => props.onRemoveItem(item)}
+                    className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                    aria-label="移除选中项"
+                    title="移除选中项"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                  <div className="pl-3 pr-8">
                     {item.kind === "bar" ? (
                       <BarSummary
                         bar={item.bar}

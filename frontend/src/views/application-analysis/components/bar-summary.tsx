@@ -44,6 +44,7 @@ export function BarSummary({
       : "bg-slate-50 border-slate-200"
   // 较昨日放/缩额
   const hasTurnover = typeof bar.turnover === "number"
+  const hasTurnoverRate = typeof bar.turnover_rate === "number" && Number.isFinite(bar.turnover_rate)
   const hasPrevTurnover = typeof prevTurnover === "number" && Number.isFinite(prevTurnover) && (prevTurnover as number) > 0
   const turnoverDelta = hasTurnover && hasPrevTurnover ? (bar.turnover as number) - (prevTurnover as number) : null
   const turnoverDeltaPct = hasTurnover && hasPrevTurnover && (prevTurnover as number) !== 0
@@ -111,6 +112,13 @@ export function BarSummary({
         <div>
           <span className="text-slate-400">振幅</span>{" "}
           <span className="font-mono text-slate-700">{fmtPercent(amplitude ?? NaN)}</span>
+          {hasTurnoverRate ? (
+            <>
+              <span className="mx-1.5 text-slate-300">·</span>
+              <span className="text-slate-400">换手率</span>{" "}
+              <span className="font-mono text-slate-700">{fmtPercent(bar.turnover_rate as number)}</span>
+            </>
+          ) : null}
           {hasPrev ? (
             <>
               <span className="mx-1.5 text-slate-300">·</span>

@@ -267,6 +267,80 @@ export async function fetchStockAuction(symbol: string): Promise<StockAuctionSna
   return data;
 }
 
+export interface AuctionAiAnalysisResponse {
+  analysis_input: Record<string, unknown>
+  analysis_result: Record<string, unknown>
+  raw_result?: Record<string, unknown>
+  raw_root_keys?: string[] | null
+  dump_paths?: Record<string, string>
+}
+
+export async function runAuctionAiAnalysis(params: {
+  targetType: StockTargetType
+  symbol: string
+  name: string
+  adjust: StockAdjust
+  maxChars?: number
+}): Promise<AuctionAiAnalysisResponse> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/auction-ai-analysis`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      target_type: params.targetType,
+      symbol: params.symbol,
+      name: params.name,
+      adjust: params.adjust,
+      max_chars: params.maxChars || 1000000,
+    }),
+  })
+  const data = (await res.json().catch(() => null)) as AuctionAiAnalysisResponse | { error?: string } | null
+  if (!res.ok || !data || !("analysis_result" in data)) {
+    throw new Error((data && "error" in data && data.error) || "竞价 AI 分析失败")
+  }
+  return data
+}
+
+export async function fetchAuctionAiAnalysisSnapshot(params: {
+  targetType: StockTargetType
+  symbol: string
+  date?: string
+}): Promise<AuctionAiAnalysisResponse & { ok?: boolean; has_snapshot?: boolean; date?: string; updated_at?: string }> {
+  const query = new URLSearchParams({
+    target_type: params.targetType,
+    symbol: params.symbol,
+  })
+  if (params.date) query.set("date", params.date)
+  const res = await fetch(`${API_BASE}/api/stock-chart/auction-ai-analysis?${query.toString()}`)
+  const data = (await res.json().catch(() => null)) as (AuctionAiAnalysisResponse & { error?: string; ok?: boolean; has_snapshot?: boolean }) | null
+  if (!res.ok || !data || !("analysis_result" in data)) {
+    throw new Error(data?.error || "读取竞价 AI 分析结果失败")
+  }
+  return data
+}
+
+export async function triggerAuctionAiAnalysisScheduler(): Promise<{
+  ok?: boolean
+  status?: string
+  date?: string
+  succeeded?: number
+  failed?: number
+  items?: Array<Record<string, unknown>>
+  error?: string
+}> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/auction-ai-analysis/scheduler/trigger`, {
+    method: "POST",
+  })
+  return (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    status?: string
+    date?: string
+    succeeded?: number
+    failed?: number
+    items?: Array<Record<string, unknown>>
+    error?: string
+  }
+}
+
 export interface StockMetaResponse {
   symbol: string
   name: string

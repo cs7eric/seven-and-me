@@ -1,0 +1,21 @@
+{
+  "job_name": "auction_ai_analysis",
+  "description": "工作日 09:26 后，对 application-analysis targets 中 enabled 标的生成集合竞价 AI 解读并持久化",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "run_time": "09:26",
+    "run_once_per_day": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 30,
+  "last_run_at": null,
+  "last_run_date": null,
+  "last_status": "idle",
+  "last_targets_processed": 0,
+  "last_duration_seconds": null,
+  "last_error": null,
+  "total_runs": 0,
+  "total_targets_processed": 0,
+  "total_failures": 0
+}

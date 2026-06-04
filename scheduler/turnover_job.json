@@ -1,0 +1,34 @@
+{
+  "job_name": "turnover_refresh",
+  "description": "工作日盘内每半小时 + 16:00 收盘后，刷新 target.json 中所有标的的换手率",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "intraday_windows": [
+      {
+        "start": "09:30",
+        "end": "11:30",
+        "every_minutes": 30
+      },
+      {
+        "start": "13:00",
+        "end": "15:00",
+        "every_minutes": 30
+      }
+    ],
+    "post_close_run": "16:00"
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 30,
+  "last_run_at": "2026-06-04T16:00:24.215466",
+  "last_run_slot": "16:00",
+  "last_run_date": "2026-06-04",
+  "last_status": "success",
+  "last_targets_processed": 2,
+  "last_duration_seconds": 3.45,
+  "last_error": null,
+  "total_runs": 11,
+  "total_targets_processed": 22,
+  "total_failures": 0,
+  "_saved_at": "2026-06-04T16:00:24.215549"
+}
