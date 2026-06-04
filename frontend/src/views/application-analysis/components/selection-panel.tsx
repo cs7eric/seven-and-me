@@ -1,6 +1,7 @@
-import { Sparkles, X } from "lucide-react"
+import { Activity, Sparkles, X } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 
 import { BarSummary } from "./bar-summary"
 import { CollapsibleCard } from "./collapsible-card"
@@ -19,6 +20,7 @@ export function SelectionPanel(props: {
   panelRef: React.RefObject<HTMLDivElement | null>
   onRemoveItem: (item: ChartPanelSelectionItem) => void
   onClearAll: () => void
+  onAnalyzeBar: (item: Extract<ChartPanelSelectionItem, { kind: "bar" }>) => void
 }) {
   const {
     collapsed,
@@ -31,6 +33,7 @@ export function SelectionPanel(props: {
     prevTurnoverMap,
     panelRef,
     onClearAll,
+    onAnalyzeBar,
   } = props
   return (
     <div ref={panelRef}>
@@ -80,14 +83,30 @@ export function SelectionPanel(props: {
                   </button>
                   <div className="pl-3 pr-8">
                     {item.kind === "bar" ? (
-                      <BarSummary
-                        bar={item.bar}
-                        prevClose={prevCloseMap[item.key] ?? null}
-                        prevVolume={prevVolumeMap[item.key] ?? null}
-                        prevTurnover={prevTurnoverMap[item.key] ?? null}
-                        color={color}
-                        focused={analysisFocusKey === item.key}
-                      />
+                      <>
+                        <div className="mb-2 flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <BarSummary
+                              bar={item.bar}
+                              prevClose={prevCloseMap[item.key] ?? null}
+                              prevVolume={prevVolumeMap[item.key] ?? null}
+                              prevTurnover={prevTurnoverMap[item.key] ?? null}
+                              color={color}
+                              focused={analysisFocusKey === item.key}
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            className="mt-0.5 h-7 gap-1.5 rounded-md border-slate-200 px-2.5 text-[11px]"
+                            onClick={() => onAnalyzeBar(item)}
+                          >
+                            <Activity className="h-3.5 w-3.5" />
+                            Analysis
+                          </Button>
+                        </div>
+                      </>
                     ) : (
                       <>
                         <div className="mb-1.5 flex items-center justify-between gap-2">

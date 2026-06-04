@@ -39,6 +39,7 @@ import { AuctionTab } from "./components/auction-tab"
 import { ChartCard } from "./components/chart-card"
 import { ChartHeader } from "./components/chart-header"
 import { FundFlowTab } from "./components/fund-flow-tab"
+import { IntradayAnalysisDialog } from "./components/intraday-analysis-dialog"
 import { SelectionPanel } from "./components/selection-panel"
 import { TargetCard, type HorizonPatch } from "./components/target-card"
 import { TechnicalIndicatorTab } from "./components/technical-indicator-tab"
@@ -47,6 +48,17 @@ import {
   asOverlayAnnotations,
   textList,
 } from "./lib/format"
+
+function formatTradeDateFromTimestamp(timestamp?: number | null) {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp <= 0) return null
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+  return formatter.format(new Date(timestamp))
+}
 
 export default function ApplicationAnalysisPage() {
   type MainTab = "chart" | "ai-direction" | "analysis" | "auction" | "ma-support" | "fund-flow"
@@ -79,6 +91,8 @@ export default function ApplicationAnalysisPage() {
     .filter((item): item is Extract<ChartPanelSelectionItem, { kind: "bar" }> => item.kind === "bar")
     .map((item) => item.bar.timestamp)
   const [analysisFocusKey, setAnalysisFocusKey] = useState<string | null>(null)
+  const [intradayDialogOpen, setIntradayDialogOpen] = useState(false)
+  const [intradayBar, setIntradayBar] = useState<Extract<ChartPanelSelectionItem, { kind: "bar" }> | null>(null)
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
 
   const selected = useMemo(() => targets.find((item) => item.id === selectedId) || null, [targets, selectedId])
@@ -486,6 +500,11 @@ export default function ApplicationAnalysisPage() {
     setActiveMainTab("analysis")
   }, [])
 
+  const handleOpenIntradayDialog = useCallback((item: Extract<ChartPanelSelectionItem, { kind: "bar" }>) => {
+    setIntradayBar(item)
+    setIntradayDialogOpen(true)
+  }, [])
+
   useEffect(() => {
     if (!analysisFocusKey) return
     if (selectedChartItems.some((item) => item.key === analysisFocusKey)) return
@@ -533,6 +552,7 @@ export default function ApplicationAnalysisPage() {
               panelRef={selectionPanelRef}
               onRemoveItem={handleRemoveSelectionItem}
               onClearAll={handleClearSelectionItems}
+              onAnalyzeBar={handleOpenIntradayDialog}
             />
 
             <Alerts
@@ -675,6 +695,17 @@ export default function ApplicationAnalysisPage() {
           </Tabs>
         </div>
       </div>
+      {selected && intradayBar ? (
+        <IntradayAnalysisDialog
+          open={intradayDialogOpen}
+          onOpenChange={setIntradayDialogOpen}
+          targetType={selected.target_type as StockTargetType}
+          symbol={selected.symbol}
+          name={selected.name}
+          adjust={(selected.adjust as StockAdjust) || adjust}
+          tradeDate={intradayBar.bar.trade_date || formatTradeDateFromTimestamp(intradayBar.bar.timestamp)}
+        />
+      ) : null}
     </WorkspaceShell>
   )
 }

@@ -148,3 +148,37 @@ export interface StockAuctionSnapshot {
   closing?: StockAuctionPhaseSnapshot
   details?: StockAuctionDetails
 }
+
+export interface StockIntradayMinuteBars {
+  "1m": StockKlineBar[]
+  "5m": StockKlineBar[]
+  "15m": StockKlineBar[]
+  "30m"?: StockKlineBar[]
+}
+
+export interface StockIntradayPoint {
+  timestamp: number
+  trade_date?: string | null
+  time_label: string
+  price: number
+  avg_price?: number | null
+  volume: number
+  turnover?: number | null
+  turnover_rate?: number | null
+}
+
+export interface StockIntradayResponse {
+  ok: boolean
+  symbol: string
+  target_type: StockTargetType
+  name: string
+  adjust: StockAdjust
+  effective_adjust?: StockAdjust | string
+  requested_adjust?: StockAdjust | string
+  source?: string
+  trade_date?: string | null
+  requested_trade_date?: string | null
+  timeshare: StockIntradayPoint[]
+  minute_bars: Partial<StockIntradayMinuteBars>
+  error?: string
+}

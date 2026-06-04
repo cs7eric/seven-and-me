@@ -1,6 +1,6 @@
 import type { Phase, SSEEvent, QAResponse, TransferProgress } from "./types";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
-import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace, ApplicationAnalysisResponse } from "@/views/stock-chart/lib/types";
+import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockIntradayResponse, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace, ApplicationAnalysisResponse } from "@/views/stock-chart/lib/types";
 import type { ApplicationAnalysisDailySnapshot } from "@/views/application-analysis/lib/types";
 
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
@@ -265,6 +265,32 @@ export async function fetchStockAuction(symbol: string): Promise<StockAuctionSna
   const data = (await res.json().catch(() => null)) as StockAuctionSnapshot | null;
   if (!res.ok || !data) throw new Error("获取竞价数据失败");
   return data;
+}
+
+export async function fetchStockIntraday(params: {
+  targetType: StockTargetType
+  symbol: string
+  name?: string
+  adjust: StockAdjust
+  tradeDate?: string
+  periods?: StockPeriod[]
+}): Promise<StockIntradayResponse> {
+  const query = new URLSearchParams({
+    target_type: params.targetType,
+    symbol: params.symbol,
+    name: params.name || params.symbol,
+    adjust: params.adjust,
+  })
+  if (params.tradeDate) query.set("trade_date", params.tradeDate)
+  if (params.periods && params.periods.length) {
+    query.set("periods", params.periods.join(","))
+  }
+  const res = await fetch(`${API_BASE}/api/stock-chart/intraday?${query.toString()}`)
+  const data = (await res.json().catch(() => null)) as StockIntradayResponse | null
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || "获取当日分时失败")
+  }
+  return data
 }
 
 export interface AuctionAiAnalysisResponse {
