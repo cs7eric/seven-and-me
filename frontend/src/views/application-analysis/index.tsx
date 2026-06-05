@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "react-router-dom"
+import { Eye, Plus } from "lucide-react"
 
 import {
   Tabs,
@@ -6,6 +8,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
+import { Button } from "@/components/ui/button"
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import {
   controlApplicationAnalysisScheduler,
@@ -63,10 +66,14 @@ function formatTradeDateFromTimestamp(timestamp?: number | null) {
 
 export default function ApplicationAnalysisPage() {
   type MainTab = "chart" | "ai-direction" | "analysis" | "auction" | "ma-support" | "fund-flow"
+  const [searchParams, setSearchParams] = useSearchParams()
   const [activeMainTab, setActiveMainTab] = useState<MainTab>("chart")
   const [targets, setTargets] = useState<ApplicationAnalysisTarget[]>([])
   const [horizon, setHorizon] = useState<Record<string, number>>(DEFAULT_HORIZON)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // 临时预览态：从自选页跳过来时 ?symbol=... 不直接持久化，先用 previewTarget
+  // 渲染分析面板。点「加入应用分析」才落盘到 targets.json。
+  const [previewTarget, setPreviewTarget] = useState<ApplicationAnalysisTarget | null>(null)
   const [adjust, setAdjust] = useState<StockAdjust>("qfq")
   const [bars, setBars] = useState<StockKlineBar[]>([])
   const [loadingBars, setLoadingBars] = useState(false)
@@ -101,33 +108,93 @@ export default function ApplicationAnalysisPage() {
   const selectionPanelRef = useRef<HTMLDivElement | null>(null)
 
   const selected = useMemo(() => targets.find((item) => item.id === selectedId) || null, [targets, selectedId])
+  // 渲染的目标：优先 preview（临时态），否则走 selected
+  const displayedTarget = previewTarget ?? selected
 
   const refreshTargets = useCallback(async () => {
     try {
       const data = await fetchApplicationAnalysisTargets()
       const items = data.items || []
       const configHorizon = (data.config?.horizon as Record<string, number> | undefined) || {}
-      setTargets(items)
-      latestTargetsRef.current = items
       setHorizon({ ...DEFAULT_HORIZON, ...configHorizon })
       latestHorizonRef.current = { ...DEFAULT_HORIZON, ...configHorizon }
+
+      // URL query：?target_type=stock&symbol=600021&name=上海电力&market=SH
+      // 注意：只做预览，不主动加入 targets.json（用户需要的话点「加入应用分析」按钮）
+      // 1) symbol 已在 items → 直接选中，并清掉 query
+      // 2) 不在 → 设 previewTarget（临时态），让面板能渲染它的 K 线 / 分时
+      const symbol = searchParams.get("symbol")
+      const targetType = searchParams.get("target_type") || "stock"
+      const queryName = searchParams.get("name") || symbol || ""
+      let queryTargetId: string | null = null
+      let previewObj: ApplicationAnalysisTarget | null = null
+      if (symbol) {
+        const id = `${targetType}-${symbol}`
+        const existing = items.find(
+          (t) => t.id === id || (t.symbol || "").toLowerCase() === symbol.toLowerCase(),
+        )
+        if (existing) {
+          queryTargetId = existing.id
+        } else {
+          previewObj = {
+            id,
+            target_type: targetType,
+            symbol,
+            name: queryName || symbol,
+            adjust,
+            enabled: true,
+            interval_minutes: 60,
+            tags: ["from-self-selected"],
+          }
+        }
+      }
+
+      setTargets(items)
+      latestTargetsRef.current = items
       targetsLoadedRef.current = true
-      if (!selectedId && items.length) {
-        // 优先默认选中上证指数 000001（symbol 匹配 index-sh000001 / sh000001 / 000001）
-        const preferred =
-          items.find((item) => {
-            const symbol = (item.symbol || "").toLowerCase()
-            const id = (item.id || "").toLowerCase()
-            return symbol === "000001" || symbol === "sh000001" || id.endsWith("-000001") || id === "sh000001"
-          }) || items[0]
-        setSelectedId(preferred.id)
+      if (previewObj) {
+        setPreviewTarget(previewObj)
+        // 预览态不写 selectedId（避免在用户从 targets 列表选其它时被覆盖；render 时走 displayedTarget 优先级）
+      } else if (queryTargetId) {
+        setSelectedId(queryTargetId)
+        setPreviewTarget(null)
+      } else {
+        // 决定最终选中的 target
+        let resolvedId: string | null = null
+        if (!selectedId && items.length) {
+          const preferred =
+            items.find((item) => {
+              const s = (item.symbol || "").toLowerCase()
+              const i = (item.id || "").toLowerCase()
+              return s === "000001" || s === "sh000001" || i.endsWith("-000001") || i === "sh000001"
+            }) || items[0]
+          resolvedId = preferred.id
+        } else {
+          resolvedId = selectedId
+        }
+        if (resolvedId) setSelectedId(resolvedId)
+      }
+
+      // 始终清掉 query，避免 refreshTargets 被重复触发时再处理
+      if (symbol) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev)
+            next.delete("target_type")
+            next.delete("symbol")
+            next.delete("name")
+            next.delete("market")
+            return next
+          },
+          { replace: true },
+        )
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "加载目标列表失败"
       setError("加载目标列表失败")
       notification.danger({ title: "加载目标列表失败", description: msg })
     }
-  }, [selectedId])
+  }, [selectedId, adjust, searchParams, setSearchParams])
 
   const refreshScheduler = useCallback(async () => {
     try {
@@ -174,7 +241,8 @@ export default function ApplicationAnalysisPage() {
   }, [refreshTargets, refreshScheduler])
 
   useEffect(() => {
-    if (!selected) {
+    // K 线 / 分时 / 技术指标都按 displayedTarget 走：预览态也能渲染
+    if (!displayedTarget) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setBars([])
       return
@@ -182,11 +250,11 @@ export default function ApplicationAnalysisPage() {
     let active = true
     setLoadingBars(true)
     void fetchStockKlines({
-      targetType: selected.target_type as StockTargetType,
-      symbol: selected.symbol,
-      name: selected.name,
+      targetType: displayedTarget.target_type as StockTargetType,
+      symbol: displayedTarget.symbol,
+      name: displayedTarget.name,
       period: "1d",
-      adjust: (selected.adjust as StockAdjust) || adjust,
+      adjust: (displayedTarget.adjust as StockAdjust) || adjust,
     })
       .then((data) => {
         if (active) setBars(data.items)
@@ -200,7 +268,7 @@ export default function ApplicationAnalysisPage() {
     return () => {
       active = false
     }
-  }, [selected, adjust])
+  }, [displayedTarget, adjust])
 
   useEffect(() => {
     if (!selected) {
@@ -488,6 +556,37 @@ export default function ApplicationAnalysisPage() {
     schedulePersist()
   }
 
+  // 把预览态的 target 落盘到 targets.json，同时切到持久态选中
+  const handleAddPreview = async () => {
+    if (!previewTarget) return
+    setSaving(true)
+    try {
+      const next: ApplicationAnalysisTarget = {
+        ...previewTarget,
+        // 去掉「from-self-selected」标签，标成正式分析标的
+        tags: previewTarget.tags?.filter((t) => t !== "from-self-selected") || [],
+      }
+      const updated = [...latestTargetsRef.current, next]
+      setTargets(updated)
+      latestTargetsRef.current = updated
+      // 立刻写回（不走 300ms debounce），避免用户立刻点 Run 时找不到 target
+      await flushPersist()
+      setSelectedId(next.id)
+      setPreviewTarget(null)
+      notification.success({
+        title: "已加入应用分析",
+        description: `${next.name} · ${next.symbol} 现在可以做 AI 分析了`,
+      })
+    } catch (err) {
+      notification.danger({
+        title: "加入失败",
+        description: err instanceof Error ? err.message : "未知错误",
+      })
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleRemove = (id: string) => {
     setTargets((prev) => {
       const updated = prev.filter((item) => item.id !== id)
@@ -644,16 +743,54 @@ export default function ApplicationAnalysisPage() {
             className="flex h-full min-h-0 flex-col gap-4"
           >
             <header className="flex min-h-0 shrink-0 flex-col gap-3">
+              {/* 预览态 banner：从自选跳过来、还没加入 targets 时浮在最上方 */}
+              {previewTarget ? (
+                <div className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-amber-800">
+                  <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-700">
+                    <Eye className="size-3.5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold">
+                      正在预览 {previewTarget.name} · {previewTarget.symbol}
+                    </div>
+                    <div className="text-xs text-amber-700/80">
+                      仅渲染图表 / 分时 / 技术指标，AI 分析结果要「加入」后才会保存
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="h-7 gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
+                    onClick={() => void handleAddPreview()}
+                    disabled={saving}
+                  >
+                    <Plus className="size-3.5" />
+                    加入应用分析
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-amber-800 hover:bg-amber-500/20 hover:text-amber-900"
+                    onClick={() => setPreviewTarget(null)}
+                  >
+                    取消预览
+                  </Button>
+                </div>
+              ) : null}
+
               {/* 标题栏：当前目标 + 操作按钮 */}
               <ChartHeader
-                target={selected}
+                target={displayedTarget}
                 selectedLabel={
-                  selected ? `${selected.name} · ${selected.symbol}` : "请选择左侧目标"
+                  displayedTarget
+                    ? `${displayedTarget.name} · ${displayedTarget.symbol}`
+                    : "请选择左侧目标"
                 }
                 adjust={adjust}
                 onAdjustChange={setAdjust}
                 running={running}
-                canRun={Boolean(selected)}
+                // 预览态不允许 Run / Trigger：必须先「加入」落盘
+                canRun={Boolean(selected) && !previewTarget}
                 onTrigger={() => selected && void handleTriggerTarget(selected.id)}
                 onManualRun={() => void handleRun()}
               />
@@ -671,7 +808,7 @@ export default function ApplicationAnalysisPage() {
                 <div className="flex items-center gap-3 text-[11px] text-slate-500">
                   <span>K 线 {bars.length}</span>
                   <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
-                  <span>{running ? "分析中" : result ? "已完成" : "待执行"}</span>
+                  <span>{running ? "分析中" : result ? "已完成" : previewTarget ? "预览中" : "待执行"}</span>
                   <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
                   <span>标注 {overlays.length}</span>
                 </div>
@@ -684,11 +821,11 @@ export default function ApplicationAnalysisPage() {
                 value="chart"
                 className="m-0 flex h-full min-h-0 flex-col overflow-hidden"
               >
-                {selected ? (
+                {displayedTarget ? (
                   <ChartCard
                     collapsed={false}
                     onToggle={() => {}}
-                    selectedSymbol={selected.symbol}
+                    selectedSymbol={displayedTarget.symbol}
                     bars={bars}
                     overlays={overlays}
                     selectionColors={selectionColorMap}
@@ -704,22 +841,32 @@ export default function ApplicationAnalysisPage() {
                 value="ai-direction"
                 className="m-0 h-full min-h-0 overflow-auto"
               >
-                <AIDirectionCard
-                  collapsed={false}
-                  onToggle={() => {}}
-                  dailySnapshotsFull={dailySnapshotsFull}
-                  dailySnapshotsLoading={dailySnapshotsLoading}
-                  dailyRefreshing={dailyRefreshing}
-                  dailyLastRefreshAt={dailyLastRefreshAt}
-                  onRefreshDaily={() => void handleRefreshDaily()}
-                />
+                {previewTarget ? (
+                  <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-500">
+                    预览模式暂不展示 AI 方向记录，请先加入应用分析。
+                  </div>
+                ) : (
+                  <AIDirectionCard
+                    collapsed={false}
+                    onToggle={() => {}}
+                    dailySnapshotsFull={dailySnapshotsFull}
+                    dailySnapshotsLoading={dailySnapshotsLoading}
+                    dailyRefreshing={dailyRefreshing}
+                    dailyLastRefreshAt={dailyLastRefreshAt}
+                    onRefreshDaily={() => void handleRefreshDaily()}
+                  />
+                )}
               </TabsContent>
 
               <TabsContent
                 value="analysis"
                 className="m-0 h-full min-h-0 overflow-auto"
               >
-                {analysis ? (
+                {previewTarget ? (
+                  <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-500">
+                    预览模式暂不展示分析详情，请先加入应用分析。
+                  </div>
+                ) : analysis ? (
                   <AnalysisDetail analysis={analysis} overlays={overlays} />
                 ) : null}
               </TabsContent>
@@ -728,12 +875,12 @@ export default function ApplicationAnalysisPage() {
                 value="auction"
                 className="m-0 h-full min-h-0 overflow-auto"
               >
-                {selected ? (
+                {displayedTarget ? (
                   <AuctionTab
-                    targetType={selected.target_type as StockTargetType}
-                    symbol={selected.symbol}
-                    name={selected.name}
-                    adjust={(selected.adjust as StockAdjust) || adjust}
+                    targetType={displayedTarget.target_type as StockTargetType}
+                    symbol={displayedTarget.symbol}
+                    name={displayedTarget.name}
+                    adjust={(displayedTarget.adjust as StockAdjust) || adjust}
                   />
                 ) : null}
               </TabsContent>
@@ -742,13 +889,13 @@ export default function ApplicationAnalysisPage() {
                 value="ma-support"
                 className="m-0 h-full min-h-0 overflow-auto"
               >
-                {selected ? (
+                {displayedTarget ? (
                   <TechnicalIndicatorTab
-                    targetType={selected.target_type as StockTargetType}
-                    symbol={selected.symbol}
-                    name={selected.name}
+                    targetType={displayedTarget.target_type as StockTargetType}
+                    symbol={displayedTarget.symbol}
+                    name={displayedTarget.name}
                     period="1d"
-                    adjust={(selected.adjust as StockAdjust) || adjust}
+                    adjust={(displayedTarget.adjust as StockAdjust) || adjust}
                   />
                 ) : null}
               </TabsContent>
@@ -757,11 +904,11 @@ export default function ApplicationAnalysisPage() {
                 value="fund-flow"
                 className="m-0 h-full min-h-0 overflow-auto"
               >
-                {selected ? (
+                {displayedTarget ? (
                   <FundFlowTab
-                    targetType={selected.target_type as StockTargetType}
-                    symbol={selected.symbol}
-                    name={selected.name}
+                    targetType={displayedTarget.target_type as StockTargetType}
+                    symbol={displayedTarget.symbol}
+                    name={displayedTarget.name}
                   />
                 ) : null}
               </TabsContent>
@@ -769,14 +916,14 @@ export default function ApplicationAnalysisPage() {
           </Tabs>
         </div>
       </div>
-      {selected && intradayBar ? (
+      {displayedTarget && intradayBar ? (
         <IntradayAnalysisDialog
           open={intradayDialogOpen}
           onOpenChange={setIntradayDialogOpen}
-          targetType={selected.target_type as StockTargetType}
-          symbol={selected.symbol}
-          name={selected.name}
-          adjust={(selected.adjust as StockAdjust) || adjust}
+          targetType={displayedTarget.target_type as StockTargetType}
+          symbol={displayedTarget.symbol}
+          name={displayedTarget.name}
+          adjust={(displayedTarget.adjust as StockAdjust) || adjust}
           tradeDate={intradayBar.bar.trade_date || formatTradeDateFromTimestamp(intradayBar.bar.timestamp)}
         />
       ) : null}

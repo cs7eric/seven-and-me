@@ -144,9 +144,32 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
             return {'ok': False, 'error': 'scheduler not initialized'}
         return sched.trigger_now()
     if job_id == 'application_analysis':
-        results = application_analysis_scheduler.trigger_all(source='settings_manual')
-        ok = all((r.get('ok') for r in results)) if results else False
-        return {'ok': ok, 'items': results, 'count': len(results)}
+        targets = application_analysis_scheduler.trigger_all(source='settings_manual')
+        if not targets:
+            msg = '当前没有启用的标的，请在 application-analysis 页添加并启用至少一个标的'
+            print(f'[scheduler] application_analysis trigger skipped: {msg}', flush=True)
+            return {
+                'ok': False,
+                'items': [],
+                'count': 0,
+                'error': msg,
+                'error_code': 'no_enabled_targets',
+            }
+        ok = all((r.get('ok') for r in targets))
+        failed = [r for r in targets if not r.get('ok')]
+        if failed:
+            print(
+                f'[scheduler] application_analysis trigger partial: '
+                f'{len(failed)}/{len(targets)} failed, errors='
+                f'{[r.get("error") for r in failed]}',
+                flush=True,
+            )
+        return {
+            'ok': ok,
+            'items': targets,
+            'count': len(targets),
+            'failed_count': len(failed),
+        }
     return {'ok': False, 'error': f'unknown job_id {job_id}'}
 
 

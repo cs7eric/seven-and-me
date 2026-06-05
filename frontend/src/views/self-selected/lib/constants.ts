@@ -19,25 +19,27 @@ export function getGroupColorClasses(color?: string | null): {
   text: string
   bg: string
   border: string
+  /** 强饱和的纯色（用于左侧 accent bar / 装饰条），无需 /10 透明。 */
+  accent: string
 } {
   switch (color) {
     case "emerald":
-      return { text: "text-emerald-600", bg: "bg-emerald-500/10", border: "border-emerald-500/30" }
+      return { text: "text-emerald-600", bg: "bg-emerald-500/10", border: "border-emerald-500/30", accent: "bg-emerald-500" }
     case "rose":
-      return { text: "text-rose-600", bg: "bg-rose-500/10", border: "border-rose-500/30" }
+      return { text: "text-rose-600", bg: "bg-rose-500/10", border: "border-rose-500/30", accent: "bg-rose-500" }
     case "amber":
-      return { text: "text-amber-600", bg: "bg-amber-500/10", border: "border-amber-500/30" }
+      return { text: "text-amber-600", bg: "bg-amber-500/10", border: "border-amber-500/30", accent: "bg-amber-500" }
     case "violet":
-      return { text: "text-violet-600", bg: "bg-violet-500/10", border: "border-violet-500/30" }
+      return { text: "text-violet-600", bg: "bg-violet-500/10", border: "border-violet-500/30", accent: "bg-violet-500" }
     case "cyan":
-      return { text: "text-cyan-600", bg: "bg-cyan-500/10", border: "border-cyan-500/30" }
+      return { text: "text-cyan-600", bg: "bg-cyan-500/10", border: "border-cyan-500/30", accent: "bg-cyan-500" }
     case "pink":
-      return { text: "text-pink-600", bg: "bg-pink-500/10", border: "border-pink-500/30" }
+      return { text: "text-pink-600", bg: "bg-pink-500/10", border: "border-pink-500/30", accent: "bg-pink-500" }
     case "teal":
-      return { text: "text-teal-600", bg: "bg-teal-500/10", border: "border-teal-500/30" }
+      return { text: "text-teal-600", bg: "bg-teal-500/10", border: "border-teal-500/30", accent: "bg-teal-500" }
     case "blue":
     default:
-      return { text: "text-blue-600", bg: "bg-blue-500/10", border: "border-blue-500/30" }
+      return { text: "text-blue-600", bg: "bg-blue-500/10", border: "border-blue-500/30", accent: "bg-blue-500" }
   }
 }
 
@@ -52,6 +54,20 @@ export function getMarketClasses(market?: string | null): string {
       return "bg-amber-500/10 text-amber-600 border-amber-500/30"
     default:
       return "bg-muted text-muted-foreground border-border/30"
+  }
+}
+
+/** 市场强调色：用于卡片底部横条 / 强提示。 */
+export function getMarketAccentClasses(market?: string | null): string {
+  switch ((market || "").toUpperCase()) {
+    case "SH":
+      return "bg-rose-500/60"
+    case "SZ":
+      return "bg-emerald-500/60"
+    case "HK":
+      return "bg-amber-500/60"
+    default:
+      return "bg-slate-400/40"
   }
 }
 

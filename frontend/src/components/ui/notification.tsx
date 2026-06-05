@@ -38,35 +38,56 @@ export interface NotificationItem {
 }
 
 interface VariantStyle {
+  // 整张卡片的填充（用对应主题色 10% 透明，淡而不刺眼）
+  cardBg: string
+  // 卡片描边（对应主题色 30%）
   border: string
-  bg: string
+  // 图标徽章底色（对应主题色 25%，让 icon 在淡色卡片上更突出）
+  badgeBg: string
+  // 主题色（用于 icon / 标题 / 描述）
   text: string
+  // 标题色（更深一档，确保可读性）
+  titleText: string
+  // 描述色（主题色降饱和）
+  descText: string
   icon: ComponentType<{ className?: string }>
 }
 
 const VARIANT_STYLES: Record<NotificationVariant, VariantStyle> = {
   success: {
+    cardBg: "bg-emerald-500/10",
     border: "border-emerald-500/30",
-    bg: "bg-emerald-500/10",
+    badgeBg: "bg-emerald-500/25",
     text: "text-emerald-600",
+    titleText: "text-emerald-700",
+    descText: "text-emerald-700/80",
     icon: CheckCircle2,
   },
   info: {
+    cardBg: "bg-blue-500/10",
     border: "border-blue-500/30",
-    bg: "bg-blue-500/10",
+    badgeBg: "bg-blue-500/25",
     text: "text-blue-600",
+    titleText: "text-blue-700",
+    descText: "text-blue-700/80",
     icon: Info,
   },
   warn: {
+    cardBg: "bg-amber-500/10",
     border: "border-amber-500/30",
-    bg: "bg-amber-500/10",
+    badgeBg: "bg-amber-500/25",
     text: "text-amber-600",
+    titleText: "text-amber-700",
+    descText: "text-amber-700/80",
     icon: AlertTriangle,
   },
   danger: {
+    cardBg: "bg-destructive/10",
     border: "border-destructive/30",
-    bg: "bg-destructive/10",
+    badgeBg: "bg-destructive/25",
     text: "text-destructive",
+    titleText: "text-destructive",
+    descText: "text-destructive/80",
     icon: AlertCircle,
   },
 }
@@ -178,23 +199,26 @@ function NotificationCard({ item }: { item: NotificationItem }) {
     <div
       role="status"
       className={cn(
-        "pointer-events-auto flex items-start gap-3 rounded-2xl border bg-card/95 p-3 shadow-lg backdrop-blur-sm",
+        "pointer-events-auto flex w-full min-w-[320px] items-start gap-3 rounded-2xl border p-3 shadow-lg backdrop-blur-sm",
         "animate-in slide-in-from-right-full fade-in-0 duration-300",
+        styles.cardBg,
         styles.border,
       )}
     >
       <div
         className={cn(
           "flex size-8 shrink-0 items-center justify-center rounded-xl",
-          styles.bg,
+          styles.badgeBg,
         )}
       >
         <Icon className={cn("size-4", styles.text)} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-semibold text-foreground">{item.title}</div>
+        <div className={cn("text-sm font-semibold", styles.titleText)}>
+          {item.title}
+        </div>
         {item.description ? (
-          <div className="mt-0.5 text-xs leading-5 text-muted-foreground">
+          <div className={cn("mt-0.5 text-xs leading-5", styles.descText)}>
             {item.description}
           </div>
         ) : null}
@@ -202,7 +226,10 @@ function NotificationCard({ item }: { item: NotificationItem }) {
       <button
         type="button"
         onClick={() => notification.dismiss(item.id)}
-        className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className={cn(
+          "shrink-0 rounded-md p-1 transition-colors hover:bg-black/5",
+          styles.text,
+        )}
         aria-label="关闭"
       >
         <X className="size-3.5" />

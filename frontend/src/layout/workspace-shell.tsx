@@ -1,10 +1,14 @@
-﻿﻿﻿import { Link } from "react-router-dom"
+﻿﻿﻿﻿﻿﻿import { Link } from "react-router-dom"
 import type { ReactNode } from "react"
 import { Home } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { AppSidebar } from "@/layout/app-sidebar"
 import { NotificationRoot } from "@/components/ui/notification"
+import {
+  GlobalCommandPalette,
+  GlobalCommandTrigger,
+} from "@/components/global-command-palette"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -77,6 +81,9 @@ export function WorkspaceShell({
               </BreadcrumbList>
             </Breadcrumb>
           </div>
+          <div className="ml-auto flex items-center gap-2 px-4">
+            <GlobalCommandTrigger />
+          </div>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
@@ -93,6 +100,9 @@ export function WorkspaceShell({
 
       {/* 全局 notification 容器（portal 到 body） */}
       <NotificationRoot />
+
+      {/* 全局 Alt+K 命令面板（portal 到 body） */}
+      <GlobalCommandPalette />
     </SidebarProvider>
   )
 }

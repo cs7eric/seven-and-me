@@ -14,6 +14,7 @@ import {
   createSelfSelectedItem,
   deleteSelfSelectedGroup,
   deleteSelfSelectedItem,
+  fetchApplicationAnalysisTargets,
   fetchSelfSelectedGroups,
   fetchSelfSelectedItems,
 } from "@/lib/api"
@@ -39,6 +40,8 @@ export default function SelfSelectedPage() {
   const [addDialogGroupId, setAddDialogGroupId] = useState<string | null>(null)
   // 当前正在打开「删分类」确认弹窗的 group
   const [confirmDeleteGroupId, setConfirmDeleteGroupId] = useState<string | null>(null)
+  // 已加入「应用分析」的标的 symbol 集合（用于在 item 卡上打「已加入」徽章）
+  const [inAnalysisSymbols, setInAnalysisSymbols] = useState<Set<string>>(new Set())
 
   const loadAll = useCallback(async (withSpinner = false) => {
     if (withSpinner) setLoading(true)
@@ -83,6 +86,26 @@ export default function SelfSelectedPage() {
     }, REFRESH_INTERVAL_MS)
     return () => window.clearInterval(timer)
   }, [loadAll])
+
+  // 拉一次应用分析 targets，用于在 item 卡上打「已加入」徽章
+  const loadAnalysisSymbols = useCallback(async () => {
+    try {
+      const res = await fetchApplicationAnalysisTargets()
+      const set = new Set<string>(
+        (res.items || []).map((it) => (it.symbol || "").toUpperCase()).filter(Boolean),
+      )
+      setInAnalysisSymbols(set)
+    } catch {
+      // 静默：徽章只是辅助，挂了不挡其它功能
+    }
+  }, [])
+  useEffect(() => {
+    void loadAnalysisSymbols()
+    const timer = window.setInterval(() => {
+      void loadAnalysisSymbols()
+    }, REFRESH_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [loadAnalysisSymbols])
 
   useEffect(() => {
     if (!activeGroupId && groups.length > 0) {
@@ -249,7 +272,7 @@ export default function SelfSelectedPage() {
           onValueChange={setActiveGroupId}
           className="w-full"
         >
-          <TabsList className="inline-flex h-auto w-fit max-w-full flex-wrap items-center gap-1.5 rounded-2xl border border-border/30 bg-muted/35 p-1.5">
+          <TabsList className="inline-flex h-fit w-fit max-w-full flex-wrap items-center gap-2 rounded-2xl border border-border/30 bg-muted/35 p-2">
             {groups.map((g) => {
               const colors = getGroupColorClasses(g.color)
               const count = itemsByGroup[g.id]?.length ?? 0
@@ -257,9 +280,9 @@ export default function SelfSelectedPage() {
                 <TabsTrigger
                   key={g.id}
                   value={g.id}
-                  className="inline-flex min-w-[140px] items-center justify-center gap-1.5 rounded-xl border border-transparent px-3 py-1.5 text-sm font-medium transition-all data-[state=active]:border-border/50 data-[state=active]:bg-background data-[state=active]:shadow-sm"
+                  className="inline-flex h-7 min-w-[120px] items-center justify-center gap-1.5 rounded-md border border-transparent px-2.5 py-1 text-xs font-medium transition-all data-[state=active]:border-border/50 data-[state=active]:bg-background data-[state=active]:shadow-sm"
                 >
-                  <span className={`size-2 shrink-0 rounded-full ${colors.text.replace("text-", "bg-")}`} />
+                  <span className={`size-2.5 shrink-0 rounded-full ${colors.text.replace("text-", "bg-")}`} />
                   <span className="truncate">{g.name}</span>
                   <Badge variant="secondary" className="ml-1 shrink-0 px-1.5 py-0 text-[10px]">
                     {count}
@@ -299,6 +322,8 @@ export default function SelfSelectedPage() {
                       key={it.id}
                       item={it}
                       pending={pendingItem === it.id}
+                      accentBgClass={colors.accent}
+                      inAnalysis={inAnalysisSymbols.has((it.symbol || "").toUpperCase())}
                       onDelete={handleDeleteItem}
                     />
                   ))}

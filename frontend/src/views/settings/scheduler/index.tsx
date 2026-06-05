@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Activity,
   AlertTriangle,
@@ -419,27 +419,57 @@ export default function SchedulerSettingsPage() {
         switch (action) {
           case "enable":
             res = await enableSchedulerJob(jobId)
-            notification.success({ title: "已启用", description: `job ${jobId} 已开启` })
             break
           case "disable":
             res = await disableSchedulerJob(jobId)
-            notification.success({ title: "已禁用", description: `job ${jobId} 已关闭` })
             break
           case "start":
             res = await startSchedulerJob(jobId)
-            notification.success({ title: "调度已启动", description: `job ${jobId}` })
             break
           case "stop":
             res = await stopSchedulerJob(jobId)
-            notification.success({ title: "调度已停止", description: `job ${jobId}` })
             break
           case "trigger":
             res = await triggerSchedulerJob(jobId)
-            notification.success({ title: "已触发一次", description: `job ${jobId} 跑完后会自动刷新` })
             break
         }
         if (res && res.ok === false) {
-          notification.danger({ title: "操作失败", description: res.error || "请查看后端日志" })
+          notification.danger({
+            title: "操作失败",
+            description: res.error || "请查看后端日志",
+          })
+          return
+        }
+        // 成功：根据 action 给具体文案
+        switch (action) {
+          case "enable":
+            notification.success({ title: "已启用", description: `job ${jobId} 已开启` })
+            break
+          case "disable":
+            notification.success({ title: "已禁用", description: `job ${jobId} 已关闭` })
+            break
+          case "start":
+            notification.success({ title: "调度已启动", description: `job ${jobId}` })
+            break
+          case "stop":
+            notification.success({ title: "调度已停止", description: `job ${jobId}` })
+            break
+          case "trigger": {
+            const count = (res && (res as { count?: number }).count) ?? 0
+            const failed = (res && (res as { failed_count?: number }).failed_count) ?? 0
+            if (count > 0) {
+              notification.success({
+                title: "已触发一次",
+                description: `${count} 个标的已派发，${failed > 0 ? `其中 ${failed} 个失败` : "全部执行"}`,
+              })
+            } else {
+              notification.info({
+                title: "已触发",
+                description: "本次没有可执行的标的（targets 为空或全部未启用）",
+              })
+            }
+            break
+          }
         }
       } catch (err) {
         notification.danger({

@@ -1,0 +1,1924 @@
+openapi: 3.0.3
+info:
+  title: mp4-to-word-new backend API
+  version: "1.0.0"
+  description: |
+    全量后端 OpenAPI 规范。Flask Blueprint 拆分：
+      - `public_bp`        静态资源 / 根路径
+      - `system_bp`        系统状态
+      - `self_selected_bp` 自选股 + 自选分类 CRUD
+      - `stock_chart_bp`   K 线 / 标的 / 题材 / 应用面分析 / 调度
+      - `f10_bp`           F10 基础资料 / 题材 / 涨跌停 / 换手率
+      - `mp4_history_bp`   MP4 历史记录
+      - `transcription_bp` 视频转写工作流
+      - `scheduler_bp`     调度器管理（手动 trigger / enable / disable / start / stop）
+
+    直接把本文件拖入 Apifox 即可生成集合。
+servers:
+  - url: http://localhost:5000
+    description: 本地开发（Flask 默认端口）
+  - url: http://localhost:5173
+    description: 通过 Vite dev server 代理
+
+tags:
+  - name: Public
+  - name: System
+  - name: Self-Selected
+  - name: Stock Chart
+  - name: F10
+  - name: MP4 History
+  - name: Transcription
+  - name: Scheduler
+
+paths:
+  # ====================================================================
+  # Public
+  # ====================================================================
+  /:
+    get:
+      tags: [Public]
+      summary: 根路径（index 页）
+      responses:
+        "200":
+          description: HTML
+  /uploads/{filename}:
+    get:
+      tags: [Public]
+      summary: 提供上传后的文件
+      parameters:
+        - $ref: "#/components/parameters/PathFilename"
+      responses:
+        "200": { description: 文件内容 }
+  /outputs/{filename}:
+    get:
+      tags: [Public]
+      summary: 提供工作流产物
+      parameters:
+        - $ref: "#/components/parameters/PathFilename"
+      responses:
+        "200": { description: 文件内容 }
+
+  # ====================================================================
+  # System
+  # ====================================================================
+  /api/status:
+    get:
+      tags: [System]
+      summary: 系统状态（API key / 模型加载情况）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  api_configured: { type: boolean }
+                  model_loaded: { type: boolean }
+                  provider: { type: string, example: "deepseek" }
+                  details: { type: object, additionalProperties: true }
+
+  # ====================================================================
+  # Self-Selected
+  # ====================================================================
+  /api/self-selected/groups:
+    get:
+      tags: [Self-Selected]
+      summary: 列出分类（可按 group_id 过滤）
+      parameters:
+        - in: query
+          name: group_id
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SelfSelectedGroup" }
+                  count: { type: integer }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [Self-Selected]
+      summary: 新建分类
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SelfSelectedGroupInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  item: { $ref: "#/components/schemas/SelfSelectedGroup" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/self-selected/groups/{group_id}:
+    parameters:
+      - $ref: "#/components/parameters/PathGroupId"
+    put:
+      tags: [Self-Selected]
+      summary: 更新分类
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SelfSelectedGroupInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  item: { $ref: "#/components/schemas/SelfSelectedGroup" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Self-Selected]
+      summary: 删除分类（连同下属自选股）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  group_id: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/self-selected/items:
+    get:
+      tags: [Self-Selected]
+      summary: 列出自选股（可按 group_id 过滤）
+      parameters:
+        - in: query
+          name: group_id
+          required: false
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SelfSelectedItem" }
+                  count: { type: integer }
+                  group_id: { type: string, nullable: true }
+        "500": { $ref: "#/components/responses/ServerError" }
+    post:
+      tags: [Self-Selected]
+      summary: 新建自选股
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SelfSelectedItemInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  item: { $ref: "#/components/schemas/SelfSelectedItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/self-selected/items/{item_id}:
+    parameters:
+      - $ref: "#/components/parameters/PathItemId"
+    put:
+      tags: [Self-Selected]
+      summary: 更新自选股
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SelfSelectedItemInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  item: { $ref: "#/components/schemas/SelfSelectedItem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+    delete:
+      tags: [Self-Selected]
+      summary: 删除自选股
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  item_id: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  # ====================================================================
+  # Stock Chart
+  # ====================================================================
+  /api/stock-chart/search:
+    get:
+      tags: [Stock Chart]
+      summary: 搜索股票
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+          description: 代码 / 名称 / 拼音
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/StockSearchItem" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /api/stock-chart/klines:
+    get:
+      tags: [Stock Chart]
+      summary: K 线
+      parameters:
+        - $ref: "#/components/parameters/QueryTargetType"
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: name
+          schema: { type: string }
+        - in: query
+          name: period
+          schema: { type: string, enum: [1d, 1w, 1m, 5m, 15m, 30m, 60m, 120m], default: 1d }
+        - in: query
+          name: adjust
+          schema: { type: string, enum: [qfq, hfq, none], default: qfq }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KLineResponse" }
+
+  /api/stock-chart/intraday:
+    get:
+      tags: [Stock Chart]
+      summary: 分时 + 分钟 K（多周期合并）
+      parameters:
+        - $ref: "#/components/parameters/QueryTargetType"
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: name
+          schema: { type: string }
+        - in: query
+          name: adjust
+          schema: { type: string, enum: [qfq, hfq, none], default: qfq }
+        - in: query
+          name: trade_date
+          schema: { type: string, format: date }
+        - in: query
+          name: periods
+          schema: { type: string, default: "1m,5m,15m,30m" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntradayResponse" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /api/stock-chart/workspace:
+    get:
+      tags: [Stock Chart]
+      summary: 获取某只票的工作区（最近用过的周期 / adjust / 标签）
+      parameters:
+        - $ref: "#/components/parameters/QueryTargetType"
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: name
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StockWorkspace" }
+    put:
+      tags: [Stock Chart]
+      summary: 保存工作区
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StockWorkspace" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StockWorkspace" }
+
+  /api/stock-chart/annotations:
+    get:
+      tags: [Stock Chart]
+      summary: 列标注
+      parameters:
+        - $ref: "#/components/parameters/QueryTargetType"
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: period
+          schema: { type: string, default: 1d }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Annotation" }
+    post:
+      tags: [Stock Chart]
+      summary: 新建标注
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnnotationInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Annotation" }
+
+  /api/stock-chart/annotations/{annotation_id}:
+    parameters:
+      - in: path
+        name: annotation_id
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Stock Chart]
+      summary: 更新标注
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AnnotationInput" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Annotation" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Stock Chart]
+      summary: 删除标注
+      parameters:
+        - $ref: "#/components/parameters/QueryTargetType"
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: period
+          schema: { type: string, default: 1d }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+
+  /api/stock-chart/auction:
+    get:
+      tags: [Stock Chart]
+      summary: 集合竞价
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuctionResponse" }
+
+  /api/stock-chart/feature-summary:
+    get:
+      tags: [Stock Chart]
+      summary: 标的特征摘要（喂给 LLM 的总览）
+      parameters:
+        - $ref: "#/components/parameters/QueryTargetType"
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: name
+          schema: { type: string }
+        - in: query
+          name: adjust
+          schema: { type: string, default: qfq }
+        - in: query
+          name: max_chars
+          schema: { type: integer, default: 1000000 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeatureSummary" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /api/stock-chart/auction-ai-analysis:
+    post:
+      tags: [Stock Chart]
+      summary: 跑一次竞价 AI 分析
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_type: { type: string, default: stock }
+                symbol: { type: string, default: "000001" }
+                name: { type: string }
+                adjust: { type: string, default: qfq }
+                max_chars: { type: integer }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuctionAIAnalysis" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+    get:
+      tags: [Stock Chart]
+      summary: 读最近一次竞价 AI 分析快照
+      parameters:
+        - in: query
+          name: target_type
+          schema: { type: string, default: stock }
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: date
+          schema: { type: string, format: date, nullable: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuctionAIAnalysis" }
+        "404":
+          description: 暂无快照
+
+  /api/stock-chart/auction-ai-analysis/history:
+    get:
+      tags: [Stock Chart]
+      summary: 竞价 AI 分析历史
+      parameters:
+        - in: query
+          name: target_type
+          schema: { type: string, default: stock }
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: limit
+          schema: { type: integer, default: 30 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  target_type: { type: string }
+                  symbol: { type: string }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuctionAIAnalysis" }
+
+  /api/stock-chart/auction-ai-analysis/scheduler:
+    get:
+      tags: [Stock Chart]
+      summary: 竞价 AI 调度器状态
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerStatus" }
+
+  /api/stock-chart/auction-ai-analysis/scheduler/trigger:
+    post:
+      tags: [Stock Chart]
+      summary: 手动触发竞价 AI 调度器
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerTriggerResult" }
+
+  /api/stock-chart/stock-meta:
+    get:
+      tags: [Stock Chart]
+      summary: 标的 meta（行业 / 指数映射）
+      parameters:
+        - in: query
+          name: target_type
+          schema: { type: string, default: stock }
+        - $ref: "#/components/parameters/QuerySymbol"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StockMeta" }
+
+  /api/stock-chart/application-analysis/targets:
+    get:
+      tags: [Stock Chart]
+      summary: 列出应用面分析的 targets（含完整 config）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ApplicationAnalysisTarget" }
+                  config: { $ref: "#/components/schemas/ApplicationAnalysisConfig" }
+    put:
+      tags: [Stock Chart]
+      summary: 保存应用面分析 targets + horizon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                horizon: { $ref: "#/components/schemas/Horizon" }
+                items:
+                  type: array
+                  items: { $ref: "#/components/schemas/ApplicationAnalysisTarget" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  config: { $ref: "#/components/schemas/ApplicationAnalysisConfig" }
+
+  /api/stock-chart/application-analysis/results:
+    get:
+      tags: [Stock Chart]
+      summary: 列出所有应用面分析结果（路径摘要）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+
+  /api/stock-chart/application-analysis/results/{target_id}:
+    parameters:
+      - in: path
+        name: target_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Stock Chart]
+      summary: 读单个 target 的应用面分析结果
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApplicationAnalysisResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/stock-chart/application-analysis/refresh:
+    post:
+      tags: [Stock Chart]
+      summary: 触发单个 target 的应用面分析刷新
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_id: { type: string, description: 必填 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApplicationAnalysisResult" }
+
+  /api/stock-chart/application-analysis:
+    post:
+      tags: [Stock Chart]
+      summary: 跑一次应用面分析（不走 targets 配置）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_type, symbol]
+              properties:
+                target_type: { type: string, default: stock }
+                symbol: { type: string }
+                name: { type: string }
+                adjust: { type: string, default: qfq }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApplicationAnalysisResult" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /api/stock-chart/application-analysis/scheduler:
+    get:
+      tags: [Stock Chart]
+      summary: 应用面分析调度器状态
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SchedulerStatus" }
+
+  /api/stock-chart/application-analysis/scheduler/start:
+    post:
+      tags: [Stock Chart]
+      summary: 启动应用面分析调度器
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  status: { $ref: "#/components/schemas/SchedulerStatus" }
+
+  /api/stock-chart/application-analysis/scheduler/stop:
+    post:
+      tags: [Stock Chart]
+      summary: 停止应用面分析调度器
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  status: { $ref: "#/components/schemas/SchedulerStatus" }
+
+  /api/stock-chart/application-analysis/recent30/refresh:
+    post:
+      tags: [Stock Chart]
+      summary: 触发某 target 的近 30 个交易日快照刷新
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_id]
+              properties:
+                target_id: { type: string }
+                date: { type: string, format: date, nullable: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recent30Result" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/stock-chart/application-analysis/recent30/{target_id}:
+    parameters:
+      - in: path
+        name: target_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Stock Chart]
+      summary: 近 30 日快照列表（只含摘要）
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 60, maximum: 200, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Recent30Snapshot" }
+
+  /api/stock-chart/application-analysis/recent30/{target_id}/full:
+    parameters:
+      - in: path
+        name: target_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Stock Chart]
+      summary: 近 30 日快照完整内容（AI Direction 卡片使用）
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 60, maximum: 200, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recent30Result" }
+
+  /api/stock-chart/application-analysis/recent30/{target_id}/{date_key}:
+    parameters:
+      - in: path
+        name: target_id
+        required: true
+        schema: { type: string }
+      - in: path
+        name: date_key
+        required: true
+        schema: { type: string, description: "YYYY-MM-DD" }
+    get:
+      tags: [Stock Chart]
+      summary: 读某日快照
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Recent30Snapshot" }
+
+  /api/stock-chart/market-breadth:
+    get:
+      tags: [Stock Chart]
+      summary: 大盘宽度（涨跌家数 / 涨停 / 跌停），60s 缓存
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarketBreadth" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /api/stock-chart/market-breadth-series:
+    get:
+      tags: [Stock Chart]
+      summary: 大盘宽度时序
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/MarketBreadth" }
+
+  /api/stock-chart/market-overview:
+    get:
+      tags: [Stock Chart]
+      summary: 市场情景驾驶舱（首页）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MarketOverview" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  # ====================================================================
+  # F10
+  # ====================================================================
+  /api/stock-chart/f10/ping:
+    get:
+      tags: [F10]
+      summary: F10 数据源健康检查
+      responses:
+        "200":
+          description: OK
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/ServerError" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /api/stock-chart/f10/topics:
+    get:
+      tags: [F10]
+      summary: 概念 / 题材列表
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /api/stock-chart/f10/topic-compare:
+    get:
+      tags: [F10]
+      summary: 题材对比（同题材其它票）
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: topic_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: section
+          schema: { type: string, default: gndbzfsj }
+        - in: query
+          name: sort_by
+          schema: { type: string, default: zdf }
+      responses:
+        "200":
+          description: OK
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/stock-chart/f10/theme-market:
+    get:
+      tags: [F10]
+      summary: 主题市场行情
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: req_id
+          schema: { type: string, default: "200743" }
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/sectors-market:
+    get:
+      tags: [F10]
+      summary: 板块市场（统一分发器）
+      description: |
+        `category` 支持：
+          - 数字 ID（默认 6 = 沪深A股）
+          - 别名：`沪深A股` / `A股` / `all` / `全部`
+          - 行业指数：`行业指数` / `industry`
+          - 概念指数：`概念指数` / `concept`
+      parameters:
+        - in: query
+          name: category
+          schema: { type: string, default: "6" }
+        - in: query
+          name: sort_by
+          schema: { type: string, default: 涨幅 }
+        - in: query
+          name: count
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: start
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: ascending
+          schema: { type: string, enum: ["true", "false", "1", "0"], default: false }
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/sectors-market/industry:
+    get:
+      tags: [F10]
+      summary: 32 个申万行业指数
+      parameters:
+        - in: query
+          name: sort_by
+          schema: { type: string, default: 涨幅 }
+        - in: query
+          name: count
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: start
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: ascending
+          schema: { type: string, enum: ["true", "false", "1", "0"], default: false }
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/sectors-market/concept:
+    get:
+      tags: [F10]
+      summary: 50 个概念主题指数
+      parameters:
+        - in: query
+          name: sort_by
+          schema: { type: string, default: 涨幅 }
+        - in: query
+          name: count
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: start
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: ascending
+          schema: { type: string, enum: ["true", "false", "1", "0"], default: false }
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/limit-count:
+    get:
+      tags: [F10]
+      summary: 读最近一次涨跌停统计缓存
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/LimitUpDown" }
+                  has_cache: { type: boolean }
+                  source: { type: string }
+
+  /api/stock-chart/limit-count/refresh:
+    post:
+      tags: [F10]
+      summary: 强制刷新涨跌停统计
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category: { type: string, default: 沪深A股 }
+                max_pages: { type: integer, default: 80 }
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/turnover:
+    get:
+      tags: [F10]
+      summary: 读某只票的换手率快照（不触发计算）
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: target_type
+          schema: { type: string, default: stock }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TurnoverResponse" }
+
+  /api/stock-chart/turnover/refresh:
+    post:
+      tags: [F10]
+      summary: 刷新单只票的换手率
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [symbol]
+              properties:
+                symbol: { type: string }
+                target_type: { type: string, default: stock }
+                period: { type: string, default: 1d }
+                adjust: { type: string, default: qfq }
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/turnover/refresh-all:
+    post:
+      tags: [F10]
+      summary: 批量刷新 target.json 中所有 enabled 标的的换手率
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/turnover/scheduler/status:
+    get:
+      tags: [F10]
+      summary: 换手率调度器状态
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/turnover/scheduler/trigger:
+    post:
+      tags: [F10]
+      summary: 手动触发换手率调度器
+      responses:
+        "200": { description: OK }
+
+  /api/stock-chart/f10/stock-info:
+    get:
+      tags: [F10]
+      summary: 股票信息
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/company-profile:
+    get:
+      tags: [F10]
+      summary: 公司概况
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: section
+          schema: { type: string, default: "8" }
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/business-composition:
+    get:
+      tags: [F10]
+      summary: 主营业务构成
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: report_date
+          schema: { type: string, format: date, nullable: true }
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/valuation:
+    get:
+      tags: [F10]
+      summary: 估值
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: req_id
+          schema: { type: string, default: "200191" }
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/finance-report:
+    get:
+      tags: [F10]
+      summary: 财务报表
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: report_type
+          schema: { type: string, default: zcfzb, description: "zcfzb/lrb/xjllb" }
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/finance-diagnosis:
+    get:
+      tags: [F10]
+      summary: 财报诊断
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: section
+          schema: { type: string, default: yynl }
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/stock-score:
+    get:
+      tags: [F10]
+      summary: 评分
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: section
+          schema: { type: string, default: pf }
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/profit-forecast:
+    get:
+      tags: [F10]
+      summary: 盈利预测
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/ranking-detail:
+    get:
+      tags: [F10]
+      summary: 排名详情
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: section
+          schema: { type: string, default: scpmdela }
+      responses:
+        "200": { description: OK }
+  /api/stock-chart/f10/governance:
+    get:
+      tags: [F10]
+      summary: 公司治理
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+        - in: query
+          name: section
+          schema: { type: string, default: wgcl }
+      responses:
+        "200": { description: OK }
+
+  # ====================================================================
+  # MP4 History
+  # ====================================================================
+  /api/reference/mp4-history:
+    get:
+      tags: [MP4 History]
+      summary: 列出历史记录
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/MP4HistoryListItem" }
+    post:
+      tags: [MP4 History]
+      summary: 创建历史记录
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MP4HistoryCreate" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MP4History" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/reference/mp4-history/reorder:
+    post:
+      tags: [MP4 History]
+      summary: 重新排序
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ordered_ids]
+              properties:
+                ordered_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/MP4HistoryListItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/reference/mp4-history/{history_id}:
+    parameters:
+      - in: path
+        name: history_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [MP4 History]
+      summary: 读历史详情
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MP4History" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [MP4 History]
+      summary: 删除历史记录
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  title: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/reference/mp4-history/{history_id}/ask:
+    parameters:
+      - in: path
+        name: history_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [MP4 History]
+      summary: 基于历史记录做 Q&A
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question]
+              properties:
+                question: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item:
+                    type: object
+                    properties:
+                      answer: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ====================================================================
+  # Transcription
+  # ====================================================================
+  /api/transcribe:
+    post:
+      tags: [Transcription]
+      summary: 上传本地音视频文件转写
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/parse-video:
+    post:
+      tags: [Transcription]
+      summary: 解析远端视频 URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [download_url]
+              properties:
+                download_url: { type: string, format: uri }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+                  file_name: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/task/{task_id}:
+    parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Transcription]
+      summary: 读任务状态
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: {}
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/stream/{task_id}:
+    parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Transcription]
+      summary: 任务进度 SSE 流
+      responses:
+        "200":
+          description: OK
+          content:
+            text/event-stream: {}
+
+  /api/export-markdown/{task_id}:
+    parameters:
+      - in: path
+        name: task_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Transcription]
+      summary: 导出 Markdown
+      responses:
+        "200":
+          description: OK
+          content:
+            text/markdown: {}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/ask:
+    post:
+      tags: [Transcription]
+      summary: 对转写结果做 Q&A
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [task_id, question]
+              properties:
+                task_id: { type: string }
+                question: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  answer: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ====================================================================
+  # Scheduler
+  # ====================================================================
+  /api/scheduler/jobs:
+    get:
+      tags: [Scheduler]
+      summary: 列出所有调度任务
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SchedulerJob" }
+                  count: { type: integer }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/scheduler/jobs/{job_id}:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Scheduler]
+      summary: 读单个任务配置
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json: {}
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/scheduler/jobs/{job_id}/enable:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Scheduler]
+      summary: 启用
+      responses:
+        "200":
+          description: OK
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/scheduler/jobs/{job_id}/disable:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Scheduler]
+      summary: 禁用
+      responses:
+        "200":
+          description: OK
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/scheduler/jobs/{job_id}/trigger:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Scheduler]
+      summary: 立即触发一次
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  job_id: { type: string }
+                  result: { type: object, additionalProperties: true }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/scheduler/jobs/{job_id}/start:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Scheduler]
+      summary: 启动调度
+      responses:
+        "200":
+          description: OK
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+  /api/scheduler/jobs/{job_id}/stop:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema: { type: string }
+    post:
+      tags: [Scheduler]
+      summary: 停止调度
+      responses:
+        "200":
+          description: OK
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/ServerError" }
+
+components:
+  parameters:
+    PathFilename:
+      in: path
+      name: filename
+      required: true
+      schema: { type: string }
+    PathGroupId:
+      in: path
+      name: group_id
+      required: true
+      schema: { type: string }
+    PathItemId:
+      in: path
+      name: item_id
+      required: true
+      schema: { type: string }
+    QueryTargetType:
+      in: query
+      name: target_type
+      required: false
+      description: "stock / index / hk_stock / fund / ..."
+      schema:
+        type: string
+        default: stock
+        examples:
+          - stock
+          - index
+          - hk_stock
+    QuerySymbol:
+      in: query
+      name: symbol
+      required: false
+      description: |
+        标的代码（`stock` 类型）或板块 / 指数代码。
+        后端 helper `_symbol_arg()` 的默认值是 `000001`（**上证综合指数**），
+        所以不传 symbol 时接口会返回上证指数的题材 / F10 / 估值。
+        前端调用建议**显式传**，避免误以为是「随便一只票」的数据。
+      schema:
+        type: string
+        default: "000001"
+        examples:
+          - "000001"
+          - "600519"
+          - "300750"
+
+  responses:
+    BadRequest:
+      description: 参数错误
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+              error_type: { type: string, example: bad_request }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+    ServerError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+    UpstreamFailure:
+      description: 上游数据源失败
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string }
+              error_type: { type: string, example: upstream_failure }
+
+  schemas:
+    # ---------------- 通用 ----------------
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        error_type: { type: string }
+    Ok:
+      type: object
+      properties:
+        ok: { type: boolean }
+
+    # ---------------- Self-Selected ----------------
+    SelfSelectedGroup:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        color: { type: string, description: "blue/rose/amber/..." }
+        order: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SelfSelectedGroupInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        color: { type: string }
+        order: { type: integer }
+    SelfSelectedItem:
+      type: object
+      properties:
+        id: { type: string }
+        group_id: { type: string }
+        symbol: { type: string }
+        name: { type: string }
+        market: { type: string, description: "SH/SZ/HK/..." }
+        target_type: { type: string, default: stock }
+        notes: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+        added_at: { type: string, format: date-time }
+    SelfSelectedItemInput:
+      type: object
+      required: [group_id, symbol]
+      properties:
+        group_id: { type: string }
+        symbol: { type: string }
+        name: { type: string }
+        market: { type: string, default: SH }
+        target_type: { type: string, default: stock }
+        notes: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+
+    # ---------------- Stock Chart ----------------
+    StockSearchItem:
+      type: object
+      properties:
+        symbol: { type: string }
+        name: { type: string }
+        target_type: { type: string }
+        market: { type: string }
+        cap_style: { type: string }
+    KLineBar:
+      type: object
+      properties:
+        timestamp: { type: integer }
+        trade_date: { type: string, format: date }
+        open: { type: number }
+        high: { type: number }
+        low: { type: number }
+        close: { type: number }
+        volume: { type: number }
+        amount: { type: number }
+        turnover_rate: { type: number }
+        turnover: { type: number }
+    KLineResponse:
+      type: object
+      properties:
+        symbol: { type: string }
+        target_type: { type: string }
+        period: { type: string }
+        adjust: { type: string }
+        updated_at: { type: string, format: date-time }
+        source: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/KLineBar" }
+    IntradayResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        symbol: { type: string }
+        target_type: { type: string }
+        name: { type: string }
+        adjust: { type: string }
+        source: { type: string }
+        requested_periods:
+          type: array
+          items: { type: string }
+        intraday:
+          type: object
+          description: 当日分时数据
+          additionalProperties: true
+        klines:
+          type: object
+          description: 周期 → K 线列表
+          additionalProperties: true
+    StockWorkspace:
+      type: object
+      additionalProperties: true
+    Annotation:
+      type: object
+      properties:
+        id: { type: string }
+        target_type: { type: string }
+        symbol: { type: string }
+        period: { type: string }
+        timestamp: { type: integer }
+        type: { type: string, description: "trendline/horizontal/text/..." }
+        color: { type: string }
+        label: { type: string }
+        points:
+          type: array
+          items: { type: object, additionalProperties: true }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+    AnnotationInput:
+      type: object
+      properties:
+        target_type: { type: string }
+        symbol: { type: string }
+        period: { type: string }
+        timestamp: { type: integer }
+        type: { type: string }
+        color: { type: string }
+        label: { type: string }
+        points:
+          type: array
+          items: { type: object, additionalProperties: true }
+        note: { type: string }
+    AuctionResponse:
+      type: object
+      additionalProperties: true
+    FeatureSummary:
+      type: object
+      additionalProperties: true
+    AuctionAIAnalysis:
+      type: object
+      additionalProperties: true
+    StockMeta:
+      type: object
+      properties:
+        symbol: { type: string }
+        target_type: { type: string }
+        capStyle: { type: string, nullable: true }
+        sectorIndexSymbol: { type: string, nullable: true }
+        sectorIndexName: { type: string, nullable: true }
+
+    # ---------------- Application Analysis ----------------
+    Horizon:
+      type: object
+      properties:
+        days: { type: integer, default: 120 }
+        segments: { type: integer, default: 4 }
+        monthly_keep: { type: integer, default: 6 }
+        weekly_keep: { type: integer, default: 12 }
+    ApplicationAnalysisTarget:
+      type: object
+      properties:
+        id: { type: string }
+        target_type: { type: string, default: stock }
+        symbol: { type: string }
+        name: { type: string }
+        adjust: { type: string, default: qfq }
+        enabled: { type: boolean, default: true }
+        interval_minutes: { type: integer, default: 60 }
+        tags:
+          type: array
+          items: { type: string }
+    ApplicationAnalysisConfig:
+      type: object
+      properties:
+        version: { type: integer }
+        horizon: { $ref: "#/components/schemas/Horizon" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ApplicationAnalysisTarget" }
+        updated_at: { type: string, format: date-time }
+    ApplicationAnalysisResult:
+      type: object
+      additionalProperties: true
+    Recent30Snapshot:
+      type: object
+      additionalProperties: true
+    Recent30Result:
+      type: object
+      additionalProperties: true
+    MarketBreadth:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        upCount: { type: integer }
+        downCount: { type: integer }
+        limitUpCount: { type: integer }
+        limitDownCount: { type: integer }
+        totalCount: { type: integer }
+        breakRate: { type: number, nullable: true }
+        maxLianBan: { type: integer, nullable: true }
+        yesterdayLimitUpReturn: { type: number, nullable: true }
+        totalTurnover: { type: number, nullable: true }
+        downOver5Count: { type: integer, nullable: true }
+        new20HighCount: { type: integer, nullable: true }
+        new20LowCount: { type: integer, nullable: true }
+        source: { type: string, nullable: true }
+        cachedAt: { type: number, nullable: true }
+    MarketOverview:
+      type: object
+      additionalProperties: true
+
+    # ---------------- F10 ----------------
+    LimitUpDown:
+      type: object
+      additionalProperties: true
+    TurnoverResponse:
+      type: object
+      properties:
+        has_cache: { type: boolean }
+        symbol: { type: string }
+        target_type: { type: string }
+        turnover:
+          type: object
+          additionalProperties: true
+
+    # ---------------- MP4 History ----------------
+    MP4History:
+      type: object
+      additionalProperties: true
+    MP4HistoryListItem:
+      type: object
+      properties:
+        id: { type: string }
+        title: { type: string }
+        task_id: { type: string }
+        status: { type: string, description: "pending/done/failed" }
+        data_file: { type: string }
+        created: { type: string, format: date-time }
+    MP4HistoryCreate:
+      type: object
+      required: [task_id]
+      properties:
+        task_id: { type: string }
+        title: { type: string }
+        status: { type: string }
+
+    # ---------------- Scheduler ----------------
+    SchedulerStatus:
+      type: object
+      additionalProperties: true
+    SchedulerTriggerResult:
+      type: object
+      additionalProperties: true
+    SchedulerJob:
+      type: object
+      properties:
+        id: { type: string }
+        enabled: { type: boolean }
+        running: { type: boolean }
+        last_run_at: { type: string, format: date-time, nullable: true }
+        next_run_at: { type: string, format: date-time, nullable: true }
+        total_runs: { type: integer }
+        last_error: { type: string, nullable: true }
+        metadata: { type: object, additionalProperties: true }
