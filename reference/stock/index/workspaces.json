@@ -1,7 +1,7 @@
 {
   "type": "stock_chart_workspaces",
   "version": 1,
-  "updated_at": "2026-06-04T19:21:17.914177",
+  "updated_at": "2026-06-05T18:44:10.787796",
   "items": [
     {
       "id": "stock-600415",
@@ -82,7 +82,7 @@
       "name": "平安银行",
       "data_file": "stock/data/snapshots/stock-000001.json",
       "created_at": "2026-05-30T23:25:01.373907",
-      "updated_at": "2026-06-04T19:21:17.914177"
+      "updated_at": "2026-06-05T18:44:10.787796"
     }
   ]
 }

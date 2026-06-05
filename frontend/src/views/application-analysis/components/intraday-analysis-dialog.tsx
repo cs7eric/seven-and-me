@@ -20,13 +20,8 @@ import {
 } from "@/components/ui/dialog"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import {
-  createStockAnnotation,
-  deleteStockAnnotation,
-  fetchStockIntraday,
-  listStockAnnotations,
-  runApplicationAnalysis,
-} from "@/lib/api"
+import { createStockAnnotation, deleteStockAnnotation, fetchStockIntraday, listStockAnnotations, runApplicationAnalysis } from "@/lib/api"
+import { notification } from "@/components/ui/notification"
 
 import type {
   ApplicationAnalysisResponse,
@@ -336,8 +331,10 @@ export function IntradayAnalysisDialog({
       })
       .catch((err) => {
         if (active) {
+          const msg = err instanceof Error ? err.message : "加载当日分时失败"
           setPayload(null)
-          setError(err instanceof Error ? err.message : "加载当日分时失败")
+          setError(msg)
+          notification.danger({ title: "加载当日分时失败", description: msg })
         }
       })
       .finally(() => {
@@ -396,9 +393,15 @@ export function IntradayAnalysisDialog({
     try {
       const result = await runApplicationAnalysis({ targetType, symbol, name, adjust })
       setAiAnalysis(result)
+      notification.success({
+        title: "AI 逻辑分析完成",
+        description: `${name} · ${symbol}`,
+      })
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : "AI 逻辑分析失败")
+      const msg = err instanceof Error ? err.message : "AI 逻辑分析失败"
+      setAiError(msg)
       setAiAnalysis(null)
+      notification.danger({ title: "AI 逻辑分析失败", description: msg })
     } finally {
       setAiLoading(false)
     }
@@ -424,6 +427,8 @@ export function IntradayAnalysisDialog({
       } catch (err) {
         // 静默失败：标记加载失败不影响主流程
         if (active) setMarkers([])
+        const msg = err instanceof Error ? err.message : "读取已有 B/S 标记失败"
+        notification.warn({ title: "读取已有标记失败", description: msg })
       }
     })()
     return () => {
@@ -486,10 +491,16 @@ export function IntradayAnalysisDialog({
           const persisted = annotationToSignal(annotation)
           if (persisted) {
             setMarkers((prev) => prev.map((m) => (m.id === optimistic.id ? persisted : m)))
+            notification.success({
+              title: `${markerMode === "B" ? "买入" : "卖出"}点已保存`,
+              description: `${point.trade_date || ""} @ ${formatPrice(point.price)}`,
+            })
           }
         } catch (err) {
           // 持久化失败：把乐观标记回滚
           setMarkers((prev) => prev.filter((m) => m.id !== optimistic.id))
+          const msg = err instanceof Error ? err.message : "保存分时标记失败"
+          notification.danger({ title: "保存分时标记失败", description: msg })
         }
       })()
     },
@@ -499,10 +510,12 @@ export function IntradayAnalysisDialog({
   const handleRemoveMarker = useCallback(
     (id: string) => {
       setMarkers((prev) => prev.filter((m) => m.id !== id))
-      void deleteStockAnnotation(targetType, symbol, BS_SIGNALS_PERIOD, id).catch(() => {
+      void deleteStockAnnotation(targetType, symbol, BS_SIGNALS_PERIOD, id).catch((err) => {
         // 失败时回滚
         const rollback = markersRef.current.find((m) => m.id === id)
         if (rollback) setMarkers((prev) => [...prev, rollback].sort((a, b) => a.timestamp - b.timestamp))
+        const msg = err instanceof Error ? err.message : "删除分时标记失败"
+        notification.danger({ title: "删除分时标记失败", description: msg })
       })
     },
     [symbol, targetType],
@@ -513,9 +526,11 @@ export function IntradayAnalysisDialog({
     setMarkers([])
     void Promise.all(
       targets.map((m) => deleteStockAnnotation(targetType, symbol, BS_SIGNALS_PERIOD, m.id)),
-    ).catch(() => {
+    ).catch((err) => {
       // 失败时回滚
       setMarkers(targets)
+      const msg = err instanceof Error ? err.message : "清空分时标记失败"
+      notification.danger({ title: "清空分时标记失败", description: msg })
     })
   }, [symbol, targetType])
 

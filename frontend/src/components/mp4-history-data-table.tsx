@@ -46,7 +46,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { toast } from "sonner";
+import { notification } from "@/components/ui/notification";
 import {
   Select,
   SelectContent,
@@ -193,10 +193,14 @@ export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryLis
     try {
       const deleted = await deleteMP4History(item.id);
       setData((prev) => prev.filter((entry) => entry.id !== item.id));
-      toast.success(`已删除历史记录：${deleted.title || item.title}`);
+      notification.success({
+        title: "已删除历史记录",
+        description: deleted.title || item.title,
+      });
       navigate("/mp4-to-word/history", { replace: true });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "删除历史记录失败");
+      const msg = error instanceof Error ? error.message : "删除历史记录失败";
+      notification.danger({ title: "删除历史记录失败", description: msg });
     }
   }
 
@@ -231,8 +235,10 @@ export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryLis
     try {
       const saved = await reorderMP4History(reordered.map((item) => item.id));
       setData(saved);
-    } catch {
+    } catch (error) {
       setData(data);
+      const msg = error instanceof Error ? error.message : "保存历史顺序失败";
+      notification.danger({ title: "保存历史顺序失败", description: msg });
     }
   }
 

@@ -86,6 +86,7 @@ backend/
 │   ├── transcription.py    ← 上传 + SSE 流 + Ask 路由
 │   ├── public.py           ← /  /uploads/*  /outputs/*
 │   ├── scheduler.py        ← /api/scheduler/* **统一管理 jobs.json 中所有 job（见 §3.2）**
+│   ├── self_selected.py    ← /api/self-selected/* **自选股 group + item CRUD（见 §3.2）**
 │   └── system.py           ← /api/system/* 健康检查
 ├── services/
 │   ├── ai_provider_service.py  ← 维护 polisher / transcriber 单例
@@ -195,6 +196,21 @@ F10 全套：`/f10/{stock-info, company-profile, business-composition, valuation
 
 > application_analysis 没有全局 enabled（靠 per-target `enabled`），所以 `/enable` `/disable` 对它返回 400。
 
+#### `self_selected.py` — 自选股管理
+
+由 `/stock-overview/self-selected` 页面使用，集中管理用户自建的「分类 + 自选股」。数据落盘到 `reference/self-selected/{groups,items}.json`（带锁、原子写），删 group 时**级联删**其下所有 item。
+
+| 路径 | 方法 | 用途 |
+| --- | --- | --- |
+| `/api/self-selected/groups` | GET | 列出所有分类（按 sort_order + created_at 升序） |
+| `/api/self-selected/groups` | POST | 新建分类（name 必填，color 选填默认 `blue`） |
+| `/api/self-selected/groups/<id>` | PUT | 更新分类（name / description / color / sort_order） |
+| `/api/self-selected/groups/<id>` | DELETE | 删除分类，**级联删除**其下所有 item |
+| `/api/self-selected/items?group_id=...` | GET | 列出自选股（不传 group_id 全部返回，传了就只返该分类） |
+| `/api/self-selected/items` | POST | 加入自选（group_id + symbol 必填，market/name/notes 选填） |
+| `/api/self-selected/items/<id>` | PUT | 更新自选 |
+| `/api/self-selected/items/<id>` | DELETE | 移除自选 |
+
 ### 3.3 关键约定（改后端必读）
 
 - **数据落盘走 `reference/`**，仓库里看得到的就是真实状态；`gitignore` 不全
@@ -202,6 +218,7 @@ F10 全套：`/f10/{stock-info, company-profile, business-composition, valuation
 - **AI 入口三件套**：`polisher.py`（MP4 + 标线 metadata）、`application_analysis_service`（当日分时 + 短趋势）、`auction_ai_analysis_service`（集合竞价）
 - **每个 service 自带 `_prompt_text()`**：负责「读 prompt + 追加硬约束段」；改 prompt 时改 `.md`，**别在代码里覆盖**
 - **scheduler 状态写在 `scheduler/*.json`**：3 个调度器（`turnover_refresh` / `auction_ai_analysis` / `application_analysis`）启动时读、运行时更新；`application_analysis` 的状态写在 `reference/application-analysis/scheduler.json`，另两个写在 `scheduler/<id>_job.json`
+- **自选股数据写在 `reference/self-selected/`**：`groups.json` + `items.json` 两个文件，repository 走锁 + 原子写，删 group 时级联删 item
 - **认证未启用**：所有 API 默认开放访问，生产环境部署前需要补
 
 ---
@@ -233,6 +250,7 @@ F10 全套：`/f10/{stock-info, company-profile, business-composition, valuation
 | `/stock-chart` | [`stock-chart/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/stock-chart/index.tsx) | **个股 K 线 + 集合竞价 + 技术指标** |
 | `/stock-overview` | [`stock-overview/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/stock-overview/index.tsx) | 大盘概览 |
 | `/stock-overview/application-analysis` | [`application-analysis/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/application-analysis/index.tsx) | **个股应用分析**（含分时 dialog） |
+| `/stock-overview/self-selected` | [`self-selected/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/self-selected/index.tsx) | **自选股**（分类 tab + item CRUD，接 `/api/self-selected/*`，持久化到 `reference/self-selected/`） |
 | `/stock-review` | [`stock-review/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/stock-review/index.tsx) | 复盘页（**占位**，未实装） |
 | `/settings/scheduler` | [`settings/scheduler/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/settings/scheduler/index.tsx) | **调度任务管理页**（统一管理 `scheduler/jobs.json` 中所有 job：实时状态 / 启用禁用 / 启停线程 / 手动触发） |
 

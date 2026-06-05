@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Activity, AlertTriangle, BarChart3, CheckCircle2, LineChart, RefreshCw, ShieldAlert, Target, TrendingUp, Zap } from "lucide-react"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { fetchMarketOverview } from "@/lib/api"
+import { notification } from "@/components/ui/notification"
 
 interface MarketLevel {
   price: number
@@ -712,7 +713,9 @@ export default function StockOverviewPage() {
       const result = await fetchMarketOverview()
       setData(result as unknown as MarketOverview)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "加载市场概览失败")
+      const msg = err instanceof Error ? err.message : "加载市场概览失败"
+      setError(msg)
+      notification.danger({ title: "加载市场概览失败", description: msg })
     } finally {
       setLoading(false)
     }

@@ -19,6 +19,7 @@ import type {
   StockTargetType,
 } from "../../stock-chart/lib/types"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { notification } from "@/components/ui/notification"
 
 export interface TechnicalIndicatorTabProps {
   targetType: StockTargetType
@@ -151,12 +152,14 @@ export function TechnicalIndicatorTab({
         })
       } catch (err) {
         if (!active) return
+        const msg = err instanceof Error ? err.message : "加载技术指标失败"
         setBars([])
         setIndexBarsMap({})
         setStockMeta(null)
         setBreadth(null)
         setBreadthSeries([])
-        setError(err instanceof Error ? err.message : "加载技术指标失败")
+        setError(msg)
+        notification.danger({ title: "加载技术指标失败", description: msg })
       }
     })()
 

@@ -43,6 +43,7 @@ import { IntradayAnalysisDialog } from "./components/intraday-analysis-dialog"
 import { SelectionPanel } from "./components/selection-panel"
 import { TargetCard, type HorizonPatch } from "./components/target-card"
 import { TechnicalIndicatorTab } from "./components/technical-indicator-tab"
+import { notification } from "@/components/ui/notification"
 import { DEFAULT_HORIZON, SELECTION_COLORS } from "./lib/constants"
 import {
   asOverlayAnnotations,
@@ -116,8 +117,10 @@ export default function ApplicationAnalysisPage() {
           }) || items[0]
         setSelectedId(preferred.id)
       }
-    } catch {
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "加载目标列表失败"
       setError("加载目标列表失败")
+      notification.danger({ title: "加载目标列表失败", description: msg })
     }
   }, [selectedId])
 
@@ -301,8 +304,14 @@ export default function ApplicationAnalysisPage() {
         })
         setResult(response)
         setInfo("分析完成（单次 30 日 K 入口，仅用于手动快速验证；定时任务会用 120 日 / 4 段入口）。")
+        notification.success({
+          title: "Application Analysis 已完成",
+          description: `${selected.name} · ${selected.symbol}`,
+        })
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Application Analysis 失败")
+        const msg = err instanceof Error ? err.message : "Application Analysis 失败"
+        setError(msg)
+        notification.danger({ title: "Application Analysis 失败", description: msg })
       }
     } finally {
       setRunning(false)
@@ -342,7 +351,9 @@ export default function ApplicationAnalysisPage() {
         skip_reason?: string
       }
       if (!res.ok) {
-        setError(res.error || "刷新当日 AI 整体判断失败")
+        const msg = res.error || "刷新当日 AI 整体判断失败"
+        setError(msg)
+        notification.danger({ title: "刷新当日 AI 整体判断失败", description: msg })
         return
       }
       if (res.updated === false) {
@@ -354,14 +365,24 @@ export default function ApplicationAnalysisPage() {
         setInfo(
           `${selected.name} 今日整体判断已保持原样（${res.date || "今日"}）：${reasonLabel}，未做更新。`,
         )
+        notification.info({
+          title: "今日判断已保持原样",
+          description: `${selected.name} · ${res.date || "今日"}（${reasonLabel}）`,
+        })
         await refreshDailySnapshots(selected.id)
         return
       }
       setInfo(`已为 ${selected.name} 重新生成当日 AI 整体判断（${res.date || "今日"}）`)
+      notification.success({
+        title: "当日 AI 整体判断已刷新",
+        description: `${selected.name} · ${res.date || "今日"}`,
+      })
       // AI response 已写入对应日期的 JSON；从 JSON 重新拉取列表即可
       await refreshDailySnapshots(selected.id)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "刷新当日 AI 整体判断失败")
+      const msg = err instanceof Error ? err.message : "刷新当日 AI 整体判断失败"
+      setError(msg)
+      notification.danger({ title: "刷新当日 AI 整体判断失败", description: msg })
     } finally {
       setDailyRefreshing(false)
     }
@@ -379,13 +400,25 @@ export default function ApplicationAnalysisPage() {
   const handleTriggerTarget = async (targetId: string) => {
     setError(null)
     setInfo(null)
-    const res = await triggerApplicationAnalysis(targetId)
-    if (!res.ok) {
-      setError(res.error || "触发失败")
-      return
+    try {
+      const res = await triggerApplicationAnalysis(targetId)
+      if (!res.ok) {
+        const msg = res.error || "触发失败"
+        setError(msg)
+        notification.danger({ title: "触发分析失败", description: msg })
+        return
+      }
+      setInfo(`已触发 ${targetId} 的 120 日 / 4 段分析；调度器在后台执行。`)
+      notification.info({
+        title: "已触发后台分析",
+        description: `${targetId} · 120 日 / 4 段`,
+      })
+      setTimeout(() => void refreshScheduler(), 500)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "触发分析失败"
+      setError(msg)
+      notification.danger({ title: "触发分析失败", description: msg })
     }
-    setInfo(`已触发 ${targetId} 的 120 日 / 4 段分析；调度器在后台执行。`)
-    setTimeout(() => void refreshScheduler(), 500)
   }
 
   const flushPersist = useCallback(async () => {
@@ -478,8 +511,14 @@ export default function ApplicationAnalysisPage() {
     try {
       await flushPersist()
       setInfo("目标列表已保存到 reference/application-analysis/targets.json")
+      notification.success({
+        title: "目标列表已保存",
+        description: "reference/application-analysis/targets.json",
+      })
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存失败")
+      const msg = err instanceof Error ? err.message : "保存失败"
+      setError(msg)
+      notification.danger({ title: "保存目标列表失败", description: msg })
     } finally {
       setSaving(false)
     }
@@ -487,12 +526,33 @@ export default function ApplicationAnalysisPage() {
 
   const handleToggleScheduler = async () => {
     const action = scheduler?.running ? "stop" : "start"
-    const res = await controlApplicationAnalysisScheduler(action)
-    setScheduler(res.status)
+    try {
+      const res = await controlApplicationAnalysisScheduler(action)
+      setScheduler(res.status)
+      notification.info({
+        title: action === "start" ? "已启动调度器" : "已停止调度器",
+        description: res.status?.running ? "后台自动执行中" : "已暂停",
+      })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "切换调度器失败"
+      notification.danger({ title: "切换调度器失败", description: msg })
+    }
   }
 
   const handleRefreshAll = () => {
-    void triggerApplicationAnalysis(null)
+    void triggerApplicationAnalysis(null).then((res) => {
+      if (res.ok) {
+        notification.info({
+          title: "已触发全量刷新",
+          description: "调度器会在后台依次执行所有启用目标",
+        })
+      } else {
+        notification.danger({
+          title: "触发全量刷新失败",
+          description: res.error || "请查看后端日志",
+        })
+      }
+    })
   }
 
   const handleAnalyzeSelection = useCallback((item: ChartPanelSelectionItem) => {

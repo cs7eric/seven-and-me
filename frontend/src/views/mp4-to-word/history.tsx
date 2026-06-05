@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, FileText, Search } from "lucide-react";
 import { askHistoryQuestion, getMP4History, listMP4History } from "@/lib/api";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { toast } from "sonner";
+import { notification } from "@/components/ui/notification";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
 import { AskSection } from "./components/AskSection";
@@ -91,7 +91,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
     setQaItems((prev) => [{ id: tempId, question, loading: true }, ...prev]);
     setAskLoading(true);
     setAskInput("");
-    toast.success("Ask AI 已发送");
+    notification.info({ title: "Ask AI 已发送", description: question });
 
     try {
       const item = await askHistoryQuestion(record.id, question);
@@ -102,6 +102,8 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
       } : qa));
     } catch (e) {
       setQaItems((prev) => prev.filter((qa) => qa.id !== tempId));
+      const msg = e instanceof Error ? e.message : "Ask AI 失败"
+      notification.danger({ title: "Ask AI 失败", description: msg });
       throw e;
     } finally {
       setAskLoading(false);
@@ -255,7 +257,9 @@ export default function Mp4HistoryPage() {
         setItems(await listMP4History());
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "加载历史记录失败");
+      const msg = e instanceof Error ? e.message : "加载历史记录失败";
+      setError(msg);
+      notification.danger({ title: "加载历史记录失败", description: msg });
     } finally {
       setLoading(false);
     }

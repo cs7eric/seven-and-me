@@ -1,4 +1,4 @@
-﻿import type { ReactNode } from "react"
+﻿﻿import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import {
   ArrowRight,
@@ -10,6 +10,7 @@ import {
   LineChart,
   Settings,
   Sparkles,
+  Star,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react"
@@ -143,6 +144,32 @@ const StockReviewIllustration = (
   </svg>
 )
 
+const SelfSelectedIllustration = (
+  <svg {...svgBase}>
+    {/* 主星形（五角星） */}
+    <polygon
+      points="50,18 56,40 79,40 60,53 67,75 50,62 33,75 40,53 21,40 44,40"
+      fill="currentColor"
+      stroke="none"
+      opacity="0.55"
+    />
+    {/* 小星形 */}
+    <polygon
+      points="22,72 25,79 32,79 27,84 29,91 22,87 15,91 17,84 12,79 19,79"
+      fill="currentColor"
+      stroke="none"
+      opacity="0.4"
+    />
+    {/* 趋势线（自选股 +1） */}
+    <polyline
+      points="14,82 22,76 30,80 38,70 46,74"
+      fill="none"
+      opacity="0.35"
+      strokeWidth="2"
+    />
+  </svg>
+)
+
 const SettingsIllustration = (
   <svg {...svgBase}>
     {/* 中心圆 + 内核 */}
@@ -230,6 +257,14 @@ const sections: SectionItem[] = [
         icon: LineChart,
         gradient: "from-amber-500/10 via-orange-500/5 to-transparent",
         illustration: StockReviewIllustration,
+      },
+      {
+        name: "Self-Selected",
+        description: "自选股集中展示：K 线、涨跌幅、异动信号。",
+        href: "/stock-overview/self-selected",
+        icon: Star,
+        gradient: "from-rose-500/10 via-pink-500/5 to-transparent",
+        illustration: SelfSelectedIllustration,
       },
     ],
   },

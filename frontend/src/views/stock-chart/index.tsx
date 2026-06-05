@@ -15,6 +15,7 @@ import {
   saveStockWorkspace,
 } from "@/lib/api"
 import { WorkspaceShell } from "@/layout/workspace-shell"
+import { notification } from "@/components/ui/notification"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -243,7 +244,9 @@ export default function StockChartPage() {
         setIndexBarsMap({})
         setStockMeta(null)
         setBreadth(null)
-        setError(err instanceof Error ? err.message : "加载 stock chart 失败")
+        const msg = err instanceof Error ? err.message : "加载 stock chart 失败"
+        setError(msg)
+        notification.danger({ title: "加载 stock chart 失败", description: msg })
       }
     })()
 
@@ -262,28 +265,37 @@ export default function StockChartPage() {
 
 
   const handleCreateManualSignal = async (signal: StockSignalPoint) => {
-    const annotation = await createStockAnnotation({
-      target_type: targetType,
-      symbol,
-      period: BS_PERSIST_PERIOD,
-      overlay_type: "bs_point",
-      points: [{ timestamp: signal.timestamp, value: signal.price }],
-      text: `${signal.side}:${signal.reason ?? "manual"}`,
-      styles: {
-        side: signal.side,
-        source: "manual",
-      },
-    })
-
-    const persistedSignal = annotationToSignal(annotation)
-    if (persistedSignal) {
-      setManualSignals((current) => {
-        const next = current.filter((item) => item.id !== persistedSignal.id)
-        next.push(persistedSignal)
-        return next
+    try {
+      const annotation = await createStockAnnotation({
+        target_type: targetType,
+        symbol,
+        period: BS_PERSIST_PERIOD,
+        overlay_type: "bs_point",
+        points: [{ timestamp: signal.timestamp, value: signal.price }],
+        text: `${signal.side}:${signal.reason ?? "manual"}`,
+        styles: {
+          side: signal.side,
+          source: "manual",
+        },
       })
+
+      const persistedSignal = annotationToSignal(annotation)
+      if (persistedSignal) {
+        setManualSignals((current) => {
+          const next = current.filter((item) => item.id !== persistedSignal.id)
+          next.push(persistedSignal)
+          return next
+        })
+        notification.success({
+          title: `${signal.side === "B" ? "买入" : "卖出"}点已保存`,
+          description: signal.reason || "manual",
+        })
+      }
+      setManualSignalMode(null)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "保存手动点失败"
+      notification.danger({ title: "保存手动点失败", description: msg })
     }
-    setManualSignalMode(null)
   }
 
   const handleClearManualMode = () => {
@@ -292,33 +304,50 @@ export default function StockChartPage() {
 
   const handleClearManualSignals = async () => {
     const targets = [...manualSignals]
-    await Promise.all(
-      targets.map((signal) => deleteStockAnnotation(targetType, symbol, BS_PERSIST_PERIOD, signal.id))
-    )
-    setManualSignals([])
+    try {
+      await Promise.all(
+        targets.map((signal) => deleteStockAnnotation(targetType, symbol, BS_PERSIST_PERIOD, signal.id))
+      )
+      setManualSignals([])
+      notification.success({ title: "已清空手动点", description: `共移除 ${targets.length} 个` })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "清空手动点失败"
+      notification.danger({ title: "清空手动点失败", description: msg })
+    }
   }
 
   const handleDeleteManualSignal = async (signalId: string) => {
-    await deleteStockAnnotation(targetType, symbol, BS_PERSIST_PERIOD, signalId)
-    setManualSignals((current) => current.filter((signal) => signal.id !== signalId))
+    try {
+      await deleteStockAnnotation(targetType, symbol, BS_PERSIST_PERIOD, signalId)
+      setManualSignals((current) => current.filter((signal) => signal.id !== signalId))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "删除手动点失败"
+      notification.danger({ title: "删除手动点失败", description: msg })
+    }
   }
 
   const handleCreateSampleAnnotation = async () => {
     if (!bars.length) return
     const first = bars[Math.max(0, bars.length - 20)]
     const second = bars[bars.length - 1]
-    const annotation = await createStockAnnotation({
-      target_type: targetType,
-      symbol,
-      period,
-      overlay_type: "segment",
-      points: [
-        { timestamp: first.timestamp, value: first.close },
-        { timestamp: second.timestamp, value: second.close },
-      ],
-      text: "趋势标记",
-    })
-    setAnnotations((prev) => [annotation, ...prev])
+    try {
+      const annotation = await createStockAnnotation({
+        target_type: targetType,
+        symbol,
+        period,
+        overlay_type: "segment",
+        points: [
+          { timestamp: first.timestamp, value: first.close },
+          { timestamp: second.timestamp, value: second.close },
+        ],
+        text: "趋势标记",
+      })
+      setAnnotations((prev) => [annotation, ...prev])
+      notification.success({ title: "示例标记已添加" })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "添加示例标记失败"
+      notification.danger({ title: "添加示例标记失败", description: msg })
+    }
   }
 
   return (

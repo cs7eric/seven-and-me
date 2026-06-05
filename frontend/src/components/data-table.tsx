@@ -50,7 +50,7 @@ import {
   type VisibilityState,
 } from "@tanstack/react-table"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
-import { toast } from "sonner"
+import { notification } from "@/components/ui/notification"
 import { z } from "zod"
 
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -208,11 +208,10 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          toast.promise(new Promise((resolve) => setTimeout(resolve, 1000)), {
-            loading: `Saving ${row.original.header}`,
-            success: "Done",
-            error: "Error",
-          })
+          notification.info({ title: `Saving ${row.original.header}` })
+          window.setTimeout(() => {
+            notification.success({ title: row.original.header, description: "Done" })
+          }, 1000)
         }}
       >
         <Label htmlFor={`${row.original.id}-target`} className="sr-only">
@@ -233,11 +232,10 @@ const columns: ColumnDef<z.infer<typeof schema>>[] = [
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          toast.promise(new Promise((resolve) => setTimeout(resolve, 1000)), {
-            loading: `Saving ${row.original.header}`,
-            success: "Done",
-            error: "Error",
-          })
+          notification.info({ title: `Saving ${row.original.header}` })
+          window.setTimeout(() => {
+            notification.success({ title: row.original.header, description: "Done" })
+          }, 1000)
         }}
       >
         <Label htmlFor={`${row.original.id}-limit`} className="sr-only">

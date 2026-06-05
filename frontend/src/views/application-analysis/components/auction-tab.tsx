@@ -19,6 +19,7 @@ import type {
   StockTargetType,
 } from "../../stock-chart/lib/types"
 import { fmt, safeRecord, safeString, textList, toNumber } from "../lib/format"
+import { notification } from "@/components/ui/notification"
 
 export interface AuctionTabProps {
   targetType: StockTargetType
@@ -330,8 +331,10 @@ export function AuctionTab({
         setAuction(auctionResult)
       } catch (err) {
         if (!active) return
+        const msg = err instanceof Error ? err.message : "加载集合竞价失败"
         setAuction(null)
-        setError(err instanceof Error ? err.message : "加载集合竞价失败")
+        setError(msg)
+        notification.danger({ title: "加载集合竞价失败", description: msg })
       }
     })()
 
@@ -359,8 +362,10 @@ export function AuctionTab({
       })
       setAiResponse(response)
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "读取竞价 AI 分析结果失败"
       setAiResponse(null)
-      setAiError(err instanceof Error ? err.message : "读取竞价 AI 分析结果失败")
+      setAiError(msg)
+      notification.danger({ title: "读取竞价 AI 分析结果失败", description: msg })
     } finally {
       setAiLoading(false)
     }
@@ -381,8 +386,14 @@ export function AuctionTab({
       })
       setAiResponse(response)
       setActionMessage("已立即生成当前标的的竞价 AI 分析，并写入当日持久化结果。")
+      notification.success({
+        title: "竞价 AI 分析已生成",
+        description: `${name} · ${symbol}`,
+      })
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : "立即生成竞价 AI 分析失败")
+      const msg = err instanceof Error ? err.message : "立即生成竞价 AI 分析失败"
+      setAiError(msg)
+      notification.danger({ title: "立即生成竞价 AI 分析失败", description: msg })
     } finally {
       setActionLoading(false)
     }
@@ -398,9 +409,15 @@ export function AuctionTab({
         throw new Error(result.error)
       }
       setActionMessage(`已触发今日批量任务：成功 ${result.succeeded ?? 0}，失败 ${result.failed ?? 0}。正在读取当前标的结果。`)
+      notification.info({
+        title: "已触发今日批量任务",
+        description: `成功 ${result.succeeded ?? 0}，失败 ${result.failed ?? 0}`,
+      })
       await handleRefreshAiSnapshot()
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : "触发今日批量任务失败")
+      const msg = err instanceof Error ? err.message : "触发今日批量任务失败"
+      setAiError(msg)
+      notification.danger({ title: "触发今日批量任务失败", description: msg })
     } finally {
       setActionLoading(false)
     }

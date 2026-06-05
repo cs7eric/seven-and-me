@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react"
+﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Activity,
   AlertTriangle,
@@ -24,7 +24,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { toast } from "sonner"
+import { notification } from "@/components/ui/notification"
 import {
   type SchedulerJobItem,
   disableSchedulerJob,
@@ -385,9 +385,19 @@ export default function SchedulerSettingsPage() {
         setLastUpdated(new Date())
       } else {
         setError(res.error || "获取调度任务列表失败")
+        if (withSpinner) {
+          notification.danger({
+            title: "加载调度任务失败",
+            description: res.error || "请检查后端服务",
+          })
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "未知错误")
+      const msg = err instanceof Error ? err.message : "未知错误"
+      setError(msg)
+      if (withSpinner) {
+        notification.danger({ title: "加载调度任务失败", description: msg })
+      }
     } finally {
       if (withSpinner) setLoading(false)
     }
@@ -409,30 +419,31 @@ export default function SchedulerSettingsPage() {
         switch (action) {
           case "enable":
             res = await enableSchedulerJob(jobId)
-            toast.success("已启用", { description: `job ${jobId} 已开启` })
+            notification.success({ title: "已启用", description: `job ${jobId} 已开启` })
             break
           case "disable":
             res = await disableSchedulerJob(jobId)
-            toast.success("已禁用", { description: `job ${jobId} 已关闭` })
+            notification.success({ title: "已禁用", description: `job ${jobId} 已关闭` })
             break
           case "start":
             res = await startSchedulerJob(jobId)
-            toast.success("调度已启动", { description: `job ${jobId}` })
+            notification.success({ title: "调度已启动", description: `job ${jobId}` })
             break
           case "stop":
             res = await stopSchedulerJob(jobId)
-            toast.success("调度已停止", { description: `job ${jobId}` })
+            notification.success({ title: "调度已停止", description: `job ${jobId}` })
             break
           case "trigger":
             res = await triggerSchedulerJob(jobId)
-            toast.success("已触发一次", { description: `job ${jobId} 跑完后会自动刷新` })
+            notification.success({ title: "已触发一次", description: `job ${jobId} 跑完后会自动刷新` })
             break
         }
         if (res && res.ok === false) {
-          toast.error("操作失败", { description: res.error || "请查看后端日志" })
+          notification.danger({ title: "操作失败", description: res.error || "请查看后端日志" })
         }
       } catch (err) {
-        toast.error("操作失败", {
+        notification.danger({
+          title: "操作失败",
           description: err instanceof Error ? err.message : "未知错误",
         })
       } finally {

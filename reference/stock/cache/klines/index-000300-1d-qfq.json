@@ -3,21 +3,9 @@
   "target_type": "index",
   "period": "1d",
   "adjust": "qfq",
-  "updated_at": "2026-06-05T10:21:49.594188",
+  "updated_at": "2026-06-05T18:44:19.163333",
   "source": "tencent",
   "items": [
-    {
-      "timestamp": 1715616000000,
-      "trade_date": "2024-05-14",
-      "open": 3668.23,
-      "close": 3657.05,
-      "high": 3675.78,
-      "low": 3646.71,
-      "volume": 133406490.0,
-      "turnover": 0,
-      "volume_ratio": 1.0,
-      "turnover_rate": 0
-    },
     {
       "timestamp": 1715702400000,
       "trade_date": "2024-05-15",
@@ -27,7 +15,7 @@
       "low": 3624.0,
       "volume": 123522764.0,
       "turnover": 0,
-      "volume_ratio": 0.93,
+      "volume_ratio": 1.0,
       "turnover_rate": 0
     },
     {
@@ -39,7 +27,7 @@
       "low": 3626.33,
       "volume": 154630503.0,
       "turnover": 0,
-      "volume_ratio": 1.2,
+      "volume_ratio": 1.25,
       "turnover_rate": 0
     },
     {
@@ -51,7 +39,7 @@
       "low": 3627.45,
       "volume": 164570417.0,
       "turnover": 0,
-      "volume_ratio": 1.2,
+      "volume_ratio": 1.18,
       "turnover_rate": 0
     },
     {
@@ -63,7 +51,7 @@
       "low": 3677.44,
       "volume": 184609423.0,
       "turnover": 0,
-      "volume_ratio": 1.28,
+      "volume_ratio": 1.25,
       "turnover_rate": 0
     },
     {
@@ -6010,12 +5998,12 @@
       "timestamp": 1780588800000,
       "trade_date": "2026-06-05",
       "open": 4886.96,
-      "close": 4919.3,
+      "close": 4816.92,
       "high": 4924.34,
-      "low": 4874.14,
-      "volume": 125788609.0,
+      "low": 4798.91,
+      "volume": 301929336.0,
       "turnover": 0,
-      "volume_ratio": 0.44,
+      "volume_ratio": 1.05,
       "turnover_rate": 0
     }
   ]

@@ -78,6 +78,10 @@ export const sidebarConfig = {
           title: "analysis",
           url: "/stock-overview/application-analysis",
         },
+        {
+          title: "self-selected",
+          url: "/stock-overview/self-selected",
+        },
       ],
     },
     {

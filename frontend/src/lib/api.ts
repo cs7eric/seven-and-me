@@ -859,3 +859,142 @@ export const disableSchedulerJob = (jobId: string) => postSchedulerAction(jobId,
 export const triggerSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "trigger")
 export const startSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "start")
 export const stopSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "stop")
+
+// ---------------------------------------------------------------------------
+// Self-Selected（/stock-overview/self-selected 页面用）
+// ---------------------------------------------------------------------------
+
+export interface SelfSelectedGroup {
+  id: string
+  name: string
+  description?: string | null
+  color?: string
+  sort_order?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SelfSelectedItem {
+  id: string
+  group_id: string
+  symbol: string
+  market?: string | null
+  name?: string | null
+  notes?: string | null
+  sort_order?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface SelfSelectedGroupListResponse {
+  ok: boolean
+  items: SelfSelectedGroup[]
+  count: number
+  error?: string
+}
+
+export interface SelfSelectedGroupActionResponse {
+  ok: boolean
+  item?: SelfSelectedGroup
+  group_id?: string
+  error?: string
+}
+
+export interface SelfSelectedItemListResponse {
+  ok: boolean
+  items: SelfSelectedItem[]
+  count: number
+  group_id?: string | null
+  error?: string
+}
+
+export interface SelfSelectedItemActionResponse {
+  ok: boolean
+  item?: SelfSelectedItem
+  item_id?: string
+  error?: string
+}
+
+async function selfSelectedJson<T>(res: Response): Promise<T> {
+  const data = (await res.json().catch(() => null)) as T | null
+  if (!res.ok || !data) {
+    const message =
+      (data && typeof (data as { error?: string }).error === "string"
+        ? (data as { error?: string }).error
+        : null) || `request failed: ${res.status}`
+    throw new Error(message)
+  }
+  return data
+}
+
+// group
+export async function fetchSelfSelectedGroups(): Promise<SelfSelectedGroupListResponse> {
+  return selfSelectedJson<SelfSelectedGroupListResponse>(
+    await fetch(`${API_BASE}/api/self-selected/groups`, { cache: "no-store" }),
+  )
+}
+
+export async function createSelfSelectedGroup(
+  payload: { name: string; description?: string; color?: string },
+): Promise<SelfSelectedGroupActionResponse> {
+  return selfSelectedJson<SelfSelectedGroupActionResponse>(
+    await fetch(`${API_BASE}/api/self-selected/groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+export async function updateSelfSelectedGroup(
+  groupId: string,
+  payload: Partial<Pick<SelfSelectedGroup, "name" | "description" | "color" | "sort_order">>,
+): Promise<SelfSelectedGroupActionResponse> {
+  return selfSelectedJson<SelfSelectedGroupActionResponse>(
+    await fetch(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+export async function deleteSelfSelectedGroup(groupId: string): Promise<SelfSelectedGroupActionResponse> {
+  return selfSelectedJson<SelfSelectedGroupActionResponse>(
+    await fetch(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
+      method: "DELETE",
+    }),
+  )
+}
+
+// item
+export async function fetchSelfSelectedItems(
+  groupId?: string,
+): Promise<SelfSelectedItemListResponse> {
+  const url = groupId
+    ? `${API_BASE}/api/self-selected/items?group_id=${encodeURIComponent(groupId)}`
+    : `${API_BASE}/api/self-selected/items`
+  return selfSelectedJson<SelfSelectedItemListResponse>(
+    await fetch(url, { cache: "no-store" }),
+  )
+}
+
+export async function createSelfSelectedItem(
+  payload: { group_id: string; symbol: string; market?: string; name?: string; notes?: string },
+): Promise<SelfSelectedItemActionResponse> {
+  return selfSelectedJson<SelfSelectedItemActionResponse>(
+    await fetch(`${API_BASE}/api/self-selected/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+export async function deleteSelfSelectedItem(itemId: string): Promise<SelfSelectedItemActionResponse> {
+  return selfSelectedJson<SelfSelectedItemActionResponse>(
+    await fetch(`${API_BASE}/api/self-selected/items/${encodeURIComponent(itemId)}`, {
+      method: "DELETE",
+    }),
+  )
+}

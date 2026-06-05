@@ -7,6 +7,7 @@ import HomePage from "../views/home"
 import Mp4ToWordPage from "../views/mp4-to-word"
 import Mp4HistoryPage from "../views/mp4-to-word/history"
 import SchedulerSettingsPage from "../views/settings/scheduler"
+import SelfSelectedPage from "../views/self-selected"
 import StockChartPage from "../views/stock-chart"
 import StockOverviewPage from "../views/stock-overview"
 import StockReviewPage from "../views/stock-review"
@@ -51,6 +52,10 @@ export const router = createBrowserRouter([
       {
         path: "stock-overview/application-analysis",
         element: <ApplicationAnalysisPage />,
+      },
+      {
+        path: "stock-overview/self-selected",
+        element: <SelfSelectedPage />,
       },
       {
         path: "stock-review",

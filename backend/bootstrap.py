@@ -3,6 +3,7 @@ from flask import Flask
 from backend.api.mp4_history import create_mp4_history_bp
 from backend.api.public import create_public_bp
 from backend.api.scheduler import scheduler_bp
+from backend.api.self_selected import self_selected_bp
 from backend.api.stock.f10 import f10_bp
 from backend.api.stock_chart import stock_chart_bp
 from backend.api.system import create_system_bp
@@ -36,6 +37,7 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(create_public_bp(UPLOAD_FOLDER, OUTPUT_FOLDER))
     app.register_blueprint(create_system_bp(is_api_configured, ai_provider_registry.is_model_loaded))
     app.register_blueprint(scheduler_bp)
+    app.register_blueprint(self_selected_bp)
     if is_application_analysis_scheduler_enabled():
         try:
             start_application_analysis_scheduler()

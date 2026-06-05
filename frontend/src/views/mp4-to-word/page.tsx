@@ -1,8 +1,8 @@
-﻿import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Phase, PostMetadata, SSEEvent, TransferProgress } from "../../lib/types";
 import { askQuestion, createSSEConnection, exportMarkdown, fetchTaskSnapshot, saveMP4History, sendDownloaderResultToParse, uploadFile, uploadFileWithProgress } from "../../lib/api";
-import { toast } from "sonner";
+import { notification } from "@/components/ui/notification";
 import { QA_STYLE_FIX } from "./styles";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
@@ -580,9 +580,11 @@ export default function Mp4ToWordPage() {
     setHistorySaving(true);
     try {
       const record = await saveMP4History(taskId);
-      toast.success(`已保存历史记录：${record.title}`);
+      notification.success({ title: "已保存历史记录", description: record.title })
     } catch (e) {
-      setError(e instanceof Error ? e.message : "保存历史记录失败");
+      const msg = e instanceof Error ? e.message : "保存历史记录失败"
+      setError(msg)
+      notification.danger({ title: "保存历史记录失败", description: msg })
     } finally {
       setHistorySaving(false);
     }
@@ -598,7 +600,7 @@ export default function Mp4ToWordPage() {
     setCollapsed((prev) => ({ ...prev, ask: false }));
     setCollapsedQaItems((prev) => ({ ...prev, [tempId]: false }));
     setQaItems((prev) => [{ id: tempId, question, loading: true }, ...prev]);
-    toast.success("Ask AI 已发送");
+    notification.info({ title: "Ask AI 已发送", description: question })
 
     try {
       const answer = await askQuestion(taskId, question);
@@ -610,7 +612,8 @@ export default function Mp4ToWordPage() {
       setQaItems((prev) => prev.map((item) => (item.id === tempId ? resolvedItem : item)));
     } catch {
       setQaItems((prev) => prev.filter((item) => item.id !== tempId));
-      setError("Q&A request failed");
+      setError("Q&A request failed")
+      notification.danger({ title: "Ask AI 失败", description: "Q&A request failed" })
     } finally {
       setQaLoading(false);
     }

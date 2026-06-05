@@ -1,9 +1,10 @@
-﻿import { Link } from "react-router-dom"
+﻿﻿﻿import { Link } from "react-router-dom"
 import type { ReactNode } from "react"
 import { Home } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { AppSidebar } from "@/layout/app-sidebar"
+import { NotificationRoot } from "@/components/ui/notification"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -89,6 +90,9 @@ export function WorkspaceShell({
           </div>
         </div>
       </SidebarInset>
+
+      {/* 全局 notification 容器（portal 到 body） */}
+      <NotificationRoot />
     </SidebarProvider>
   )
 }
