@@ -10,6 +10,7 @@ from typing import Any, Callable
 from flask import Blueprint, jsonify, request
 
 from backend.services.stock.f10 import get_fundamentals_service
+from backend.services.stock.f10.helpers import stock_topics, topic_stocks
 from backend.services.stock.f10.limit_count import (
     merge_into_breadth,
     read_limit_up_down_cache,
@@ -76,6 +77,48 @@ def f10_topic_compare():
             symbol, topic_id, section=section, sort_by=sort_by
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# eltdx 风格 Helpers（高级封装）
+# ---------------------------------------------------------------------------
+
+
+@f10_bp.route('/api/stock-chart/f10/topic-stocks')
+def f10_topic_stocks():
+    """题材内成分股表（按服务端排名字段整理成表）。
+
+    对应 eltdx ``client.helpers.topic_stocks(...)``。
+    支持 ``topic_id`` 或 ``topic_name`` 两种入参；不传 topic_id 时会在
+    ``seed_code`` 关联的题材里按名称模糊匹配。
+    """
+    seed_code = str(request.args.get('seed_code', '')).strip() or '000001'
+    topic_id = str(request.args.get('topic_id', '')).strip() or None
+    topic_name = str(request.args.get('topic_name', '')).strip() or None
+    sort_by = str(request.args.get('sort_by', 'zdf')).strip() or 'zdf'
+    section = str(request.args.get('section', 'gndbzfsj')).strip() or 'gndbzfsj'
+    try:
+        return jsonify(topic_stocks(
+            seed_code,
+            topic_id=topic_id,
+            topic_name=topic_name,
+            sort_by=sort_by,
+            section=section,
+        ).to_dict())
+    except LookupError as exc:
+        return jsonify({'error': str(exc), 'error_type': 'not_found'}), 404
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'error_type': 'bad_request'}), 400
+
+
+@f10_bp.route('/api/stock-chart/f10/stock-topics')
+def f10_stock_topics():
+    """个股关联题材集合（合并 topic_ids + hot_topics）。
+
+    对应 eltdx ``client.helpers.stock_topics(...)``。
+    """
+    symbol = _symbol_arg()
+    return jsonify(stock_topics(symbol).to_dict())
 
 
 @f10_bp.route('/api/stock-chart/f10/theme-market')

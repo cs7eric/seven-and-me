@@ -6,7 +6,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| [`openapi.yaml`](./openapi.yaml) | OpenAPI 3.0 规范，覆盖全部 Blueprint 路由（`stock_chart` / `f10` / `self_selected` / `mp4_history` / `transcription` / `scheduler` / `public` / `system`） |
+| [`openapi.yaml`](./openapi.yaml) | OpenAPI 3.0 规范，覆盖全部 Blueprint 路由（`stock_chart` / `f10` / `self_selected` / `mp4_history` / `transcription` / `scheduler` / `public` / `system`） + eltdx 风格 helpers |
 
 ## 导入到 Apifox
 
@@ -45,6 +45,41 @@ Apifox 导入后建议在「环境管理」里配两个环境：
 
 - SSE 流（`/api/stream/<task_id>`）只声明了 `text/event-stream`，事件 schema 没写
 - 所有 `additionalProperties: true` 的 schema（上游返回的非结构化数据，比如 eastmoney 的题材 / 板块行情）保留透传；具体字段看 F10 adapter
+
+## F10 eltdx 风格 Helpers
+
+后端在 [backend/services/stock/f10/helpers.py](file:///f:/dev-repo/mp4-to-word-new/backend/services/stock/f10/helpers.py) 暴露了两个 Python 函数，对应 eltdx `client.helpers` 下的同名方法：
+
+| Python 函数 | API endpoint | eltdx 等价 |
+|---|---|---|
+| `topic_stocks(seed_code, topic_id=..., topic_name=..., sort_by='zdf')` | `GET /api/stock-chart/f10/topic-stocks` | `client.helpers.topic_stocks(...)` |
+| `stock_topics(code)` | `GET /api/stock-chart/f10/stock-topics` | `client.helpers.stock_topics(...)` |
+
+数据源走 eltdx（已在 `EltdxFundamentalsAdapter` 里接好），自动享受 30 分钟 TTL 缓存 + 降级到陈旧缓存。
+
+**`topic_stocks` 用法**：
+
+```python
+from backend.services.stock.f10 import topic_stocks
+
+# 按题材名（更友好，helper 会在 seed_code 关联的题材里模糊匹配）
+table = topic_stocks("000034", topic_name="存储芯片", sort_by="zdf_3d")
+for row in table.rows[:5]:
+    print(row.rank, row.full_code, row.name, row.change_pct_3d)
+
+# 按题材 ID（更精确，helper 会反向查表补上 topic_name）
+table = topic_stocks("000034", topic_id="2945", sort_by="zdf")
+```
+
+**`stock_topics` 用法**：
+
+```python
+from backend.services.stock.f10 import stock_topics
+
+result = stock_topics("000034")
+for t in result.topics:
+    print(t.topic_id, t.topic_name, t.relation_level, t.reason)
+```
 
 ## 验证
 

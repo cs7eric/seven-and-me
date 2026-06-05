@@ -34,7 +34,9 @@ class TopicInfo:
     topic_date: str | None = None
     reason: str | None = None
     detail_id: str | None = None
+    category_raw: str | None = None
     source: str | None = None
+    raw: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _strip_none(asdict(self))
@@ -98,6 +100,9 @@ class TopicStock:
 
     full_code: str
     name: str
+    exchange: str | None = None
+    market_id: str | None = None
+    code: str | None = None
     rank: int | None = None
     change_pct: float | None = None
     change_pct_3d: float | None = None
@@ -106,6 +111,7 @@ class TopicStock:
     change_pct_60d: float | None = None
     change_pct_ytd: float | None = None
     trading_date: str | None = None
+    raw: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _strip_none(asdict(self))
@@ -129,6 +135,81 @@ class TopicDetail:
             "seed_code": self.seed_code,
             "stocks": [item.to_dict() for item in self.stocks],
             "raw": self.raw,
+            "fetched_at": self.fetched_at,
+        }
+
+
+# ---------------------------------------------------------------------------
+# eltdx 风格 Helper 返回模型
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TopicStockTable:
+    """题材内成分股表（按服务端排名字段整理）。
+
+    对应 eltdx ``client.helpers.topic_stocks(...)`` 的返回模型。
+    """
+
+    seed_code: str
+    topic_id: str
+    topic_name: str
+    sort_by: str
+    section: str
+    rows: list[TopicStock] = field(default_factory=list)
+    count: int = 0
+    source: str = "eltdx"
+    fetched_at: str = field(default_factory=_utcnow_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "seed_code": self.seed_code,
+            "topic_id": self.topic_id,
+            "topic_name": self.topic_name,
+            "sort_by": self.sort_by,
+            "section": self.section,
+            "rows": [item.to_dict() for item in self.rows],
+            "count": self.count,
+            "source": self.source,
+            "fetched_at": self.fetched_at,
+        }
+
+
+@dataclass
+class StockTopic:
+    """个股关联题材（elper 风格，category_raw / source / raw 完整保留）。"""
+
+    topic_id: str
+    topic_name: str
+    relation_level: int | None = None
+    selected_date: str | None = None
+    topic_date: str | None = None
+    reason: str | None = None
+    detail_id: str | None = None
+    category_raw: str | None = None
+    source: str | None = None
+    raw: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+
+@dataclass
+class StockTopics:
+    """个股关联题材集合（eltdx helpers.stock_topics 返回模型）。"""
+
+    code: str
+    topics: list[StockTopic] = field(default_factory=list)
+    count: int = 0
+    source: str = "eltdx"
+    fetched_at: str = field(default_factory=_utcnow_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "topics": [item.to_dict() for item in self.topics],
+            "count": self.count,
+            "source": self.source,
             "fetched_at": self.fetched_at,
         }
 

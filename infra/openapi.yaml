@@ -908,6 +908,61 @@ paths:
           description: OK
         "400": { $ref: "#/components/responses/BadRequest" }
 
+  /api/stock-chart/f10/topic-stocks:
+    get:
+      tags: [F10]
+      summary: 题材内成分股表（eltdx helper 风格）
+      description: |
+        对应 eltdx `client.helpers.topic_stocks(...)`。
+        至少传 `seed_code` + (`topic_id` 或 `topic_name`)；
+        不传 `topic_id` 时，会在 `seed_code` 关联的题材里按名称模糊匹配。
+        `sort_by` 支持：
+          - `zdf` 当日涨跌幅（默认）
+          - `zdf_3d` / `zdf_5d` / `zdf_20d` / `zdf_60d` 近 3 / 5 / 20 / 60 日
+          - `zdf_ys` 年初至今
+      parameters:
+        - in: query
+          name: seed_code
+          required: true
+          schema: { type: string, default: "000001" }
+        - in: query
+          name: topic_id
+          schema: { type: string }
+        - in: query
+          name: topic_name
+          schema: { type: string, description: "不传 topic_id 时按名称匹配" }
+        - in: query
+          name: sort_by
+          schema: { type: string, default: zdf }
+        - in: query
+          name: section
+          schema: { type: string, default: gndbzfsj }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TopicStockTable" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/stock-chart/f10/stock-topics:
+    get:
+      tags: [F10]
+      summary: 个股关联题材（eltdx helper 风格）
+      description: |
+        对应 eltdx `client.helpers.stock_topics(...)`。
+        合并 `topic_ids` + `hot_topics`，带可读 `topic_name` / `relation_level` /
+        `selected_date` / `reason` / `detail_id`。
+      parameters:
+        - $ref: "#/components/parameters/QuerySymbol"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StockTopicsResponse" }
+
   /api/stock-chart/f10/theme-market:
     get:
       tags: [F10]
@@ -1882,6 +1937,69 @@ components:
         turnover:
           type: object
           additionalProperties: true
+
+    # eltdx helpers 返回模型
+    TopicStockRow:
+      type: object
+      properties:
+        full_code: { type: string, example: "sz300975" }
+        exchange: { type: string, example: "sz" }
+        market_id: { type: string, example: "z" }
+        code: { type: string, example: "300975" }
+        name: { type: string, example: "商络电子" }
+        rank: { type: integer, example: 1 }
+        change_pct: { type: number, format: float, example: 19.97 }
+        change_pct_3d: { type: number, format: float, example: 37.24 }
+        change_pct_5d: { type: number, format: float, nullable: true }
+        change_pct_20d: { type: number, format: float, nullable: true }
+        change_pct_60d: { type: number, format: float, nullable: true }
+        change_pct_ytd: { type: number, format: float, nullable: true }
+        trading_date: { type: string, example: "20260528" }
+        raw:
+          type: object
+          additionalProperties: true
+    TopicStockTable:
+      type: object
+      description: "eltdx helpers.topic_stocks 返回模型"
+      properties:
+        seed_code: { type: string }
+        topic_id: { type: string }
+        topic_name: { type: string }
+        sort_by: { type: string }
+        section: { type: string }
+        count: { type: integer }
+        source: { type: string, example: "eltdx" }
+        fetched_at: { type: string, format: date-time }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/TopicStockRow" }
+    StockTopic:
+      type: object
+      description: "个股关联题材条目（eltdx helpers 风格）"
+      properties:
+        topic_id: { type: string }
+        topic_name: { type: string }
+        relation_level: { type: integer, nullable: true }
+        selected_date: { type: string, nullable: true }
+        topic_date: { type: string, nullable: true }
+        reason: { type: string, nullable: true }
+        detail_id: { type: string, nullable: true }
+        category_raw: { type: string, nullable: true }
+        source: { type: string, example: "helpers.stock_topics" }
+        raw:
+          type: object
+          additionalProperties: true
+    StockTopicsResponse:
+      type: object
+      description: "eltdx helpers.stock_topics 返回模型"
+      properties:
+        code: { type: string }
+        count: { type: integer }
+        source: { type: string, example: "eltdx" }
+        fetched_at: { type: string, format: date-time }
+        topics:
+          type: array
+          items: { $ref: "#/components/schemas/StockTopic" }
 
     # ---------------- MP4 History ----------------
     MP4History:
