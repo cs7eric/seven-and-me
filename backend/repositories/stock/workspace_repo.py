@@ -32,6 +32,11 @@ def stock_kline_cache_file(target_type: str, symbol: str, period: str, adjust: s
     return STOCK_REFERENCE_CACHE_FOLDER / 'klines' / f'{stock_workspace_id(target_type, symbol)}-{period}-{adjust}.json'
 
 
+def stock_intraday_cache_file(target_type: str, symbol: str, trade_date: str) -> Path:
+    safe_date = (trade_date or '').strip().replace('/', '-')
+    return STOCK_REFERENCE_CACHE_FOLDER / 'intraday' / f'{stock_workspace_id(target_type, symbol)}-{safe_date}.json'
+
+
 def load_stock_annotations(target_type: str, symbol: str, period: str) -> list[dict]:
     data = read_json_file(stock_annotation_file(target_type, symbol, period), {'items': []})
     return data.get('items', [])
@@ -41,6 +46,10 @@ def read_cached_stock_klines(target_type: str, symbol: str, period: str, adjust:
     cache_data = read_json_file(stock_kline_cache_file(target_type, symbol, period, adjust), {})
     items = cache_data.get('items') if isinstance(cache_data, dict) else None
     return items if isinstance(items, list) else []
+
+
+def read_cached_stock_intraday(target_type: str, symbol: str, trade_date: str) -> dict | None:
+    return read_json_file(stock_intraday_cache_file(target_type, symbol, trade_date), None)
 
 
 def ensure_stock_workspace_entry(target_type: str, symbol: str, name: str) -> dict:

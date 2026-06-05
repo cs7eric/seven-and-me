@@ -6,10 +6,11 @@
   "adjust": "none",
   "indicators": [
     "MA",
-    "AMOUNT",
-    "EXPMA"
+    "BOLL",
+    "MACD",
+    "AMOUNT"
   ],
   "drawing_tool": null,
   "show_auction_panel": true,
-  "updated_at": "2026-05-31T00:59:19.729333"
+  "updated_at": "2026-06-04T18:57:54.137910"
 }

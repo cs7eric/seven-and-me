@@ -12,8 +12,8 @@ def stock_symbol_to_sina_code(target_type: str, symbol: str) -> str:
 
 
 def fetch_stock_klines_from_sina(target_type: str, symbol: str, period: str, adjust: str) -> list[dict]:
-    if period not in {'5m', '15m', '30m', '60m'}:
-        raise ValueError('新浪分钟K线仅支持 5/15/30/60 分钟')
+    if period not in {'1m', '5m', '15m', '30m', '60m', '120m'}:
+        raise ValueError('新浪分钟K线仅支持 1/5/15/30/60/120 分钟')
     code = stock_symbol_to_sina_code(target_type, symbol)
     scale = int(period.replace('m', ''))
     response = requests.get(
@@ -45,6 +45,7 @@ def fetch_stock_klines_from_sina(target_type: str, symbol: str, period: str, adj
             previous_volume = volume
             items.append({
                 'timestamp': int(trade_time.timestamp() * 1000),
+                'trade_date': trade_time.strftime('%Y-%m-%d'),
                 'open': float(row.get('open') or 0),
                 'close': float(row.get('close') or 0),
                 'high': float(row.get('high') or 0),

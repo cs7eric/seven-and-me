@@ -6,11 +6,11 @@ def get_stock_chart_config() -> dict:
     default = {
         'version': 1,
         'kline': {
-            'minute_provider': 'mootdx',
+            'minute_provider': 'eltdx',
             'daily_provider': 'tencent',
             'weekly_provider': 'tencent',
             'fallbacks': {
-                'minute': ['mootdx', 'sina', 'eastmoney'],
+                'minute': ['eltdx', 'mootdx', 'sina', 'eastmoney'],
                 'daily': ['tencent', 'eastmoney'],
                 'weekly': ['tencent', 'eastmoney'],
             },

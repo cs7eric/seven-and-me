@@ -16,7 +16,7 @@ from backend.services.stock.auction_ai_analysis_service import (
     read_auction_analysis_snapshot,
     run_auction_ai_analysis_target,
 )
-from backend.services.stock.kline_service import resolve_stock_klines
+from backend.services.stock.kline_service import build_intraday_snapshot, resolve_stock_klines
 from backend.services.stock.application_analysis_service import run_application_analysis
 from backend.services.stock.feature_summary import build_stock_feature_summary
 from backend.services.stock.application_analysis_scheduler import (
@@ -121,6 +121,48 @@ def stock_chart_klines():
     }
     write_json_file(cache_file, payload)
     return jsonify(payload)
+
+
+@stock_chart_bp.route('/api/stock-chart/intraday')
+def stock_chart_intraday():
+    target_type = str(request.args.get('target_type', 'stock')).strip() or 'stock'
+    symbol = str(request.args.get('symbol', '000001')).strip() or '000001'
+    name = str(request.args.get('name', symbol)).strip() or symbol
+    adjust = str(request.args.get('adjust', 'qfq')).strip() or 'qfq'
+    trade_date = str(request.args.get('trade_date', '')).strip() or None
+    raw_periods = str(request.args.get('periods', '')).strip()
+    periods: list[str] = []
+    for token in raw_periods.split(','):
+        value = token.strip()
+        if not value:
+            continue
+        if value not in {'1m', '5m', '15m', '30m', '60m', '120m'}:
+            continue
+        if value not in periods:
+            periods.append(value)
+    if not periods:
+        periods = ['1m', '5m', '15m', '30m']
+    try:
+        snapshot, source = build_intraday_snapshot(
+            target_type,
+            symbol,
+            adjust,
+            sample_stock_klines,
+            trade_date=trade_date,
+            periods=periods,
+        )
+        return jsonify({
+            'ok': True,
+            'symbol': symbol,
+            'target_type': target_type,
+            'name': name,
+            'adjust': adjust,
+            'source': source,
+            'requested_periods': periods,
+            **snapshot,
+        })
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc), 'symbol': symbol, 'target_type': target_type, 'requested_periods': periods}), 502
 
 
 @stock_chart_bp.route('/api/stock-chart/workspace')

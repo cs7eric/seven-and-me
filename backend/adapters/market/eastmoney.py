@@ -156,6 +156,7 @@ def parse_eastmoney_kline_rows(rows: list[str]) -> list[dict]:
             previous_volume = volume
             items.append({
                 'timestamp': int(trade_time.timestamp() * 1000),
+                'trade_date': trade_time.strftime('%Y-%m-%d'),
                 'open': float(parts[1] or 0),
                 'close': float(parts[2] or 0),
                 'high': float(parts[3] or 0),

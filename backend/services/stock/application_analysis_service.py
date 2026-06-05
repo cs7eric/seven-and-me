@@ -5,7 +5,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -37,6 +37,12 @@ APPLICATION_ANALYSIS_DAILY_TIMEZONE_OFFSET_HOURS = int(os.getenv('MINIMAX_APPLIC
 APPLICATION_ANALYSIS_MODEL = os.getenv('MINIMAX_APPLICATION_ANALYSIS_MODEL') or os.getenv('MINIMAX_MODEL') or 'MiniMax-M2.7'
 APPLICATION_ANALYSIS_TEXT_CHUNK_CHARS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TEXT_CHUNK_CHARS') or '120000')
 APPLICATION_ANALYSIS_TIMEOUT = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TIMEOUT') or '600')
+APPLICATION_ANALYSIS_RETRY_ATTEMPTS = max(1, int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_RETRY_ATTEMPTS') or '3'))
+APPLICATION_ANALYSIS_RETRY_BACKOFF_SECONDS = max(0.0, float(os.getenv('MINIMAX_APPLICATION_ANALYSIS_RETRY_BACKOFF_SECONDS') or '2'))
+APPLICATION_ANALYSIS_RETRY_MAX_BACKOFF_SECONDS = max(
+    APPLICATION_ANALYSIS_RETRY_BACKOFF_SECONDS,
+    float(os.getenv('MINIMAX_APPLICATION_ANALYSIS_RETRY_MAX_BACKOFF_SECONDS') or '30'),
+)
 TARGET_DAILY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_DAILY') or '30')
 TARGET_WEEKLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_WEEKLY') or '10')
 TARGET_MONTHLY_KEEP = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_TARGET_MONTHLY') or '6')
@@ -546,11 +552,18 @@ def _extract_file_id(payload: dict) -> str:
     return ''
 
 
-def _call_minimax_json(system_prompt: str, analysis_input: dict, target_type: str, symbol: str, name: str) -> tuple[dict, dict]:
+def _call_minimax_json_once(
+    system_prompt: str,
+    analysis_input: dict,
+    target_type: str,
+    symbol: str,
+    name: str,
+    attempt: int,
+) -> tuple[dict, dict]:
     import time
 
     polisher = ai_provider_registry.get_polisher()
-    log_prefix = '[ApplicationAnalysis]'
+    log_prefix = f'[ApplicationAnalysis attempt={attempt}/{APPLICATION_ANALYSIS_RETRY_ATTEMPTS}]'
     print(f'{log_prefix} start model={APPLICATION_ANALYSIS_MODEL} timeout={APPLICATION_ANALYSIS_TIMEOUT}s', flush=True)
     chunks = _chunk_analysis_input_text(analysis_input)
     print(f'{log_prefix} chunks={len(chunks)} chars={[len(c) for c in chunks]} system_prompt_chars={len(system_prompt)}', flush=True)
@@ -602,8 +615,8 @@ def _call_minimax_json(system_prompt: str, analysis_input: dict, target_type: st
         APPLICATION_ANALYSIS_DUMP_DIR.mkdir(parents=True, exist_ok=True)
         timestamp = time.strftime('%Y%m%d-%H%M%S')
         safe_target = f'{target_type or "na"}-{symbol or "na"}-{name or "na"}'.replace('/', '_').replace('\\', '_')
-        raw_path = APPLICATION_ANALYSIS_DUMP_DIR / f'{timestamp}-{safe_target}-raw.json'
-        content_path = APPLICATION_ANALYSIS_DUMP_DIR / f'{timestamp}-{safe_target}-content.txt'
+        raw_path = APPLICATION_ANALYSIS_DUMP_DIR / f'{timestamp}-{safe_target}-attempt{attempt}-raw.json'
+        content_path = APPLICATION_ANALYSIS_DUMP_DIR / f'{timestamp}-{safe_target}-attempt{attempt}-content.txt'
         raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding='utf-8')
         extracted = _extract_ai_content(raw)
         content_path.write_text(extracted or '', encoding='utf-8')
@@ -621,6 +634,50 @@ def _call_minimax_json(system_prompt: str, analysis_input: dict, target_type: st
         return parsed, {'raw': str(raw_path) if raw_path else '', 'content': str(content_path) if content_path else ''}
     except Exception as exc:
         raise ValueError(f'Application Analysis AI JSON 解析失败: {exc}; 内容预览: {content[:800]}') from exc
+
+
+def _call_minimax_json(
+    system_prompt: str,
+    analysis_input: dict,
+    target_type: str,
+    symbol: str,
+    name: str,
+    validator: Callable[[dict], None] | None = None,
+) -> tuple[dict, dict]:
+    import time
+
+    attempts = APPLICATION_ANALYSIS_RETRY_ATTEMPTS
+    attempt_errors: list[str] = []
+    last_dump_paths: dict[str, Any] = {}
+    for attempt in range(1, attempts + 1):
+        try:
+            parsed, dump_paths = _call_minimax_json_once(system_prompt, analysis_input, target_type, symbol, name, attempt)
+            last_dump_paths = dict(dump_paths)
+            if validator:
+                validator(parsed)
+            if attempt_errors:
+                last_dump_paths['retry_attempts'] = attempt
+                last_dump_paths['retry_errors'] = attempt_errors
+            return parsed, last_dump_paths
+        except Exception as exc:
+            message = str(exc)
+            attempt_errors.append(message)
+            if attempt >= attempts:
+                break
+            delay = min(
+                APPLICATION_ANALYSIS_RETRY_MAX_BACKOFF_SECONDS,
+                APPLICATION_ANALYSIS_RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1)),
+            )
+            print(
+                f'[ApplicationAnalysisRetry] attempt {attempt}/{attempts} failed: {message}; retry in {delay:.1f}s',
+                flush=True,
+            )
+            if delay > 0:
+                time.sleep(delay)
+    error_summary = ' | '.join(f'attempt_{index + 1}: {error}' for index, error in enumerate(attempt_errors))
+    if last_dump_paths:
+        error_summary = f'{error_summary}; last_dump_paths={last_dump_paths}'
+    raise ValueError(f'Application Analysis AI 多次重试失败: {error_summary}')
 
 
 def _valid_point(point: Any) -> bool:
@@ -748,11 +805,50 @@ def _sanitize_annotations(result: dict) -> dict:
     return result
 
 
+def _validate_annotation_response(result: dict) -> None:
+    normalized = _locate_analysis_result(result)
+    analysis_result = normalized.get('analysis_result')
+    if not isinstance(analysis_result, dict):
+        raise ValueError('AI 结果缺少 analysis_result')
+    overlays = analysis_result.get('overlay_annotations')
+    if not isinstance(overlays, list) or not overlays:
+        raise ValueError('AI 未返回 overlay_annotations')
+    sanitized = _sanitize_annotations(normalized)
+    clean_overlays = (sanitized.get('analysis_result') or {}).get('overlay_annotations')
+    if not isinstance(clean_overlays, list) or not clean_overlays:
+        raise ValueError('AI overlay_annotations 无有效标注点')
+
+
+def _validate_short_term_response(result: dict) -> None:
+    if not isinstance(result, dict):
+        raise ValueError('AI 返回不是 JSON 对象')
+    analysis_result = result.get('analysis_result')
+    if not isinstance(analysis_result, dict):
+        extracted: dict[str, Any] = {}
+        for key in ['target', 'data_quality', 'short_term_trend', 'current_situation']:
+            if key in result:
+                extracted[key] = result[key]
+        analysis_result = extracted
+    short_term = analysis_result.get('short_term_trend') if isinstance(analysis_result, dict) else None
+    current_situation = analysis_result.get('current_situation') if isinstance(analysis_result, dict) else None
+    if not isinstance(short_term, dict) or not short_term:
+        raise ValueError('AI 未返回有效 short_term_trend')
+    if not isinstance(current_situation, dict) or not current_situation:
+        raise ValueError('AI 未返回有效 current_situation')
+
+
 def run_application_analysis(target_type: str, symbol: str, name: str, adjust: str = 'qfq') -> dict:
     analysis_input = build_application_analysis_input(target_type, symbol, name, adjust)
     prompt = _prompt_text()
     print(f'[ApplicationAnalysis] prompt chars={len(prompt)} preview={prompt[:200]!r}', flush=True)
-    raw_response, dump_paths = _call_minimax_json(prompt, analysis_input, target_type, symbol, name)
+    raw_response, dump_paths = _call_minimax_json(
+        prompt,
+        analysis_input,
+        target_type,
+        symbol,
+        name,
+        validator=_validate_annotation_response,
+    )
     raw_keys = list(raw_response.keys()) if isinstance(raw_response, dict) else None
     print(f'[ApplicationAnalysis] raw keys={raw_keys}', flush=True)
     sanitized = _sanitize_annotations(raw_response)
@@ -892,7 +988,14 @@ def run_application_analysis_horizon(
         segment_input = _build_segment_input(horizon_input, segment_index)
         segment_inputs.append(segment_input)
         try:
-            raw_response, _ = _call_minimax_json(prompt, segment_input, target_type, symbol, f'{name}#seg{segment_index + 1}')
+            raw_response, _ = _call_minimax_json(
+                prompt,
+                segment_input,
+                target_type,
+                symbol,
+                f'{name}#seg{segment_index + 1}',
+                validator=_validate_annotation_response,
+            )
             raw_keys = list(raw_response.keys()) if isinstance(raw_response, dict) else None
             raw_keys_per_segment.append(raw_keys)
             sanitized = _sanitize_annotations(raw_response)
@@ -913,6 +1016,9 @@ def run_application_analysis_horizon(
     merged['horizon'] = horizon_meta
     if errors:
         merged.setdefault('data_quality', {})['errors'] = errors
+    if not isinstance(merged.get('overlay_annotations'), list) or not merged.get('overlay_annotations'):
+        error_detail = '; '.join(errors[-3:]) if errors else 'no segment returned valid overlay_annotations'
+        raise ValueError(f'Application Analysis AI 未生成任何可渲染 annotation: {error_detail}')
     elapsed = int(time.monotonic() - started)
     print(f'[ApplicationAnalysisHorizon] done elapsed={elapsed}s segments={actual_segments} merged_keys={list(merged.keys())}', flush=True)
     return {
@@ -971,7 +1077,14 @@ def run_application_analysis_recent30(target_type: str, symbol: str, name: str, 
     analysis_input = build_recent30_analysis_input(target_type, symbol, name, adjust)
     prompt = _short_term_daily_prompt_text()
     print(f'[ApplicationAnalysisRecent30] target={target_type}/{symbol} prompt_chars={len(prompt)}', flush=True)
-    raw_response, dump_paths = _call_minimax_json(prompt, analysis_input, target_type, symbol, name)
+    raw_response, dump_paths = _call_minimax_json(
+        prompt,
+        analysis_input,
+        target_type,
+        symbol,
+        name,
+        validator=_validate_short_term_response,
+    )
     raw_keys = list(raw_response.keys()) if isinstance(raw_response, dict) else None
     print(f'[ApplicationAnalysisRecent30] raw keys={raw_keys}', flush=True)
     sanitized = _sanitize_short_term_only(raw_response)

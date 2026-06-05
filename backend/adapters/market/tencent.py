@@ -52,6 +52,7 @@ def parse_tencent_kline_rows(rows: list[list[str]], target_type: str) -> list[di
             previous_volume = volume
             items.append({
                 'timestamp': int(trade_time.timestamp() * 1000),
+                'trade_date': trade_time.strftime('%Y-%m-%d'),
                 'open': float(row[1] or 0),
                 'close': float(row[2] or 0),
                 'high': float(row[3] or 0),

@@ -22,6 +22,7 @@ def fetch_stock_klines_from_mootdx(target_type: str, symbol: str, period: str, a
         '15m': '15m',
         '30m': '30m',
         '60m': '1h',
+        '120m': '2h',
         '1d': 'day',
         '1w': 'week',
     }
@@ -52,6 +53,7 @@ def fetch_stock_klines_from_mootdx(target_type: str, symbol: str, period: str, a
                 trade_time = parse_stock_trade_timestamp(str(row.get('datetime') or ''))
                 items.append({
                     'timestamp': int(trade_time.timestamp() * 1000),
+                    'trade_date': trade_time.strftime('%Y-%m-%d'),
                     'open': float(row.get('open') or 0),
                     'close': float(row.get('close') or 0),
                     'high': float(row.get('high') or 0),

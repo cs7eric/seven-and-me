@@ -81,6 +81,7 @@ def ensure_app_directories() -> None:
     (STOCK_REFERENCE_DATA_FOLDER / 'annotations').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_DATA_FOLDER / 'snapshots').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_CACHE_FOLDER / 'klines').mkdir(parents=True, exist_ok=True)
+    (STOCK_REFERENCE_CACHE_FOLDER / 'intraday').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_CACHE_FOLDER / 'auction').mkdir(parents=True, exist_ok=True)
     (STOCK_REFERENCE_CACHE_FOLDER / 'indicators').mkdir(parents=True, exist_ok=True)
     STOCK_TURNOVER_DIR.mkdir(parents=True, exist_ok=True)
