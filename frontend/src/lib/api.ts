@@ -796,3 +796,66 @@ export async function listApplicationAnalysisRecent30Full(
   )
   return (await res.json()) as ApplicationAnalysisRecent30FullResponse
 }
+
+// ---------------------------------------------------------------------------
+// Scheduler Management（/settings/scheduler 页面用）
+// ---------------------------------------------------------------------------
+
+export interface SchedulerJobItem {
+  id: string
+  name: string
+  description?: string
+  config_file?: string
+  service_module?: string
+  service_class?: string
+  registered_at?: string
+  supports_enable: boolean
+  enabled: boolean
+  config_enabled: boolean
+  config: Record<string, unknown>
+  live: Record<string, unknown>
+}
+
+export interface SchedulerJobsResponse {
+  ok: boolean
+  items: SchedulerJobItem[]
+  count: number
+  error?: string
+}
+
+export async function fetchSchedulerJobs(): Promise<SchedulerJobsResponse> {
+  const res = await fetch(`${API_BASE}/api/scheduler/jobs`, { cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as SchedulerJobsResponse | null
+  if (!res.ok || !data) throw new Error("获取调度任务列表失败")
+  return data
+}
+
+export interface SchedulerJobActionResponse {
+  ok: boolean
+  job_id?: string
+  enabled?: boolean
+  status?: Record<string, unknown>
+  result?: Record<string, unknown> | { ok: boolean; items?: unknown[]; count?: number; error?: string }
+  config?: Record<string, unknown>
+  error?: string
+}
+
+async function postSchedulerAction(
+  jobId: string,
+  action: "enable" | "disable" | "trigger" | "start" | "stop",
+): Promise<SchedulerJobActionResponse> {
+  const res = await fetch(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}/${action}`, {
+    method: "POST",
+  })
+  const data = (await res.json().catch(() => null)) as SchedulerJobActionResponse | null
+  if (!res.ok || !data) {
+    throw new Error(data?.error || `调度任务 ${action} 失败`)
+  }
+  return data
+}
+
+export const enableSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "enable")
+export const disableSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "disable")
+export const triggerSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "trigger")
+export const startSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "start")
+export const stopSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "stop")

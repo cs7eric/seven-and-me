@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom"
 import type { ReactNode } from "react"
+import { Home } from "lucide-react"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import {
@@ -38,18 +39,31 @@ export function WorkspaceShell({
             <Separator orientation="vertical" className="mr-1 h-4 bg-border/40" />
             <Breadcrumb>
               <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <Link to="/">Applications</Link>
+                <BreadcrumbItem className="hidden md:flex">
+                  <BreadcrumbLink
+                    asChild
+                    className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-muted/60"
+                  >
+                    <Link to="/">
+                      <Home className="size-3.5" />
+                      <span>Applications</span>
+                    </Link>
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbPage>{sectionLabel}</BreadcrumbPage>
+                <BreadcrumbItem className="hidden md:flex">
+                  <BreadcrumbLink
+                    asChild
+                    className="rounded-md px-1.5 py-1 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  >
+                    <Link to="/">{sectionLabel}</Link>
+                  </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{pageTitle}</BreadcrumbPage>
+                  <BreadcrumbPage className="rounded-md bg-muted/40 px-2 py-1 font-medium">
+                    {pageTitle}
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

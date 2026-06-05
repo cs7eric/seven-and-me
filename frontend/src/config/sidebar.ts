@@ -5,6 +5,7 @@ import {
   FileText,
   GalleryVerticalEnd,
   LineChart,
+  Settings,
   TrendingUp,
 } from "lucide-react"
 
@@ -90,6 +91,17 @@ export const sidebarConfig = {
         },
       ],
     },
+    {
+      title: "Settings",
+      url: "/settings/scheduler",
+      icon: Settings,
+      items: [
+        {
+          title: "Scheduler",
+          url: "/settings/scheduler",
+        },
+      ],
+    },
   ],
   projects: [
     {
@@ -126,6 +138,11 @@ export const sidebarConfig = {
       name: "Stock Review",
       url: "/stock-review",
       icon: LineChart,
+    },
+    {
+      name: "Settings · Scheduler",
+      url: "/settings/scheduler",
+      icon: Settings,
     },
     {
       name: "Knowledge Base",

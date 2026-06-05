@@ -18,6 +18,16 @@
       "service_module": "backend.services.scheduler.auction_analysis_scheduler",
       "service_class": "AuctionAnalysisScheduler",
       "enabled": true
+    },
+    {
+      "id": "application_analysis",
+      "name": "个股应用分析",
+      "description": "对 application-analysis targets 中 enabled 标的按 interval_minutes 节奏生成 AI 分析 + 盘后 15:30 跑 recent30 快照",
+      "config_file": "reference/application-analysis/scheduler.json",
+      "service_module": "backend.services.stock.application_analysis_scheduler",
+      "service_class": "ApplicationAnalysisScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-05T14:26:56.743224"
     }
   ]
 }
