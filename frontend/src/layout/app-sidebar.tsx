@@ -1,12 +1,12 @@
-"use client"
+﻿"use client"
 
 import * as React from "react"
 
 import { sidebarConfig } from "@/config/sidebar"
-import { NavMain } from "@/components/nav-main"
-import { NavProjects } from "@/components/nav-projects"
-import { NavUser } from "@/components/nav-user"
-import { TeamSwitcher } from "@/components/team-switcher"
+import { NavMain } from "@/layout/nav-main"
+import { NavProjects } from "@/layout/nav-projects"
+import { NavUser } from "@/layout/nav-user"
+import { TeamSwitcher } from "@/layout/team-switcher"
 import {
   Sidebar,
   SidebarContent,

@@ -14,7 +14,7 @@ import {
   listStockAnnotations,
   saveStockWorkspace,
 } from "@/lib/api"
-import { WorkspaceShell } from "@/components/workspace-shell"
+import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -323,7 +323,7 @@ export default function StockChartPage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Chart" pageTitle="Chart Workspace">
-      <div className="container space-y-5 pb-24">
+      <div className="container space-y-5">
         <Card className="border-white/70 bg-white/80 shadow-[0_20px_70px_rgba(15,23,42,0.08)]">
           <CardHeader>
             <CardTitle className="text-2xl">Stock Chart Workspace</CardTitle>

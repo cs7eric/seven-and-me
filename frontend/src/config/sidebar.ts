@@ -4,6 +4,7 @@ import {
   Download,
   FileText,
   GalleryVerticalEnd,
+  LayoutDashboard,
   LineChart,
   Settings,
   TrendingUp,
@@ -29,15 +30,14 @@ export const sidebarConfig = {
   ],
   navMain: [
     {
+      title: "Dashboard",
+      url: "/dashboard",
+      icon: LayoutDashboard,
+    },
+    {
       title: "Downloader",
       url: "/downloader",
       icon: Download,
-      items: [
-        {
-          title: "Open Downloader",
-          url: "/downloader",
-        },
-      ],
     },
     {
       title: "MP4 to Word",
@@ -71,11 +71,11 @@ export const sidebarConfig = {
       icon: LineChart,
       items: [
         {
-          title: "open",
+          title: "overview",
           url: "/stock-overview",
         },
         {
-          title: "application analysis",
+          title: "analysis",
           url: "/stock-overview/application-analysis",
         },
       ],
@@ -104,6 +104,11 @@ export const sidebarConfig = {
     },
   ],
   projects: [
+    {
+      name: "Dashboard",
+      url: "/dashboard",
+      icon: LayoutDashboard,
+    },
     {
       name: "Downloader",
       url: "/downloader",

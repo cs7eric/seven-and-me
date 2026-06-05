@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+﻿import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Activity,
   AlertTriangle,
@@ -17,7 +17,7 @@ import {
   Zap,
 } from "lucide-react"
 
-import { WorkspaceShell } from "@/components/workspace-shell"
+import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"

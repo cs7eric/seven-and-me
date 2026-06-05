@@ -1,8 +1,8 @@
-import { useState } from "react"
+﻿import { useState } from "react"
 import { Loader2, Send, Video } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 
-import { WorkspaceShell } from "@/components/workspace-shell"
+import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"

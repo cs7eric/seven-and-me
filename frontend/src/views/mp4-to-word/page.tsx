@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+﻿import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Phase, PostMetadata, SSEEvent, TransferProgress } from "../../lib/types";
 import { askQuestion, createSSEConnection, exportMarkdown, fetchTaskSnapshot, saveMP4History, sendDownloaderResultToParse, uploadFile, uploadFileWithProgress } from "../../lib/api";
@@ -9,7 +9,7 @@ import { renderQaAnswer } from "./lib/qa-renderer";
 import { AskSection } from "./components/AskSection";
 import { FloatingAskBar } from "./components/FloatingAskBar";
 import { ReaderModal } from "./components/ReaderModal";
-import { WorkspaceShell } from "@/components/workspace-shell";
+import { WorkspaceShell } from "@/layout/workspace-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

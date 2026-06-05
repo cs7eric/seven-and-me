@@ -1,6 +1,7 @@
 import { createBrowserRouter } from "react-router-dom"
 import App from "../App"
 import ApplicationAnalysisPage from "../views/application-analysis"
+import DashboardPage from "../views/dashboard"
 import DownloaderPage from "../views/downloader"
 import HomePage from "../views/home"
 import Mp4ToWordPage from "../views/mp4-to-word"
@@ -22,6 +23,10 @@ export const router = createBrowserRouter([
       {
         path: "downloader",
         element: <DownloaderPage />,
+      },
+      {
+        path: "dashboard",
+        element: <DashboardPage />,
       },
       {
         path: "mp4-to-word",

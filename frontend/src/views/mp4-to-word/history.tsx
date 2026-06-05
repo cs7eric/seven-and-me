@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, FileText, Search } from "lucide-react";
 import { askHistoryQuestion, getMP4History, listMP4History } from "@/lib/api";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "@/lib/history-types";
 import { MP4HistoryDataTable } from "@/components/mp4-history-data-table";
-import { WorkspaceShell } from "@/components/workspace-shell";
+import { WorkspaceShell } from "@/layout/workspace-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

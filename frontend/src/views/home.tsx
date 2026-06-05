@@ -1,10 +1,12 @@
-import type { ReactNode } from "react"
+﻿import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import {
   ArrowRight,
   AudioWaveform,
   Download,
   FileText,
+  History,
+  LayoutDashboard,
   LineChart,
   Settings,
   Sparkles,
@@ -12,8 +14,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
-import { WorkspaceShell } from "@/components/workspace-shell"
-import { Button } from "@/components/ui/button"
+import { WorkspaceShell } from "@/layout/workspace-shell"
 
 interface ApplicationItem {
   name: string
@@ -69,6 +70,27 @@ const Mp4ToWordIllustration = (
   </svg>
 )
 
+const Mp4HistoryIllustration = (
+  <svg {...svgBase}>
+    {/* 时钟外环 */}
+    <circle cx="50" cy="50" r="22" opacity="0.25" />
+    <circle cx="50" cy="50" r="22" opacity="0.5" strokeDasharray="3 3" />
+    {/* 12 / 3 / 6 / 9 刻度 */}
+    <line x1="50" y1="30" x2="50" y2="34" opacity="0.55" />
+    <line x1="50" y1="66" x2="50" y2="70" opacity="0.55" />
+    <line x1="30" y1="50" x2="34" y2="50" opacity="0.55" />
+    <line x1="66" y1="50" x2="70" y2="50" opacity="0.55" />
+    {/* 时针 / 分针 */}
+    <line x1="50" y1="50" x2="50" y2="38" opacity="0.7" />
+    <line x1="50" y1="50" x2="62" y2="54" opacity="0.7" />
+    <circle cx="50" cy="50" r="2.5" fill="currentColor" stroke="none" opacity="0.75" />
+    {/* 倒带箭头（左侧） */}
+    <path d="M 16 50 L 22 46 L 22 54 Z" fill="currentColor" stroke="none" opacity="0.55" />
+    {/* 快进箭头（右侧） */}
+    <path d="M 84 50 L 78 46 L 78 54 Z" fill="currentColor" stroke="none" opacity="0.55" />
+  </svg>
+)
+
 const StockOverviewIllustration = (
   <svg {...svgBase}>
     {/* 底轴 */}
@@ -78,6 +100,32 @@ const StockOverviewIllustration = (
     <rect x="32" y="38" width="11" height="47" fill="currentColor" stroke="none" opacity="0.6" />
     <rect x="50" y="48" width="11" height="37" fill="currentColor" stroke="none" opacity="0.48" />
     <rect x="68" y="26" width="11" height="59" fill="currentColor" stroke="none" opacity="0.72" />
+  </svg>
+)
+
+const DashboardIllustration = (
+  <svg {...svgBase}>
+    {/* 顶栏 */}
+    <rect x="10" y="14" width="80" height="10" rx="2" opacity="0.18" />
+    <line x1="16" y1="19" x2="32" y2="19" opacity="0.45" />
+    <line x1="60" y1="19" x2="70" y2="19" opacity="0.35" />
+    <circle cx="80" cy="19" r="2" fill="currentColor" stroke="none" opacity="0.45" />
+    {/* 主区：2x2 卡片网格 */}
+    <rect x="10" y="30" width="38" height="22" rx="3" opacity="0.22" />
+    <rect x="52" y="30" width="38" height="22" rx="3" opacity="0.28" />
+    <rect x="10" y="56" width="38" height="22" rx="3" opacity="0.22" />
+    <rect x="52" y="56" width="38" height="22" rx="3" opacity="0.32" />
+    {/* 数值条 */}
+    <line x1="16" y1="40" x2="32" y2="40" opacity="0.55" strokeWidth="3" />
+    <line x1="16" y1="66" x2="28" y2="66" opacity="0.5" strokeWidth="3" />
+    {/* 迷你折线 */}
+    <polyline points="58,46 64,42 70,44 76,38 82,40" opacity="0.6" />
+    {/* 迷你柱状 */}
+    <rect x="56" y="70" width="4" height="4" fill="currentColor" stroke="none" opacity="0.5" />
+    <rect x="62" y="66" width="4" height="8" fill="currentColor" stroke="none" opacity="0.6" />
+    <rect x="68" y="62" width="4" height="12" fill="currentColor" stroke="none" opacity="0.65" />
+    <rect x="74" y="68" width="4" height="6" fill="currentColor" stroke="none" opacity="0.55" />
+    <rect x="80" y="64" width="4" height="10" fill="currentColor" stroke="none" opacity="0.6" />
   </svg>
 )
 
@@ -114,6 +162,22 @@ const SettingsIllustration = (
 
 const sections: SectionItem[] = [
   {
+    key: "overview",
+    title: "Overview",
+    description: "跨应用的总览入口，先看数字再看细节。",
+    icon: LayoutDashboard,
+    items: [
+      {
+        name: "Dashboard",
+        description: "MP4 / 市场 / 调度 / 活动等关键指标集中展示。",
+        href: "/dashboard",
+        icon: LayoutDashboard,
+        gradient: "from-teal-500/10 via-emerald-500/5 to-transparent",
+        illustration: DashboardIllustration,
+      },
+    ],
+  },
+  {
     key: "media-tools",
     title: "Media Tools",
     description: "音视频下载、转写与文档化工作流。",
@@ -134,6 +198,14 @@ const sections: SectionItem[] = [
         icon: FileText,
         gradient: "from-violet-500/10 via-fuchsia-500/5 to-transparent",
         illustration: Mp4ToWordIllustration,
+      },
+      {
+        name: "MP4 History",
+        description: "查看 / 重新打开 / 删除已转写的 MP4 历史记录。",
+        href: "/mp4-to-word/history",
+        icon: History,
+        gradient: "from-indigo-500/10 via-blue-500/5 to-transparent",
+        illustration: Mp4HistoryIllustration,
       },
     ],
   },
@@ -193,7 +265,7 @@ export default function HomePage() {
         {sections.map((section) => {
           const SectionIcon = section.icon
           return (
-            <div key={section.key} className="mx-auto w-4/5 space-y-2">
+            <div key={section.key} className="space-y-2">
               <div className="flex items-center gap-2 px-1">
                 <SectionIcon className="size-3.5 text-muted-foreground" />
                 <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -238,50 +310,6 @@ export default function HomePage() {
             </div>
           )
         })}
-      </div>
-
-      <div className="flex-1 bg-muted/35 rounded-2xl border border-border/25 p-6">
-        <div className="mx-auto flex h-full max-w-5xl flex-col justify-between gap-8">
-          <div className="space-y-4">
-            <div className="inline-flex rounded-full bg-background/80 px-3 py-1 text-xs font-medium text-muted-foreground">
-              Featured Workspace
-            </div>
-            <div className="space-y-3">
-              <h2 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                MP4 to Word Workspace
-              </h2>
-              <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-                当前主力工作区已经具备完整流程：上传、转录、AI polish、AI summary、
-                Ask AI 与导出。其余 application 先以 mock 页面占位，方便后续逐步接入真实功能。
-              </p>
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-            <div className="rounded-2xl border border-border/25 bg-background/70 p-5 shadow-sm shadow-black/5">
-              <div className="mb-3 text-sm font-medium text-foreground">Workflow</div>
-              <div className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">
-                <div className="rounded-xl bg-muted/50 p-4">Upload → Transcribe</div>
-                <div className="rounded-xl bg-muted/50 p-4">Polish → Summary</div>
-                <div className="rounded-xl bg-muted/50 p-4">Ask AI structured answer</div>
-                <div className="rounded-xl bg-muted/50 p-4">Export / Read mode / Copy</div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-border/25 bg-background/70 p-5 shadow-sm shadow-black/5">
-              <div className="mb-2 text-sm font-medium text-foreground">Open Tool</div>
-              <p className="mb-5 text-sm leading-6 text-muted-foreground">
-                进入当前可用的核心业务页面。
-              </p>
-              <Button asChild className="w-full rounded-xl">
-                <Link to="/mp4-to-word">
-                  进入工作台
-                  <ArrowRight className="size-4" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </div>
       </div>
     </WorkspaceShell>
   )

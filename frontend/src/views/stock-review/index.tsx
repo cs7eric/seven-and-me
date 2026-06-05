@@ -1,6 +1,6 @@
-import { LineChart } from "lucide-react"
+﻿import { LineChart } from "lucide-react"
 
-import { WorkspaceShell } from "@/components/workspace-shell"
+import { WorkspaceShell } from "@/layout/workspace-shell"
 import { OverviewCard } from "./components/overview-card"
 import { NextStepSection } from "./components/next-step-section"
 import { overviewCards } from "./lib/content"

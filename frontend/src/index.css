@@ -1,9 +1,32 @@
 @import "tailwindcss";
 
+/* ====== 字体 ======
+ * 英文优先 Montserrat（regular 400 / bold 700）。
+ * 字体文件放在 frontend/public/fonts/montserrat/，Vite dev server 直接以 /fonts/... 提供；
+ * Vite build 会把它复制到 dist/，Flask 再从 static/ 暴露给 prod。
+ * 缺失文件会回退到下一档系统字体（-apple-system / SF Pro / PingFang SC / Microsoft YaHei）。
+ * 如果切到 Google Fonts CDN，把下面两段 @font-face 换成 <link> + 自托管 woff2 也行。
+ */
+@font-face {
+  font-family: "Montserrat";
+  src: url("/fonts/montserrat/Montserrat-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat";
+  src: url("/fonts/montserrat/Montserrat-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-  --font-sans: var(--font-geist-sans);
+  --font-sans: "Montserrat", var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -104,7 +127,7 @@
   }
 
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', sans-serif;
+    font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     background:
       radial-gradient(circle at top left, rgba(85, 156, 255, 0.18), transparent 26%),
       radial-gradient(circle at top right, rgba(255, 255, 255, 0.9), transparent 22%),

@@ -6,7 +6,7 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs"
-import { WorkspaceShell } from "@/components/workspace-shell"
+import { WorkspaceShell } from "@/layout/workspace-shell"
 import {
   controlApplicationAnalysisScheduler,
   fetchApplicationAnalysisResult,
@@ -512,8 +512,8 @@ export default function ApplicationAnalysisPage() {
   }, [analysisFocusKey, selectedChartItems])
 
   return (
-    <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis">
-      <div className="relative -mx-2 -my-4 h-[calc(100svh-7rem)] overflow-hidden rounded-3xl border border-slate-200 bg-[#f6f7f9] p-3 sm:p-5 xl:p-6">
+    <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis" fullBleed>
+      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-4 sm:p-6">
         <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
           {/* 左侧：信息辅助区 */}
           <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">

@@ -209,8 +209,8 @@ F10 全套：`/f10/{stock-info, company-profile, business-composition, valuation
 ## 4. 前端结构 `frontend/`
 
 ### 4.1 技术栈
-
-- **Vite 5** + **React 19** + **TypeScript 5** + **Tailwind 4**
+  - **Vite 5** + **React 19** + **TypeScript 5** + **Tailwind 4**
+  - **字体**：英文优先 Montserrat（regular 400 / bold 700，自托管 .ttf 放在 [`frontend/public/fonts/montserrat/`](file:///f:/dev-repo/mp4-to-word-new/frontend/public/fonts/montserrat/README.md)），中文回退到 PingFang SC / Microsoft YaHei。定义在 `src/index.css` 顶部 + body font-family。
 - 路由：[react-router-dom 7](file:///f:/dev-repo/mp4-to-word-new/frontend/src/router/index.tsx)
 - 状态：[zustand 5](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/stock-chart/lib/store.ts)（仅 stock-chart 用）
 - UI 基础：[radix-ui + shadcn/ui](file:///f:/dev-repo/mp4-to-word-new/frontend/src/components/ui/)（27 个组件）
@@ -226,6 +226,7 @@ F10 全套：`/f10/{stock-info, company-profile, business-composition, valuation
 | 路径 | 文件 | 角色 |
 | --- | --- | --- |
 | `/` | [`home.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/home.tsx) | 首页 / 导航 |
+| `/dashboard` | [`dashboard/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/dashboard/index.tsx) | **Dashboard 总览页**（MP4 / 市场 / 调度 / 活动等关键指标集中展示，骨架版） |
 | `/downloader` | [`downloader/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/downloader/index.tsx) | 视频/音频链接下载 |
 | `/mp4-to-word` | [`mp4-to-word/page.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/mp4-to-word/page.tsx) | **MP4 转写 + 润色主流程** |
 | `/mp4-to-word/history[/:id]` | [`mp4-to-word/history.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/mp4-to-word/history.tsx) | 历史记录 |
@@ -242,9 +243,16 @@ frontend/src/
 ├── App.tsx                    ← 极简壳：<Outlet />
 ├── main.tsx                   ← 入口：createRoot + RouterProvider
 ├── index.css                  ← Tailwind 4 + 全局样式
+├── layout/                    ← 全站布局相关（独立于 components/，因为是跨 view 的根级关注点）
+│   ├── workspace-shell.tsx    ← 所有业务页面的统一外壳（侧边栏 + 面包屑 + main）
+│   ├── app-sidebar.tsx        ← 侧边栏骨架（TeamSwitcher + NavMain + NavProjects + NavUser + Rail）
+│   ├── team-switcher.tsx      ← 侧边栏顶部 team 切换
+│   ├── nav-main.tsx           ← 侧边栏中间 Applications 折叠菜单
+│   ├── nav-projects.tsx       ← 侧边栏右侧 Projects 链接
+│   └── nav-user.tsx           ← 侧边栏底部 user 头像 + dropdown
 ├── components/
 │   ├── ui/                    ← shadcn/ui 27 个组件（**不要手改**）
-│   └── workspace-shell.tsx    ← 所有业务页面的统一外壳（侧边栏 + 面包屑）
+│   └── (其他 view 私有业务组件，如 AnimatedList / data-table 等)
 ├── lib/
 │   ├── api.ts                 ← **所有 HTTP 调用入口**，按 view 分段
 │   ├── types.ts               ← 跨 view 共享类型（Phase / SSEEvent / QAResponse / PostMetadata）
@@ -268,9 +276,10 @@ frontend/src/
 - **API 调用统一走 `src/lib/api.ts`**，按 view 分组加函数；不要在组件里直接 fetch
 - **跨 view 共享类型**放 `lib/types.ts`，view 私有类型放 `views/<view>/lib/types.ts`
 - **页面外壳统一用 `<WorkspaceShell sectionLabel="..." pageTitle="...">`**，自带侧边栏 + 面包屑
+  - 默认外层 `p-6 gap-6`（外 padding + 子元素间距），view 自己**不要再加外层 padding wrapper**
+  - 需要"全屏画布"的页面（如 [`application-analysis`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/application-analysis/index.tsx)）传 `fullBleed`，关掉外层 p-6，自己负责 padding
 - **新 UI 组件**先看 `components/ui/` 有没有现成的，没有的话查看 shadcn ui 组件库，如果有就执行添加到项目中
 - **新页面UI style 要与现有项目一致**
-- **card组件 不要有黑色边框， 边框应该是浅灰色的**
 - **shadcn/ui 组件不要手改**（`noUnusedLocals` / `verbatimModuleSyntax` 都开着，改坏一处全报错）
 - **路径别名**：`@/*` → `./src/*`（见 `tsconfig.app.json`）
 

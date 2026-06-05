@@ -1,8 +1,9 @@
-import { Link } from "react-router-dom"
+﻿import { Link } from "react-router-dom"
 import type { ReactNode } from "react"
 import { Home } from "lucide-react"
 
-import { AppSidebar } from "@/components/app-sidebar"
+import { cn } from "@/lib/utils"
+import { AppSidebar } from "@/layout/app-sidebar"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -21,18 +22,25 @@ import {
 interface WorkspaceShellProps {
   sectionLabel: string
   pageTitle: string
+  /**
+   * 默认 false，子 view 会被套 `p-6` 外 padding + `gap-6` 子元素间距。
+   * 设为 true 时，去掉外层 p-6（保留 gap-6），用于 application-analysis 这种
+   * 需要"全屏画布"、自己负责 padding 的页面。
+   */
+  fullBleed?: boolean
   children: ReactNode
 }
 
 export function WorkspaceShell({
   sectionLabel,
   pageTitle,
+  fullBleed = false,
   children,
 }: WorkspaceShellProps) {
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar className="border-sidebar-border/30" variant="inset" />
-      <SidebarInset className="flex h-svh min-h-svh flex-col overflow-hidden md:m-0 md:rounded-none md:border-0 md:border-l md:border-border/30 md:shadow-none">
+      <SidebarInset className="flex h-svh min-h-0 flex-col overflow-hidden md:!m-0 md:rounded-none md:border-0 md:border-l md:border-border/30 md:shadow-none">
         <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-2 border-b border-border/75 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
           <div className="flex items-center gap-3 px-4">
             <SidebarTrigger />
@@ -71,7 +79,14 @@ export function WorkspaceShell({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="flex min-h-full flex-col gap-6 p-6">{children}</div>
+          <div
+            className={cn(
+              "flex min-h-full flex-col gap-6",
+              fullBleed ? "p-0" : "p-6"
+            )}
+          >
+            {children}
+          </div>
         </div>
       </SidebarInset>
     </SidebarProvider>
