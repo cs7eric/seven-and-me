@@ -75,6 +75,10 @@ export default function ApplicationAnalysisPage() {
   const persistTimerRef = useRef<number | null>(null)
   const latestTargetsRef = useRef<ApplicationAnalysisTarget[]>([])
   const latestHorizonRef = useRef<Record<string, number>>({ ...DEFAULT_HORIZON })
+  // 是否有未持久化的本地修改。cleanup 仅在 loaded && dirty 时才回写，避免打开页面瞬间
+  // (latestTargetsRef 还没被 fetch 赋值) 误把后端真实数据清空。
+  const dirtyRef = useRef(false)
+  const targetsLoadedRef = useRef(false)
   const [result, setResult] = useState<ApplicationAnalysisResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
@@ -107,6 +111,7 @@ export default function ApplicationAnalysisPage() {
       latestTargetsRef.current = items
       setHorizon({ ...DEFAULT_HORIZON, ...configHorizon })
       latestHorizonRef.current = { ...DEFAULT_HORIZON, ...configHorizon }
+      targetsLoadedRef.current = true
       if (!selectedId && items.length) {
         // 优先默认选中上证指数 000001（symbol 匹配 index-sh000001 / sh000001 / 000001）
         const preferred =
@@ -146,8 +151,14 @@ export default function ApplicationAnalysisPage() {
         window.clearTimeout(persistTimerRef.current)
         persistTimerRef.current = null
       }
+      // 只有「加载过 targets」且「用户做过未持久化修改」时才回写。
+      // 否则会在打开页面瞬间 cleanup 把 latestTargetsRef.current=[] 写回后端。
+      if (!targetsLoadedRef.current || !dirtyRef.current) {
+        return
+      }
       const snapshotTargets = [...latestTargetsRef.current]
       const snapshotHorizon = { ...latestHorizonRef.current }
+      dirtyRef.current = false
       void saveApplicationAnalysisTargets({
         horizon: {
           days: Number(snapshotHorizon.days) || 120,
@@ -438,12 +449,15 @@ export default function ApplicationAnalysisPage() {
         },
         items: snapshotTargets,
       })
+      // 持久化成功后清掉 dirty 标记，避免 cleanup 重复写。
+      dirtyRef.current = false
     } catch (err) {
       setError(err instanceof Error ? err.message : "目标列表保存失败")
     }
   }, [])
 
   const schedulePersist = useCallback(() => {
+    dirtyRef.current = true
     if (persistTimerRef.current !== null) {
       window.clearTimeout(persistTimerRef.current)
     }

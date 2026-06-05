@@ -20,6 +20,7 @@ import type {
 } from "../../stock-chart/lib/types"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { notification } from "@/components/ui/notification"
+import DogLoader from "@/components/loader/dog-loader"
 
 export interface TechnicalIndicatorTabProps {
   targetType: StockTargetType
@@ -96,6 +97,7 @@ export function TechnicalIndicatorTab({
   const [breadth, setBreadth] = useState<MarketBreadth | null>(null)
   const [breadthSeries, setBreadthSeries] = useState<MarketBreadthSeries>([])
   const [error, setError] = useState<string>("")
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let active = true
@@ -104,6 +106,7 @@ export function TechnicalIndicatorTab({
       try {
         if (!active) return
         setError("")
+        setLoading(true)
         const klineResult = await fetchStockKlines({ targetType, symbol, name, period, adjust })
         if (!active) return
         setBars(klineResult.items)
@@ -160,6 +163,8 @@ export function TechnicalIndicatorTab({
         setBreadthSeries([])
         setError(msg)
         notification.danger({ title: "加载技术指标失败", description: msg })
+      } finally {
+        if (active) setLoading(false)
       }
     })()
 
@@ -175,6 +180,10 @@ export function TechnicalIndicatorTab({
         <AlertDescription>{error}</AlertDescription>
       </Alert>
     )
+  }
+
+  if (loading && bars.length === 0) {
+    return <DogLoader overlay size={25} label="正在加载技术指标..." />
   }
 
   return (

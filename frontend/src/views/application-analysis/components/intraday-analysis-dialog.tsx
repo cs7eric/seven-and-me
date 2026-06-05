@@ -22,6 +22,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { createStockAnnotation, deleteStockAnnotation, fetchStockIntraday, listStockAnnotations, runApplicationAnalysis } from "@/lib/api"
 import { notification } from "@/components/ui/notification"
+import { Skeleton } from "@/components/ui/skeleton"
+import DogLoader from "@/components/loader/dog-loader"
 
 import type {
   ApplicationAnalysisResponse,
@@ -635,9 +637,7 @@ export function IntradayAnalysisDialog({
           </div>
 
           {loading ? (
-            <div className="grid min-h-0 flex-1 place-items-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-              正在加载当日分时和分钟 K...
-            </div>
+            <DogLoader overlay size={25} label="正在加载当日分时和分钟 K..." />
           ) : error ? (
             <div className="grid min-h-0 flex-1 place-items-center rounded-2xl border border-rose-200 bg-rose-50 px-6 text-sm text-rose-600">
               {error}
@@ -889,11 +889,11 @@ export function IntradayAnalysisDialog({
                   </div>
                   <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700">
                     {aiLoading ? (
-                      <div className="grid h-full place-items-center text-slate-500">
-                        <div className="flex flex-col items-center gap-2">
-                          <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-700" />
-                          <span>AI 正在分析分时和分钟 K…</span>
-                        </div>
+                      <div className="flex flex-col items-center gap-3 py-6 text-slate-500">
+                        <Skeleton className="h-4 w-3/4" />
+                        <Skeleton className="h-4 w-2/3" />
+                        <Skeleton className="h-4 w-5/6" />
+                        <Skeleton className="h-4 w-1/2" />
                       </div>
                     ) : aiError ? (
                       <div className="text-rose-600">{aiError}</div>

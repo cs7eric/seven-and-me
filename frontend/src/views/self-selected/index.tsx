@@ -5,7 +5,7 @@ import { notification } from "@/components/ui/notification"
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
+import DogLoader from "@/components/loader/dog-loader"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   type SelfSelectedGroup,
@@ -240,10 +240,7 @@ export default function SelfSelectedPage() {
       />
 
       {loading && groups.length === 0 ? (
-        <div className="space-y-3">
-          <Skeleton className="h-10 w-full rounded-xl" />
-          <Skeleton className="h-32 w-full rounded-2xl" />
-        </div>
+        <DogLoader overlay size={25} label="正在加载自选分类..." />
       ) : groups.length === 0 ? (
         <EmptyState onCreate={handleCreateGroup} />
       ) : (

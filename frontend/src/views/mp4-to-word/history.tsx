@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { notification } from "@/components/ui/notification";
+import DogLoader from "@/components/loader/dog-loader";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
 import { AskSection } from "./components/AskSection";
@@ -299,13 +300,7 @@ export default function Mp4HistoryPage() {
         )}
 
         {loading ? (
-          <Card>
-            <CardContent className="space-y-3 p-6">
-              <Skeleton className="h-6 w-1/2" />
-              <Skeleton className="h-20 w-full" />
-              <Skeleton className="h-20 w-full" />
-            </CardContent>
-          </Card>
+          <DogLoader overlay size={25} label="正在加载历史记录..." />
         ) : id && record ? (
           <HistoryContent record={record} />
         ) : items.length ? (

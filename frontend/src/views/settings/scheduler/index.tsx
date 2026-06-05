@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Activity,
   AlertTriangle,
@@ -23,8 +23,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
 import { notification } from "@/components/ui/notification"
+import DogLoader from "@/components/loader/dog-loader"
 import {
   type SchedulerJobItem,
   disableSchedulerJob,
@@ -529,11 +529,7 @@ export default function SchedulerSettingsPage() {
       ) : null}
 
       {loading && jobs.length === 0 ? (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Skeleton className="h-72 w-full rounded-2xl" />
-          <Skeleton className="h-72 w-full rounded-2xl" />
-          <Skeleton className="h-72 w-full rounded-2xl" />
-        </div>
+        <DogLoader overlay size={25} label="正在加载调度任务..." />
       ) : jobs.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-3 py-12 text-center">

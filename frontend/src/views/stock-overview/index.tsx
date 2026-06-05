@@ -10,6 +10,7 @@ import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { fetchMarketOverview } from "@/lib/api"
 import { notification } from "@/components/ui/notification"
+import DogLoader from "@/components/loader/dog-loader"
 
 interface MarketLevel {
   price: number
@@ -743,7 +744,7 @@ export default function StockOverviewPage() {
           ) : null}
 
           {!hasData && !error ? (
-            <Card className={cardChrome}><CardContent className="flex items-center gap-3 p-6 text-sm text-slate-500"><RefreshCw className="size-4 animate-spin text-slate-500" />正在生成市场情景判断...</CardContent></Card>
+            <DogLoader overlay size={25} label="正在生成市场情景判断..." />
           ) : null}
 
           {data ? (
