@@ -15,6 +15,10 @@ from backend.services.scheduler.auction_analysis_scheduler import (
     start_auction_analysis_scheduler,
 )
 from backend.services.scheduler.turnover_scheduler import is_turnover_scheduler_enabled, start_turnover_scheduler
+from backend.services.scheduler.stock_universe_scheduler import (
+    is_stock_universe_scheduler_enabled,
+    start_stock_universe_scheduler,
+)
 from backend.services.stock.application_analysis_scheduler import (
     is_application_analysis_scheduler_enabled,
     start_application_analysis_scheduler,
@@ -53,3 +57,8 @@ def register_blueprints(app: Flask) -> None:
             start_auction_analysis_scheduler()
         except Exception as exc:
             print(f'[Bootstrap] Auction Analysis scheduler 启动失败: {exc}', flush=True)
+    if is_stock_universe_scheduler_enabled():
+        try:
+            start_stock_universe_scheduler()
+        except Exception as exc:
+            print(f'[Bootstrap] Stock Universe scheduler 启动失败: {exc}', flush=True)

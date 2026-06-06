@@ -28,6 +28,16 @@
       "service_class": "ApplicationAnalysisScheduler",
       "enabled": true,
       "registered_at": "2026-06-05T14:26:56.743224"
+    },
+    {
+      "id": "stock_universe_refresh",
+      "name": "A 股全市场持久化",
+      "description": "工作日 17:00 收盘后, 拉全 A 股行情 + 题材 + 行业归一, 持久化到 reference/stock-universe/YYYY-MM-DD.json, 热力图运行时读此 JSON",
+      "config_file": "stock_universe_job.json",
+      "service_module": "backend.services.scheduler.stock_universe_scheduler",
+      "service_class": "StockUniverseRefreshScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-06"
     }
   ]
 }

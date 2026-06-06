@@ -48,6 +48,15 @@ APPLICATION_ANALYSIS_DAILY_TIMEZONE_OFFSET_HOURS = 8
 # ---- 换手率单独持久化目录（不再写进 K 线主文件） ----
 STOCK_TURNOVER_DIR = REFERENCE_FOLDER / 'stock' / 'turnover'
 
+# ---- A 股"全市场"日持久化（用于同花顺式热力图） ----
+# 每日 17:00（盘后）由 backend/scripts/refresh_stock_universe.py 拉取:
+#   1. 全 A 股 code
+#   2. 每只股的实时快照
+#   3. 每只股的题材 (helpers.stock_topics) + reason 行业归一
+# 运行时 (sector-heatmap) 读最新一份 JSON, 不再调 eltdx.
+STOCK_UNIVERSE_DIR = REFERENCE_FOLDER / 'stock-universe'
+STOCK_UNIVERSE_INDEX_FILE = STOCK_UNIVERSE_DIR / 'index.json'
+
 # ---- scheduler 维护目录（F:\dev-repo\mp4-to-word-new\scheduler） ----
 SCHEDULER_DIR = BASE_DIR / 'scheduler'
 SCHEDULER_JOBS_FILE = SCHEDULER_DIR / 'jobs.json'
