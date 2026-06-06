@@ -77,3 +77,35 @@ export interface IndustryApplicationTargetCode {
   name: string
   kind: "industry" | "concept"
 }
+
+/**
+ * Overview Tab 用: 行业/概念 指数当日行情条目 (来自 f10.list_industry/concept_sectors_market)
+ */
+export interface SectorOverviewItem {
+  full_code: string
+  name: string
+  kind: "industry" | "concept"
+  last_price: number | null
+  pre_close_price: number | null
+  open_price: number | null
+  high_price: number | null
+  low_price: number | null
+  change: number | null
+  change_pct: number | null
+  amplitude_pct: number | null
+  high_pct: number | null
+  low_pct: number | null
+  open_pct: number | null
+  volume: number | null
+  amount: number | null
+  trading_date: string | null
+}
+
+export interface IndustryApplicationOverviewResponse {
+  ok: boolean
+  items: SectorOverviewItem[]
+  industry_count: number
+  concept_count: number
+  fetched_at: string | null
+  source: string
+}

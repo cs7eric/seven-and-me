@@ -1026,6 +1026,30 @@ paths:
                         updated_at: { type: string, format: date-time }
                   count: { type: integer }
 
+  /api/stock-chart/industry-application/overview:
+    get:
+      tags: [Stock Chart]
+      summary: 交易日板块涨跌总览（Overview Tab 同花顺式热力图用）
+      description: |
+        一次返回 32 申万行业 + ~50 常用概念主题指数的当日行情（涨幅 / 振幅 / 成交额）。
+        数据源走 f10.list_industry_sectors_market + f10.list_concept_sectors_market。
+      parameters:
+        - in: query
+          name: sort_by
+          schema: { type: string, default: 涨幅 }
+        - in: query
+          name: ascending
+          schema: { type: boolean, default: false }
+        - in: query
+          name: count
+          schema: { type: integer, default: 200 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndustryApplicationOverviewResponse" }
+
   # ====================================================================
   # F10
   # ====================================================================
@@ -2355,6 +2379,39 @@ components:
           items: { $ref: "#/components/schemas/IndexBar" }
         indicators: { $ref: "#/components/schemas/IndustryApplicationIndicators" }
         meta: { type: object, additionalProperties: true }
+
+    # ---- Overview Tab ----
+    IndustryApplicationOverviewResponse:
+      type: object
+      properties:
+        ok: { type: boolean }
+        industry_count: { type: integer }
+        concept_count: { type: integer }
+        fetched_at: { type: string, format: date-time, nullable: true }
+        source: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/SectorOverviewItem" }
+    SectorOverviewItem:
+      type: object
+      properties:
+        full_code: { type: string, example: "sh880330" }
+        name: { type: string, example: "通信" }
+        kind: { type: string, enum: [industry, concept] }
+        last_price: { type: number, nullable: true }
+        pre_close_price: { type: number, nullable: true }
+        open_price: { type: number, nullable: true }
+        high_price: { type: number, nullable: true }
+        low_price: { type: number, nullable: true }
+        change: { type: number, nullable: true, description: "绝对涨跌 (点)" }
+        change_pct: { type: number, nullable: true, description: "涨跌幅 %" }
+        amplitude_pct: { type: number, nullable: true, description: "振幅 %" }
+        high_pct: { type: number, nullable: true, description: "最高价涨幅 %" }
+        low_pct: { type: number, nullable: true, description: "最低价跌幅 %" }
+        open_pct: { type: number, nullable: true, description: "开盘价相对昨收 %" }
+        volume: { type: number, nullable: true }
+        amount: { type: number, nullable: true, description: "成交额（元）" }
+        trading_date: { type: string, format: date, nullable: true }
 
     # ---------------- MP4 History ----------------
     MP4History:

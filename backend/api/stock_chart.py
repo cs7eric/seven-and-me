@@ -620,3 +620,33 @@ def industry_application_list_results():
     if ia_service is None:
         return jsonify({'error': 'industry_application_service 未安装'}), 501
     return jsonify({'items': ia_service.list_all_results(), 'count': len(ia_service.list_all_results())})
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/overview')
+def industry_application_overview():
+    """交易日板块涨跌总览：32 申万行业 + ~50 概念主题, 一次返回。
+
+    用来驱动 Overview Tab 的「同花顺式」长方形热力图。"""
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    sort_by = str(request.args.get('sort_by', '涨幅')).strip() or '涨幅'
+    try:
+        count = int(request.args.get('count', 200))
+    except (TypeError, ValueError):
+        count = 200
+    ascending = str(request.args.get('ascending', 'false')).strip().lower() in {'1', 'true', 'yes'}
+
+    industry_payload = ia_service.industry_sectors_market_snapshot(
+        sort_by=sort_by, count=count, ascending=ascending
+    )
+    concept_payload = ia_service.concept_sectors_market_snapshot(
+        sort_by=sort_by, count=count, ascending=ascending
+    )
+    return jsonify({
+        'ok': True,
+        'items': (industry_payload.get('items') or []) + (concept_payload.get('items') or []),
+        'industry_count': len(industry_payload.get('items') or []),
+        'concept_count': len(concept_payload.get('items') or []),
+        'fetched_at': industry_payload.get('fetched_at') or concept_payload.get('fetched_at'),
+        'source': 'f10.list_industry_sectors_market + f10.list_concept_sectors_market',
+    })

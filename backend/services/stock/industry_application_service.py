@@ -270,6 +270,26 @@ def list_all_results() -> list[dict[str, Any]]:
     return list_result_files()
 
 
+def industry_sectors_market_snapshot(
+    *, sort_by: str = "涨幅", count: int = 200, ascending: bool = False
+) -> dict[str, Any]:
+    """Overview Tab 用: 32 申万行业指数的当日涨跌 / 成交额 / 振幅 (走 f10 缓存)."""
+    from .f10.service import get_fundamentals_service
+    return get_fundamentals_service().list_industry_sectors_market(
+        sort_by=sort_by, count=count, ascending=ascending
+    )
+
+
+def concept_sectors_market_snapshot(
+    *, sort_by: str = "涨幅", count: int = 200, ascending: bool = False
+) -> dict[str, Any]:
+    """Overview Tab 用: 50 概念主题指数的当日行情."""
+    from .f10.service import get_fundamentals_service
+    return get_fundamentals_service().list_concept_sectors_market(
+        sort_by=sort_by, count=count, ascending=ascending
+    )
+
+
 # ---------------------------------------------------------------------------
 # 兼容旧 application-analysis 风格的入口（共用一份组件时用到）
 # ---------------------------------------------------------------------------

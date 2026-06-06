@@ -24,6 +24,7 @@ import { WorkspaceShell } from "@/layout/workspace-shell"
 import { notification } from "@/components/ui/notification"
 import {
   fetchIndustryApplicationKline,
+  fetchIndustryApplicationOverview,
   fetchIndustryApplicationResult,
   fetchIndustryApplicationTargetCodes,
   fetchIndustryApplicationTargets,
@@ -32,6 +33,7 @@ import {
   type IndustryApplicationIndexBar,
   type IndustryApplicationTarget,
   type IndustryApplicationTargetCode,
+  type SectorOverviewItem,
 } from "@/lib/api"
 import type { ApplicationAnalysisTarget } from "@/lib/api"
 import type { StockKlineBar } from "../stock-chart/lib/types"
@@ -43,6 +45,7 @@ import { TechnicalIndicatorPanel } from "../stock-chart/components/technical-ind
 import { SELECTION_COLORS } from "../application-analysis/lib/constants"
 
 import { NotApplicableCard } from "./components/not-applicable-card"
+import { SectorHeatmap } from "./components/sector-heatmap"
 
 const DEFAULT_HORIZON = { days: 120, segments: 4 }
 
@@ -86,9 +89,10 @@ function industryTargetToAppTarget(
 // Tab 配置
 // =============================================================================
 
-type MainTab = "chart" | "ai-direction" | "analysis-detail" | "auction" | "indicator" | "fund-flow"
+type MainTab = "overview" | "chart" | "ai-direction" | "analysis-detail" | "auction" | "indicator" | "fund-flow"
 
 const TABS: Array<{ value: MainTab; label: string }> = [
+  { value: "overview", label: "总览" },
   { value: "chart", label: "K 线" },
   { value: "ai-direction", label: "AI 方向" },
   { value: "analysis-detail", label: "分析详情" },
@@ -140,6 +144,11 @@ export default function IndustryApplicationPage() {
   const [searchKeyword, setSearchKeyword] = useState("")
   const [targetCardCollapsed, setTargetCardCollapsed] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  // Overview Tab state
+  const [overviewItems, setOverviewItems] = useState<SectorOverviewItem[]>([])
+  const [overviewFetchedAt, setOverviewFetchedAt] = useState<string | null>(null)
+  const [overviewLoading, setOverviewLoading] = useState(false)
 
   const latestTargetsRef = useRef<IndustryApplicationTarget[]>([])
   latestTargetsRef.current = targets
@@ -198,6 +207,29 @@ export default function IndustryApplicationPage() {
   useEffect(() => {
     void loadAll()
   }, [loadAll])
+
+  // Overview Tab: 拉行业 + 概念全量当日行情
+  const loadOverview = useCallback(async () => {
+    setOverviewLoading(true)
+    try {
+      const data = await fetchIndustryApplicationOverview({ sort_by: "涨幅", count: 200, ascending: false })
+      setOverviewItems(data.items || [])
+      setOverviewFetchedAt(data.fetched_at || null)
+    } catch (err) {
+      notification.danger({
+        title: "总览加载失败",
+        description: err instanceof Error ? err.message : "未知错误",
+      })
+    } finally {
+      setOverviewLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (activeMainTab === "overview" && overviewItems.length === 0 && !overviewLoading) {
+      void loadOverview()
+    }
+  }, [activeMainTab, overviewItems.length, overviewLoading, loadOverview])
 
   // URL query: ?target_type=industry&symbol=sh880301 → 预览
   useEffect(() => {
@@ -426,128 +458,94 @@ export default function IndustryApplicationPage() {
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Industry / Concept Application" fullBleed>
       <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-4 sm:p-6">
-        <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
-          {/* 左侧: target 列表 + 加入新标的 (复用 TargetCard 风格, 不接 stock search) */}
-          <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
-            <IndustryTargetCard
-              targets={filteredTargets}
-              allTargetCount={targets.length}
-              searchKeyword={searchKeyword}
-              setSearchKeyword={setSearchKeyword}
-              selectedId={selectedId}
-              setSelectedId={(id) => {
-                setSelectedId(id)
-                setPreviewTarget(null)
-              }}
-              expandedId={expandedId}
-              setExpandedId={setExpandedId}
-              collapsed={targetCardCollapsed}
-              setCollapsed={setTargetCardCollapsed}
-              horizon={horizon}
-              onHorizonChange={handleHorizonChange}
-              saving={saving}
-              onUpdate={handleUpdateTarget}
-              onRemove={handleRemove}
-              onTrigger={handleTriggerTarget}
-              onRefreshAll={handleRefreshAll}
-            />
-            <IndustryAddCard
-              codes={availableCodes}
-              onAdd={(c) => void handleAddFromCode(c)}
-            />
-          </div>
-
-          {/* 右侧: 顶部 header + 6 个 Tab */}
-          <Tabs
-            value={activeMainTab}
-            onValueChange={(value) => setActiveMainTab(value as MainTab)}
-            className="flex h-full min-h-0 flex-col gap-4"
-          >
-            <header className="flex min-h-0 shrink-0 flex-col gap-3">
-              {previewTarget ? (
-                <div className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-amber-800">
-                  <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-700">
-                    <Eye className="size-3.5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold">
-                      正在预览 {previewTarget.name} · {previewTarget.code}
-                    </div>
-                    <div className="text-xs text-amber-700/80">
-                      仅渲染图表 / 技术指标，AI 分析结果要「加入」后才会保存
-                    </div>
+      <Tabs
+        value={activeMainTab}
+        onValueChange={(value) => setActiveMainTab(value as MainTab)}
+        className="flex h-full min-h-0 flex-col gap-4"
+      >
+          <header className="flex min-h-0 shrink-0 flex-col gap-3">
+            {previewTarget ? (
+              <div className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-amber-800">
+                <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-700">
+                  <Eye className="size-3.5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold">
+                    正在预览 {previewTarget.name} · {previewTarget.code}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className="h-7 gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
-                    onClick={() => void handleAddPreview()}
-                    disabled={saving}
-                  >
-                    <Plus className="size-3.5" />
-                    加入应用分析
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 text-amber-800 hover:bg-amber-500/20 hover:text-amber-900"
-                    onClick={() => setPreviewTarget(null)}
-                  >
-                    取消预览
-                  </Button>
+                  <div className="text-xs text-amber-700/80">
+                    仅渲染图表 / 技术指标，AI 分析结果要「加入」后才会保存
+                  </div>
                 </div>
-              ) : null}
-
-              <ChartHeader
-                target={displayedTarget}
-                selectedLabel={previewTarget ? `${previewTarget.name} · ${previewTarget.code}` : "请选择左侧目标"}
-                adjust="qfq"
-                onAdjustChange={() => undefined}
-                running={refreshing}
-                canRun={Boolean(displayedTarget)}
-                onTrigger={() => void handleRefreshAll()}
-                onManualRun={() => displayedTarget && void handleTriggerTarget(displayedTarget.id)}
-              />
-
-              <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-                <TabsList className="bg-transparent p-0">
-                  {TABS.map((t) => (
-                    <TabsTrigger
-                      key={t.value}
-                      value={t.value}
-                      className="data-[state=active]:bg-slate-950 data-[state=active]:text-white"
-                    >
-                      {t.label}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-                <Separator orientation="vertical" className="mx-1 h-5" />
-                <div className="ml-auto text-[11px] text-slate-500">
-                  数据源: <span className="font-mono text-slate-700">eltdx</span> · 持久化:{" "}
-                  <span className="font-mono text-slate-700">reference/industry-application/</span>
-                </div>
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="h-7 gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
+                  onClick={() => void handleAddPreview()}
+                  disabled={saving}
+                >
+                  <Plus className="size-3.5" />
+                  加入应用分析
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-amber-800 hover:bg-amber-500/20 hover:text-amber-900"
+                  onClick={() => setPreviewTarget(null)}
+                >
+                  取消预览
+                </Button>
               </div>
-            </header>
+            ) : null}
 
-            <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
-              <TabsContent value="chart" className="m-0 h-full min-h-0 overflow-hidden">
-                {displayedTarget ? (
-                  <ChartCard
-                    collapsed={false}
-                    onToggle={() => undefined}
-                    selectedSymbol={displayedTarget.symbol}
-                    bars={stockBars}
-                    overlays={[]}
-                    selectionColors={SELECTION_COLORS}
-                    selectedBarTimestamps={[]}
-                    onSelectionChange={() => undefined}
-                    onAnalyzeSelection={() => undefined}
-                    loadingBars={loadingBars}
-                  />
-                ) : (
-                  <EmptyHint />
-                )}
-              </TabsContent>
+            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
+              <TabsList className="bg-transparent p-0">
+                {TABS.map((t) => (
+                  <TabsTrigger
+                    key={t.value}
+                    value={t.value}
+                    className="data-[state=active]:bg-slate-950 data-[state=active]:text-white"
+                  >
+                    {t.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <Separator orientation="vertical" className="mx-1 h-5" />
+              <div className="ml-auto text-[11px] text-slate-500">
+                数据源: <span className="font-mono text-slate-700">eltdx</span> · 持久化:{" "}
+                <span className="font-mono text-slate-700">reference/industry-application/</span>
+              </div>
+            </div>
+          </header>
+
+          <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <TabsContent value="overview" className="m-0 h-full min-h-0 overflow-hidden">
+              <SectorHeatmap
+                items={overviewItems}
+                loading={overviewLoading}
+                onRefresh={() => void loadOverview()}
+                lastUpdated={overviewFetchedAt}
+              />
+            </TabsContent>
+
+            <TabsContent value="chart" className="m-0 h-full min-h-0 overflow-hidden">
+              {displayedTarget ? (
+                <ChartCard
+                  collapsed={false}
+                  onToggle={() => undefined}
+                  selectedSymbol={displayedTarget.symbol}
+                  bars={stockBars}
+                  overlays={[]}
+                  selectionColors={SELECTION_COLORS}
+                  selectedBarTimestamps={[]}
+                  onSelectionChange={() => undefined}
+                  onAnalyzeSelection={() => undefined}
+                  loadingBars={loadingBars}
+                />
+              ) : (
+                <EmptyHint />
+              )}
+            </TabsContent>
 
               <TabsContent value="ai-direction" className="m-0 h-full min-h-0 overflow-auto">
                 <NotApplicableCard
@@ -599,7 +597,6 @@ export default function IndustryApplicationPage() {
               </TabsContent>
             </main>
           </Tabs>
-        </div>
       </div>
     </WorkspaceShell>
   )

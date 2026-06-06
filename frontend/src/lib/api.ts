@@ -7,6 +7,7 @@ import type {
   IndustryApplicationIndicators,
   IndustryApplicationIndexBar,
   IndustryApplicationKlinePayload,
+  IndustryApplicationOverviewResponse,
   IndustryApplicationTargetCode,
 } from "@/views/industry-application/lib/types";
 
@@ -1079,4 +1080,22 @@ export async function fetchIndustryApplicationResult(targetId: string): Promise<
     throw new Error(data.error || "拉取行业结果失败")
   }
   return (await res.json()) as { target: { id?: string; target_type?: string; symbol?: string; name?: string; tags?: string[] }; updated_at: string; kline: IndustryApplicationIndexBar[]; indicators: IndustryApplicationIndicators; meta?: Record<string, unknown> }
+}
+
+export async function fetchIndustryApplicationOverview(
+  opts: { sort_by?: string; ascending?: boolean; count?: number } = {},
+): Promise<IndustryApplicationOverviewResponse> {
+  const params = new URLSearchParams()
+  if (opts.sort_by) params.set("sort_by", opts.sort_by)
+  if (opts.ascending != null) params.set("ascending", String(opts.ascending))
+  if (opts.count) params.set("count", String(opts.count))
+  const qs = params.toString()
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/industry-application/overview${qs ? `?${qs}` : ""}`,
+  )
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || "拉取板块总览失败")
+  }
+  return (await res.json()) as IndustryApplicationOverviewResponse
 }
