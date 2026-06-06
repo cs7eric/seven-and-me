@@ -1,8 +1,18 @@
 {
   "type": "mp4_parse",
   "version": 1,
-  "updated_at": "2026-05-31T15:22:35.223887",
+  "updated_at": "2026-06-06T18:10:54.358608",
   "items": [
+    {
+      "id": "mp4-dd1eac7f-d3d1-4e9f-988b-d3add2b24ea2",
+      "title": "养家心法：短线交易的情绪与仓位智慧",
+      "created_at": "2026-06-06T18:10:54.358608",
+      "updated_at": "2026-06-06T18:10:54.358608",
+      "task_id": "dd1eac7f-d3d1-4e9f-988b-d3add2b24ea2",
+      "status": "done",
+      "file_name": "养家心法#股票干货 #游资心法 #龙头战法 #打板战法 #交易系统.mp4",
+      "data_file": "parse/data/mp4-dd1eac7f-d3d1-4e9f-988b-d3add2b24ea2.json"
+    },
     {
       "id": "mp4-99695d00-2170-402c-b8a3-0cdd84949bda",
       "title": "短线辨识度与龙头股筛选法",

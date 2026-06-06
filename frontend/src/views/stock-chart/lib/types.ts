@@ -83,6 +83,7 @@ export interface ApplicationAnalysisResponse {
 export interface StockSignalPoint {
   id: string
   timestamp: number
+  trade_date?: string
   price: number
   side: "B" | "S"
   label?: string

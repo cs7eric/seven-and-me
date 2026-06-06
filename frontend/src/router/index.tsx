@@ -4,6 +4,7 @@ import ApplicationAnalysisPage from "../views/application-analysis"
 import DashboardPage from "../views/dashboard"
 import DownloaderPage from "../views/downloader"
 import HomePage from "../views/home"
+import HeatmapDemoPage, { HeatmapDataDebug } from "../views/heatmap-demo"
 import IndustryApplicationPage from "../views/industry-application"
 import Mp4ToWordPage from "../views/mp4-to-word"
 import Mp4HistoryPage from "../views/mp4-to-word/history"
@@ -57,6 +58,14 @@ export const router = createBrowserRouter([
       {
         path: "stock-overview/industry-application",
         element: <IndustryApplicationPage />,
+      },
+      {
+        path: "heatmap-demo",
+        element: <HeatmapDemoPage />,
+      },
+      {
+        path: "heatmap-data-debug",
+        element: <HeatmapDataDebug />,
       },
       {
         path: "stock-overview/self-selected",

@@ -9,10 +9,13 @@ import type {
   IndustryApplicationKlinePayload,
   IndustryApplicationOverviewResponse,
   IndustryApplicationTargetCode,
+  MarketHeatmapResponse,
 } from "@/views/industry-application/lib/types";
 
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
+
+export type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
 
 export interface DownloaderPageInfo {
   page: number;
@@ -1098,4 +1101,13 @@ export async function fetchIndustryApplicationOverview(
     throw new Error(data.error || "拉取板块总览失败")
   }
   return (await res.json()) as IndustryApplicationOverviewResponse
+}
+
+export async function fetchMarketHeatmap(): Promise<MarketHeatmapResponse> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/heatmap`)
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || "拉取市场热力图失败")
+  }
+  return (await res.json()) as MarketHeatmapResponse
 }

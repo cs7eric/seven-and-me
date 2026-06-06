@@ -35,6 +35,7 @@ from backend.services.stock.application_analysis_scheduler import (
 from backend.services.stock.application_analysis_store import load_targets, result_path, save_targets, list_history, read_result
 from backend.services.stock.market_overview_service import build_market_overview
 from backend.services.stock.search_service import search_stock_chart
+from backend.services.stock.market_heatmap_service import build_market_heatmap
 from backend.services.stock.workspace_service import (
     create_stock_annotation,
     get_stock_workspace,
@@ -650,3 +651,23 @@ def industry_application_overview():
         'fetched_at': industry_payload.get('fetched_at') or concept_payload.get('fetched_at'),
         'source': 'f10.list_industry_sectors_market + f10.list_concept_sectors_market',
     })
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/heatmap')
+def industry_application_heatmap():
+    from backend.services.stock.market_heatmap_service import build_market_heatmap
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        payload = build_market_heatmap()
+    except Exception as exc:
+        _log.warning("build_market_heatmap failed: %s", exc)
+        return jsonify({
+            "ok": False,
+            "items": [],
+            "totalStocks": 0,
+            "fetchedAt": None,
+            "source": "eltdx.list_by_category(6) (failed)",
+            "error": str(exc),
+        })
+    return jsonify(payload)

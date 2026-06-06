@@ -1,4 +1,3 @@
-import DogLoader from "@/components/loader/dog-loader"
 import { Skeleton } from "@/components/ui/skeleton"
 
 export function LoadingState() {

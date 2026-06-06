@@ -24,25 +24,25 @@ import { WorkspaceShell } from "@/layout/workspace-shell"
 import { notification } from "@/components/ui/notification"
 import {
   fetchIndustryApplicationKline,
-  fetchIndustryApplicationOverview,
   fetchIndustryApplicationResult,
   fetchIndustryApplicationTargetCodes,
   fetchIndustryApplicationTargets,
+  fetchMarketHeatmap,
   refreshIndustryApplication,
   saveIndustryApplicationTargets,
-  type IndustryApplicationIndexBar,
-  type IndustryApplicationTarget,
-  type IndustryApplicationTargetCode,
-  type SectorOverviewItem,
 } from "@/lib/api"
 import type { ApplicationAnalysisTarget } from "@/lib/api"
 import type { StockKlineBar } from "../stock-chart/lib/types"
+import type {
+  IndustryApplicationIndexBar,
+  IndustryApplicationTarget,
+  IndustryApplicationTargetCode,
+  MarketHeatmapResponse,
+} from "./lib/types"
 
 // 共用的 application-analysis 组件
 import { ChartCard } from "../application-analysis/components/chart-card"
-import { ChartHeader } from "../application-analysis/components/chart-header"
 import { TechnicalIndicatorPanel } from "../stock-chart/components/technical-indicator-panel"
-import { SELECTION_COLORS } from "../application-analysis/lib/constants"
 
 import { NotApplicableCard } from "./components/not-applicable-card"
 import { SectorHeatmap } from "./components/sector-heatmap"
@@ -107,7 +107,7 @@ const TABS: Array<{ value: MainTab; label: string }> = [
 
 export default function IndustryApplicationPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [activeMainTab, setActiveMainTab] = useState<MainTab>("chart")
+  const [activeMainTab, setActiveMainTab] = useState<MainTab>("overview")
   const [horizon, setHorizon] = useState<Record<string, number>>(DEFAULT_HORIZON)
   const [targets, setTargets] = useState<IndustryApplicationTarget[]>([])
   const [targetCodes, setTargetCodes] = useState<IndustryApplicationTargetCode[]>([])
@@ -146,9 +146,9 @@ export default function IndustryApplicationPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   // Overview Tab state
-  const [overviewItems, setOverviewItems] = useState<SectorOverviewItem[]>([])
-  const [overviewFetchedAt, setOverviewFetchedAt] = useState<string | null>(null)
-  const [overviewLoading, setOverviewLoading] = useState(false)
+  const [heatmapData, setHeatmapData] = useState<MarketHeatmapResponse | null>(null)
+  const [heatmapLoading, setHeatmapLoading] = useState(false)
+  const [heatmapAutoRefresh, setHeatmapAutoRefresh] = useState(false)
 
   const latestTargetsRef = useRef<IndustryApplicationTarget[]>([])
   latestTargetsRef.current = targets
@@ -208,28 +208,35 @@ export default function IndustryApplicationPage() {
     void loadAll()
   }, [loadAll])
 
-  // Overview Tab: 拉行业 + 概念全量当日行情
-  const loadOverview = useCallback(async () => {
-    setOverviewLoading(true)
+  // Overview Tab: 拉全市场行业 + 个股热力图
+  const loadHeatmap = useCallback(async () => {
+    setHeatmapLoading(true)
     try {
-      const data = await fetchIndustryApplicationOverview({ sort_by: "涨幅", count: 200, ascending: false })
-      setOverviewItems(data.items || [])
-      setOverviewFetchedAt(data.fetched_at || null)
+      const data = await fetchMarketHeatmap()
+      setHeatmapData(data)
     } catch (err) {
       notification.danger({
-        title: "总览加载失败",
+        title: "热力图加载失败",
         description: err instanceof Error ? err.message : "未知错误",
       })
     } finally {
-      setOverviewLoading(false)
+      setHeatmapLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    if (activeMainTab === "overview" && overviewItems.length === 0 && !overviewLoading) {
-      void loadOverview()
+    if (activeMainTab === "overview" && !heatmapData && !heatmapLoading) {
+      void loadHeatmap()
     }
-  }, [activeMainTab, overviewItems.length, overviewLoading, loadOverview])
+  }, [activeMainTab, heatmapData, heatmapLoading, loadHeatmap])
+
+  useEffect(() => {
+    if (!heatmapAutoRefresh || activeMainTab !== "overview") return
+    const timer = window.setInterval(() => {
+      void loadHeatmap()
+    }, 15_000)
+    return () => window.clearInterval(timer)
+  }, [activeMainTab, heatmapAutoRefresh, loadHeatmap])
 
   // URL query: ?target_type=industry&symbol=sh880301 → 预览
   useEffect(() => {
@@ -450,6 +457,7 @@ export default function IndustryApplicationPage() {
   }, [targetCodes, targets])
 
   const stockBars: StockKlineBar[] = useMemo(() => kline.map(eltdxBarToStockBar), [kline])
+  const selectionColorMap = useMemo<Record<string, string>>(() => ({}), [])
 
   // ---------------------------------------------------------------------------
   // 渲染
@@ -521,80 +529,110 @@ export default function IndustryApplicationPage() {
           <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
             <TabsContent value="overview" className="m-0 h-full min-h-0 overflow-hidden">
               <SectorHeatmap
-                items={overviewItems}
-                loading={overviewLoading}
-                onRefresh={() => void loadOverview()}
-                lastUpdated={overviewFetchedAt}
+                data={heatmapData}
+                loading={heatmapLoading}
+                onRefresh={() => void loadHeatmap()}
+                autoRefresh={heatmapAutoRefresh}
+                onAutoRefreshChange={setHeatmapAutoRefresh}
               />
             </TabsContent>
 
-            <TabsContent value="chart" className="m-0 h-full min-h-0 overflow-hidden">
-              {displayedTarget ? (
-                <ChartCard
-                  collapsed={false}
-                  onToggle={() => undefined}
-                  selectedSymbol={displayedTarget.symbol}
-                  bars={stockBars}
-                  overlays={[]}
-                  selectionColors={SELECTION_COLORS}
-                  selectedBarTimestamps={[]}
-                  onSelectionChange={() => undefined}
-                  onAnalyzeSelection={() => undefined}
-                  loadingBars={loadingBars}
-                />
-              ) : (
-                <EmptyHint />
-              )}
-            </TabsContent>
-
-              <TabsContent value="ai-direction" className="m-0 h-full min-h-0 overflow-auto">
-                <NotApplicableCard
-                  title="AI 方向"
-                  description="板块 / 概念指数没有个股层面的舆情 / 产业链关联数据, 暂不做 AI 方向分析。"
-                />
-              </TabsContent>
-
-              <TabsContent value="analysis-detail" className="m-0 h-full min-h-0 overflow-auto">
-                <NotApplicableCard
-                  title="分析详情"
-                  description="板块 / 概念指数的 LLM 综合分析由后续接入, 当前先用技术指标 + K 线即可判读。"
-                />
-              </TabsContent>
-
-              <TabsContent value="auction" className="m-0 h-full min-h-0 overflow-auto">
-                <NotApplicableCard
-                  title="分时"
-                  description="板块指数本身没有日内分时, 当前 tab 仅对个股有意义。"
-                />
-              </TabsContent>
-
-              <TabsContent value="indicator" className="m-0 h-full min-h-0 overflow-auto">
-                {displayedTarget && stockBars.length > 0 ? (
-                  <TechnicalIndicatorPanel
-                    bars={stockBars}
-                    indexBarsMap={null}
-                    breadth={null}
-                    breadthSeries={null}
-                    stockMeta={null}
+            <div className={activeMainTab === "overview" ? "hidden" : "grid h-full min-h-0 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]"}>
+              <aside className="min-h-0 overflow-y-auto">
+                <div className="space-y-4">
+                  <IndustryTargetCard
+                    targets={filteredTargets}
+                    allTargetCount={targets.length}
+                    searchKeyword={searchKeyword}
+                    setSearchKeyword={setSearchKeyword}
+                    selectedId={selectedId}
+                    setSelectedId={setSelectedId}
+                    expandedId={expandedId}
+                    setExpandedId={setExpandedId}
+                    collapsed={targetCardCollapsed}
+                    setCollapsed={setTargetCardCollapsed}
+                    horizon={horizon}
+                    onHorizonChange={handleHorizonChange}
+                    saving={saving || refreshing}
+                    onUpdate={handleUpdateTarget}
+                    onRemove={handleRemove}
+                    onTrigger={handleTriggerTarget}
+                    onRefreshAll={handleRefreshAll}
                   />
-                ) : (
+                  <IndustryAddCard codes={availableCodes} onAdd={(code) => void handleAddFromCode(code)} />
+                </div>
+              </aside>
+
+              <div className="min-h-0 min-w-0 overflow-hidden">
+                <TabsContent value="chart" className="m-0 h-full min-h-0 overflow-hidden">
+                  {displayedTarget ? (
+                    <ChartCard
+                      collapsed={false}
+                      onToggle={() => undefined}
+                      selectedSymbol={displayedTarget.symbol}
+                      bars={stockBars}
+                      overlays={[]}
+                      selectionColors={selectionColorMap}
+                      selectedBarTimestamps={[]}
+                      onSelectionChange={() => undefined}
+                      onAnalyzeSelection={() => undefined}
+                      loadingBars={loadingBars}
+                    />
+                  ) : (
+                    <EmptyHint />
+                  )}
+                </TabsContent>
+
+                <TabsContent value="ai-direction" className="m-0 h-full min-h-0 overflow-auto">
                   <NotApplicableCard
-                    title="技术指标"
-                    description={
-                      displayedTarget
-                        ? "暂无 K 线数据, 请先刷新。"
-                        : "请先选择左侧行业 / 概念。"
-                    }
+                    title="AI 方向"
+                    description="板块 / 概念指数没有个股层面的舆情 / 产业链关联数据, 暂不做 AI 方向分析。"
                   />
-                )}
-              </TabsContent>
+                </TabsContent>
 
-              <TabsContent value="fund-flow" className="m-0 h-full min-h-0 overflow-auto">
-                <NotApplicableCard
-                  title="资金流"
-                  description="板块 / 概念资金流是成分股的合计, 当前接口暂无该聚合, 后续接入。"
-                />
-              </TabsContent>
+                <TabsContent value="analysis-detail" className="m-0 h-full min-h-0 overflow-auto">
+                  <NotApplicableCard
+                    title="分析详情"
+                    description="板块 / 概念指数的 LLM 综合分析由后续接入, 当前先用技术指标 + K 线即可判读。"
+                  />
+                </TabsContent>
+
+                <TabsContent value="auction" className="m-0 h-full min-h-0 overflow-auto">
+                  <NotApplicableCard
+                    title="分时"
+                    description="板块指数本身没有日内分时, 当前 tab 仅对个股有意义。"
+                  />
+                </TabsContent>
+
+                <TabsContent value="indicator" className="m-0 h-full min-h-0 overflow-auto">
+                  {displayedTarget && stockBars.length > 0 ? (
+                    <TechnicalIndicatorPanel
+                      bars={stockBars}
+                      indexBarsMap={null}
+                      breadth={null}
+                      breadthSeries={null}
+                      stockMeta={null}
+                    />
+                  ) : (
+                    <NotApplicableCard
+                      title="技术指标"
+                      description={
+                        displayedTarget
+                          ? "暂无 K 线数据, 请先刷新。"
+                          : "请先选择左侧行业 / 概念。"
+                      }
+                    />
+                  )}
+                </TabsContent>
+
+                <TabsContent value="fund-flow" className="m-0 h-full min-h-0 overflow-auto">
+                  <NotApplicableCard
+                    title="资金流"
+                    description="板块 / 概念资金流是成分股的合计, 当前接口暂无该聚合, 后续接入。"
+                  />
+                </TabsContent>
+              </div>
+            </div>
             </main>
           </Tabs>
       </div>

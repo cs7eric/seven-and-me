@@ -109,3 +109,59 @@ export interface IndustryApplicationOverviewResponse {
   fetched_at: string | null
   source: string
 }
+
+export type HeatmapNodeKind = "industry" | "stock"
+export type HeatmapAreaBy = "amount" | "circulatingMarketCap"
+export type HeatmapColorBy = "changePercent" | "mainNetInflow" | "speed"
+export type HeatmapSortBy = "changePercent" | "amount" | "turnoverRate" | "mainNetInflow" | "speed" | "limitStreak"
+export type HeatmapQuickFilter = "limitUp" | "mainNetInflow" | "amountTop100" | "turnoverTop100" | "limitStreak"
+
+export interface StockHeatmapItem {
+  code: string
+  name: string
+  fullCode: string
+  latestPrice: number | null
+  changePercent: number | null
+  amount: number | null
+  volume: number | null
+  turnoverRate: number | null
+  circulatingMarketCap: number | null
+  totalMarketCap: number | null
+  mainNetInflow: number | null
+  speed: number | null
+  limitStreak: number | null
+  boardSealedAmount: number | null
+  conceptTags: string[]
+  isLimitUp: boolean
+  sectorCode: string
+  sectorName: string
+}
+
+export interface HeatmapSectorNode {
+  name: string
+  sectorCode: string
+  kind: "industry"
+  value: number
+  changePercent: number | null
+  amount: number
+  circulatingMarketCap: number
+  stockCount: number
+  risingCount: number
+  fallingCount: number
+  flatCount: number
+  mainNetInflow: number
+  turnoverRateAvg: number | null
+  speedAvg: number | null
+  limitUpCount: number
+  limitStreakCount: number
+  conceptTags: string[]
+  children: StockHeatmapItem[]
+}
+
+export interface MarketHeatmapResponse {
+  ok: boolean
+  items: HeatmapSectorNode[]
+  totalStocks: number
+  fetchedAt: string | null
+  source: string
+}
