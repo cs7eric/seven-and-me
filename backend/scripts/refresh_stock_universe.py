@@ -16,22 +16,38 @@ from backend.services.stock import stock_universe_service
 
 
 def main():
-    parser = argparse.ArgumentParser(description="拉全 A 股行情 + 题材, 写 reference/stock-universe/YYYY-MM-DD.json")
+    parser = argparse.ArgumentParser(description="拉全 A 股行情 + 题材, 写 reference/stock-universe/YYYY-MM-DD.json + sectors.json")
     parser.add_argument("--dry-run", action="store_true", help="只跑流程不写盘")
     parser.add_argument("--quiet", action="store_true", help="关掉进度打印")
     parser.add_argument("--workers", type=int, default=stock_universe_service.DEFAULT_WORKERS,
                         help=f"并发 worker 数 (默认 {stock_universe_service.DEFAULT_WORKERS}, 受限于 TQLEX 网关)")
     parser.add_argument("--pool-size", type=int, default=stock_universe_service.DEFAULT_POOL_SIZE,
                         help=f"eltdx 长连接池大小 (默认 {stock_universe_service.DEFAULT_POOL_SIZE}, TCP 链路数)")
+    parser.add_argument("--from-latest", action="store_true",
+                        help="只从 reference/stock-universe/YYYY-MM-DD.json 读最新一份, "
+                             "聚合生成 sectors.json (不重拉 eltdx, 跑几秒钟)")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s %(message)s")
 
-    if args.dry_run:
-        # TODO: 复用 refresh 但跳过写盘
-        print("dry-run not implemented, fall through to refresh()")
+    if args.from_latest:
+        latest = stock_universe_service.load_latest()
+        if not latest:
+            print("ERR: no latest snapshot found in reference/stock-universe/")
+            return
+        print(f"读 latest: {latest.get('trading_day')} stocks={len(latest.get('stocks') or [])}")
+        sectors = stock_universe_service.save_sectors_index(
+            latest.get("stocks") or [], progress=not args.quiet,
+        )
+        print(f"OK: {sectors['industry_count']} industries + {sectors['topic_count']} topics  -> {stock_universe_service.SECTORS_FILE}")
+        return
+
     result = stock_universe_service.refresh(progress=not args.quiet, workers=args.workers, pool_size=args.pool_size)
-    print(f"OK: {result.trading_day}  stocks={result.stock_count} industries={result.industry_count} topics={result.topic_count}  elapsed={result.elapsed_s:.0f}s  file={result.file_path}")
+    print(
+        f"OK: {result.trading_day}  stocks={result.stock_count} "
+        f"industries={result.industry_count} topics={result.topic_count} "
+        f"elapsed={result.elapsed_s:.0f}s  file={result.file_path}  sectors={result.sectors_file}"
+    )
 
 
 if __name__ == "__main__":

@@ -1,27 +1,27 @@
 """
-A 股"股票 ↔ 板块/行业"映射服务 (纯映射, 不存行情).
+A 股"股票 ↔ 行业板块 / 概念板块"映射服务.
 
-每日 17:00 (盘后) 拉一次:
-  1. eltdx ``client.get_a_share_codes_all()`` 拿全 5530+ 只 A 股 code
-  2. eltdx ``client.helpers.stock_topics(code)`` 拿每只股的题材清单,
-     从 ``reason`` 字段正则提取 "公司属于XXX（通达信研究行业）" 作为行业归一
+每日 17:00 (盘后) 拉一次, 落盘两类数据:
+  1. ``reference/stock-universe/YYYY-MM-DD.json`` —— 当日全量快照
+     { "stocks":[{code, name, industry, topics[]}], "trading_day":..., "version": 2 }
+  2. ``reference/stock-universe/sectors/`` —— 按 category_raw 拆分的板块字典
+     - sectors/index.json    : 所有 category 概况
+     - sectors_industries_0.json : 行业板块 (cat=0)
+     - sectors_concepts_2.json   : 概念板块 (cat=2)
+     - sectors_styles_4.json     : 风格板块 (cat=4)
+     - 未来 eltdx 加新 cat (1/3/5/6...) 自动识别, 写 sectors_cat_<n>.json
 
-**不存行情 / 涨幅 / 成交额** —— 这些数据由 hotpath 实时调下游 API.
+数据流:
+  refresh()
+    -> 拉 5530 + 题材, 写 per-day JSON
+    -> 调 save_sectors_index() 动态按 category_raw 拆成多个文件
 
-持久化到 ``STOCK_UNIVERSE_DIR / YYYY-MM-DD.json``:
-  {
-    "version": 2,
-    "trading_day": "2026-06-06",
-    "fetched_at": "...",
-    "stocks": [
-      {"code":"sh600519", "name":"", "industry":"白酒",
-       "topics":[{"topic_id":"226","topic_name":"白酒概念","reason":"..."}]}
-    ],
-    "industries": [{"name":"白酒", "stock_codes":[...]}],
-    "topics":     [{"topic_id":"226","topic_name":"白酒概念", "stock_codes":[...]}]
-  }
+Hotpath API:
+  list_categories() / list_sectors_by_category(raw) / get_sector_stocks(raw, name=, topic_id=)
+  find_sectors_for(code, category_raw=None) / find_industries_for(code) / find_concepts_for(code)
+  load_sectors_index() / load_category(raw)
 
-CLI 拉取: ``python -m backend.scripts.refresh_stock_universe``
+CLI: ``python -m backend.scripts.refresh_stock_universe``
 """
 from __future__ import annotations
 
@@ -33,25 +33,50 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from backend.config.settings import STOCK_UNIVERSE_DIR, STOCK_UNIVERSE_INDEX_FILE
 
 logger = logging.getLogger(__name__)
 
-# 拉取并发: 单 TdxClient + pool_size=4 长连接池 + 8 worker 线程.
-# 关键: eltdx TdxClient 内部串行化请求, 多 client 才能并行;
-# 但单 client pool_size=4 也能让 4 路 TCP 长连接并发转发 F10 请求.
-# 实测:
-#   串行          -> 0.3 股/s
-#   pool=8+wrk=8  -> 2.1 股/s  (单 RPC 0.3-0.5s)
-# 估算 5530 / 2.1 = ~45 分钟
-# 这是 eltdx TQLEX HTTP 网关的硬上限, 没法再快;
-# 进一步提速必须走 别的 行情 API (push2.eastmoney / ths).
-DEFAULT_WORKERS = 8
-DEFAULT_POOL_SIZE = 4
+# 拉取并发: 写死 64 worker 激进并发, 走多轮重试拿全数据.
+# TQLEX 网关经常 502 限流吞请求, 多轮重试补齐失败 code.
+# 关键: 每轮 round 用不同 host + 短超时, 防止 IP 限流累积.
+DEFAULT_WORKERS = 64
+DEFAULT_POOL_SIZE = 8
+MAX_RETRY_ROUNDS = 8  # 最多重试 8 轮 (1 轮原始 + 7 轮重试)
+RETRY_BACKOFF_S = 5   # 每轮重试前 sleep 5s (短, 限流自然就恢复了)
 
-SCHEMA_VERSION = 2  # 不再含 quote 字段
+# 已知 7709 主站列表 (从 pytdx 文档 + 各路博客整理).
+# 每轮 round 从中 random.choice 一台, 避免被同一 IP 累计限流.
+# 关键: eltdx 1.0.2 client 启动后只锁一个 host, 不会自动 failover,
+# 所以换 host 必须开新 client —— 跟每轮 round 重开 client 逻辑正好对上.
+HOSTS = [
+    "116.205.183.150:7709",   # 阿里云
+    "124.71.187.122:7709",    # 阿里云
+    "122.192.35.4:7709",      # 华泰
+    "119.147.212.81:7709",    # 招商
+    "60.191.117.167:7709",    # 浙商
+    "115.236.62.66:7709",     # 西南
+    "123.125.108.90:7709",    # 联通
+    "218.108.50.108:7709",    # 移动
+    "114.80.63.12:7709",      # 上海
+    "180.153.18.170:7709",    # 上海
+    "123.125.108.14:7709",    # 联通
+    "60.12.136.250:7709",     # 浙商
+    "218.6.170.54:7709",      # 国元
+    "123.103.93.79:7709",     # 银河
+]
+
+# 分片多轮策略: 每 shard_round 把 pending 拆成若干个 <= SHARD_SIZE 的子组
+# round 0: 5530 拆 6 x ~1000 (host 0-5)
+# round 1: 剩 ~1500 拆 3 x ~500 (host 6-8)
+# round 2: 剩 ~500 拆 3 x ~200 (host 9-11)
+# round 3+: 1 x 全量 (host 12+)
+SHARD_SIZES = [1000, 500, 200, 100, 50, 50]
+
+# per-day snapshot schema version
+DAILY_VERSION = 2
 
 # ---------- reason 字段提取行业 ----------
 # 样本: "公司属于白酒（通达信研究行业）"
@@ -71,14 +96,24 @@ def extract_industry_from_reason(reason: str) -> str | None:
     return None
 
 
-# ---------- 题材拉取（最慢的一步） ----------
-# helpers.stock_topics(code) 返回 StockTopics, .topics 是元组
-# 每个 StockTopic: topic_id, topic_name, reason, relation_level
+# ---------- 题材拉取 ----------
+import random as _random
 
 
-def _connect(pool_size: int = 1):
+def _connect(host: str | None = None, pool_size: int = 1, timeout: float = 8.0):
+    """新建 eltdx TdxClient. host 不传则走 eltdx 默认 (单 host).
+
+    关键: 传 host 则锁那一台, 不传则 eltdx 内部用 14 个主站.
+    """
     import eltdx
-    return eltdx.TdxClient(pool_size=pool_size, timeout=8.0)
+    if host:
+        return eltdx.TdxClient(host=host, pool_size=pool_size, timeout=timeout)
+    return eltdx.TdxClient(pool_size=pool_size, timeout=timeout)
+
+
+def _pick_host(round_idx: int) -> str:
+    """每轮 round 用不同 host, 防止同一 IP 累计限流."""
+    return HOSTS[round_idx % len(HOSTS)]
 
 
 def _fetch_topics(c, code: str) -> list[dict[str, Any]]:
@@ -100,8 +135,6 @@ def _fetch_topics(c, code: str) -> list[dict[str, Any]]:
 
 
 # ---------- 持久化 ----------
-
-
 def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -109,14 +142,167 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+# sectors.json 拆为多个分类文件: 每个 category_raw 一个 JSON
+# 例: sectors_cat_0.json (行业板块 1829 topics) / sectors_cat_2.json (概念 270) / sectors_cat_4.json (风格 146)
+# 未来 eltdx 加新 category_raw 不用改代码, 自动发现.
+
+CATEGORIES_DIR = STOCK_UNIVERSE_DIR / "sectors"
+CATEGORIES_INDEX_FILE = CATEGORIES_DIR / "index.json"
+
+# 已知 category_raw -> 友好命名 (仅作参考, 不强制; 未知 cat 也照样写)
+CATEGORY_NAMES: dict[int, str] = {
+    0: "industries",     # 行业板块 (申万/中证/通达信)
+    2: "concepts",       # 概念板块 (热点题材)
+    4: "styles",         # 风格板块 (大盘/小盘/高股息)
+}
+
+
+def _category_file(category_raw: int) -> Path:
+    name = CATEGORY_NAMES.get(category_raw)
+    if name:
+        return CATEGORIES_DIR / f"sectors_{name}_{category_raw}.json"
+    return CATEGORIES_DIR / f"sectors_cat_{category_raw}.json"
+
+
+def _category_label(category_raw: int) -> str:
+    return CATEGORY_NAMES.get(category_raw, f"unknown_{category_raw}")
+
+
+# ---------------------------------------------------------------------------
+# 板块字典聚合 + 持久化
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SectorBucket:
+    """通用 sector bucket, 同时适用于 industry(name) 和 topic(topic_id+name)."""
+    key: str                      # industry name 或 topic_id
+    name: str                     # 显示名
+    extra: dict[str, Any]         # topic_id 等额外字段
+    stock_codes: list[str]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "stock_count": len(self.stock_codes),
+            "stock_codes": self.stock_codes,
+            **self.extra,
+        }
+
+
+def aggregate_sectors(stocks: list[dict[str, Any]]) -> dict[int, list[SectorBucket]]:
+    """动态检测 category_raw, 每个分类聚一个 bucket list.
+
+    返回 {category_raw: [SectorBucket, ...]}.
+    未来 eltdx 加新 category_raw (如 1/3/5/6...), 自动归到对应分类.
+    """
+    # category_raw -> key_field -> bucket
+    # key_field: 'industry' 用 name, 'topic' 用 topic_id
+    grouped: dict[int, dict[str, SectorBucket]] = {}
+
+    for s in stocks:
+        code = s.get("code")
+        if not code:
+            continue
+        ind = s.get("industry") or ""
+        if ind:
+            # industry 算 cat=0 行业板块 (跟 eltdx category_raw=0 一致)
+            inner = grouped.setdefault(0, {})
+            if ind not in inner:
+                inner[ind] = SectorBucket(key=ind, name=ind, extra={}, stock_codes=[])
+            if code not in inner[ind].stock_codes:
+                inner[ind].stock_codes.append(code)
+
+        for t in s.get("topics") or []:
+            cr = int(t.get("category_raw") or 0)
+            tid = str(t.get("topic_id") or "")
+            tname = t.get("topic_name") or ""
+            if not tid or not tname:
+                continue
+            inner = grouped.setdefault(cr, {})
+            if tid not in inner:
+                inner[tid] = SectorBucket(
+                    key=tid,
+                    name=tname,
+                    extra={"topic_id": tid},
+                    stock_codes=[],
+                )
+            if code not in inner[tid].stock_codes:
+                inner[tid].stock_codes.append(code)
+
+    # 排序 + 转 list
+    out: dict[int, list[SectorBucket]] = {}
+    for cr, inner in grouped.items():
+        buckets = list(inner.values())
+        buckets.sort(key=lambda b: (-len(b.stock_codes), b.name))
+        out[cr] = buckets
+    return out
+
+
+def save_sectors_index(
+    stocks: list[dict[str, Any]],
+    *,
+    progress: bool = True,
+) -> dict[str, Any]:
+    """动态聚合 + 写多个 sectors_cat_<n>.json.
+
+    返回 {category_raw: {"count": int, "file": Path, "label": str}}
+    """
+    t0 = time.time()
+    CATEGORIES_DIR.mkdir(parents=True, exist_ok=True)
+    grouped = aggregate_sectors(stocks)
+    summary: dict[str, Any] = {
+        "version": 2,
+        "fetched_at": datetime.now().isoformat(),
+        "source": "eltdx.helpers.stock_topics (reverse aggregated, dynamic category)",
+        "category_count": len(grouped),
+        "categories": {},
+    }
+    for cr in sorted(grouped.keys()):
+        buckets = grouped[cr]
+        label = _category_label(cr)
+        out_file = _category_file(cr)
+        payload = {
+            "version": 2,
+            "category_raw": cr,
+            "category_label": label,
+            "fetched_at": datetime.now().isoformat(),
+            "source": "eltdx.helpers.stock_topics (reverse aggregated)",
+            "sector_count": len(buckets),
+            "sectors": [b.as_dict() for b in buckets],
+        }
+        _atomic_write(out_file, payload)
+        summary["categories"][str(cr)] = {
+            "category_raw": cr,
+            "category_label": label,
+            "sector_count": len(buckets),
+            "file": out_file.name,
+        }
+        if progress:
+            print(f"  -> 写 {out_file.name} (cat={cr} {label}, {len(buckets)} sectors)")
+
+    # 写 index.json (顶层索引, 列出所有 cat 文件)
+    _atomic_write(CATEGORIES_INDEX_FILE, summary)
+    if progress:
+        print(f"  -> 写 {CATEGORIES_INDEX_FILE.name} (共 {len(grouped)} 个 category)")
+        print(f"  -> total {time.time()-t0:.1f}s")
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# 每日拉取
+# ---------------------------------------------------------------------------
+
+
 @dataclass
 class RefreshResult:
     trading_day: str
     file_path: Path
     stock_count: int
-    industry_count: int
-    topic_count: int
+    category_count: int
+    categories: dict[str, int]  # {category_label: sector_count}
     elapsed_s: float
+    categories_index: Path
 
 
 def refresh(
@@ -124,14 +310,12 @@ def refresh(
     workers: int = DEFAULT_WORKERS,
     pool_size: int = DEFAULT_POOL_SIZE,
 ) -> RefreshResult:
-    """拉全 A 股 code + 每只股的题材, 写映射 JSON.
+    """拉全 A 股 + 每只股的题材, 写当日 JSON + sectors.json.
 
-    慢, 仅供每日 17:00 跑一次. 行情/涨幅/成交额 全部不存.
-
-    5530 只股按 ``pool_size`` 长连接池 + ``workers`` 个线程并发拉.
-    eltdx TdxClient 内部已串行化请求, 但 ``pool_size`` 长连接池会让
-    F10 HTTP 请求被多 TCP 链路并行处理, 提升 server 侧并发.
-    单 worker 失败 (502 / 超时) 不影响其他 worker, 失败 code 走空 topics.
+    走"多轮重试"策略, 即使 TQLEX 网关 502 限流, 也能拿全:
+      round 0: 拉全 5530
+      round 1..N: 重试空 topics 的 code
+      直到全拿或达到 MAX_RETRY_ROUNDS
     """
     t0 = time.time()
     today = datetime.now().strftime("%Y-%m-%d")
@@ -139,58 +323,94 @@ def refresh(
     target_file.parent.mkdir(parents=True, exist_ok=True)
 
     if progress:
-        print(f"[1/2] 拉全 A 股 code (eltdx.get_a_share_codes_all)")
-    with _connect(pool_size=1) as c:
+        print(f"[1/3] 拉全 A 股 code (eltdx.get_a_share_codes_all)")
+    with _connect() as c:
         codes = c.get_a_share_codes_all()
     if progress:
         print(f"  -> {len(codes)} 只 code")
 
     if progress:
         print(
-            f"[2/2] 并发拉每只股的题材 "
-            f"(pool_size={pool_size} 长连接池, workers={workers} 线程, 5530+ 次)"
+            f"[2/3] 分组分轮 (workers={workers}, pool_size={pool_size}, "
+            f"max_rounds={MAX_RETRY_ROUNDS}, hosts={len(HOSTS)} 选一)"
         )
 
-    # 单 client 多 TCP 长连接 (pool_size > 1) + 多 worker 线程
-    # 这样: 一个 client 实例 + N 条 TCP 链路 + M 个线程
-    # eltdx 内部 锁/连接池 派发请求到不同 TCP 链路, 线程侧只需等 future
-    client = _connect(pool_size=pool_size)
-    client.connect()
+    # 分片多轮策略: 每 shard_round 用更小的 shard_size 拆组, 每组一个 host
+    # round 0: 5530 拆 6 x 1000 (6 host 串行)
+    # round 1: 剩 ~1500 拆 3 x 500 (3 host)
+    # round 2: 剩 ~500 拆 3 x 200
+    # round 3+: 拆 1 x 50
+    # 累计限流不集中, 6-7 个 host 轮换拿到全
 
-    def _worker(code: str) -> tuple[str, list[dict[str, Any]]]:
-        try:
-            return code, _fetch_topics(client, code)
-        except Exception as exc:
-            logger.debug("worker %s error: %s", code, exc)
-            return code, []
+    results: dict[str, list[dict[str, Any]]] = {code: [] for code in codes}
+    pending: list[str] = list(codes)
+    host_cycle = 0
+    shard_round = 0
+    total_groups = 0
 
-    results: dict[str, list[dict[str, Any]]] = {}
-    done_count = 0
-    try:
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="topics") as executor:
-            futures = {executor.submit(_worker, code): code for code in codes}
-            for future in as_completed(futures):
-                try:
-                    code, topics = future.result()
-                    results[code] = topics
-                except Exception as exc:
-                    code = futures[future]
-                    logger.debug("future %s error: %s", code, exc)
-                    results[code] = []
-                done_count += 1
-                if progress and done_count % 200 == 0:
-                    speed = done_count / (time.time() - t0)
-                    eta = (len(codes) - done_count) / max(speed, 0.1)
-                    print(
-                        f"  -> 进度 {done_count}/{len(codes)} "
-                        f"({speed:.0f} 股/s, ETA {eta:.0f}s, 已用 {time.time() - t0:.0f}s)"
-                    )
-    finally:
-        client.close()
+    while pending and shard_round < len(SHARD_SIZES) * 2:
+        shard_size = SHARD_SIZES[min(shard_round, len(SHARD_SIZES) - 1)]
+        shards = [pending[i:i+shard_size] for i in range(0, len(pending), shard_size)]
 
-    # 按 industry / topic 聚合 (用稳定顺序: codes 原顺序)
-    industry_map: dict[str, list[str]] = {}
-    topic_map: dict[str, dict[str, Any]] = {}
+        if progress:
+            print(
+                f"  -- shard_round {shard_round}, {len(pending)} 只 拆 {len(shards)} 组 (size={shard_size}) --"
+            )
+
+        for gi, shard in enumerate(shards):
+            if not shard:
+                continue
+            host = _pick_host(host_cycle)
+            host_cycle += 1
+            total_groups += 1
+            t0 = time.time()
+            client = _connect(host=host, pool_size=pool_size, timeout=6.0)
+            try:
+                client.connect()
+            except Exception as exc:
+                if progress:
+                    print(f"  ! host={host} connect 失败: {exc}")
+                continue
+            try:
+                with ThreadPoolExecutor(max_workers=min(workers, len(shard)), thread_name_prefix="topics") as executor:
+                    futures = {executor.submit(_fetch_topics, client, code): code for code in shard}
+                    for future in as_completed(futures):
+                        code = futures[future]
+                        try:
+                            topics = future.result() or []
+                        except Exception as exc:
+                            topics = []
+                        results[code] = topics
+            finally:
+                client.close()
+
+            got = sum(1 for c in shard if results.get(c))
+            speed = got / max(time.time() - t0, 0.1)
+            if progress:
+                print(
+                    f"     [group {gi+1}/{len(shards)}] host={host} "
+                    f"{len(shard)} 只 -> {got} 拿到, {speed:.0f}/s, "
+                    f"{time.time()-t0:.1f}s"
+                )
+
+        pending = [c for c in codes if not results.get(c)]
+        if progress:
+            print(f"  shard_round {shard_round} done: 剩 {len(pending)} 只空")
+        if not pending:
+            break
+        shard_round += 1
+        if progress:
+            print(f"  -- sleep {RETRY_BACKOFF_S}s 让网关限流恢复 --")
+        time.sleep(RETRY_BACKOFF_S)
+
+    if pending and progress:
+        print(
+            f"  WARN: {len(pending)} 只最终仍为空, "
+            f"将以空 topics 入库"
+        )
+
+    if progress:
+        print(f"[3/3] 聚合 + 写盘")
     stocks: list[dict[str, Any]] = []
     for code in codes:
         topics = results.get(code, [])
@@ -199,14 +419,6 @@ def refresh(
             reason = t.get("reason") or ""
             if industry is None:
                 industry = extract_industry_from_reason(reason)
-            tid = t.get("topic_id") or ""
-            tname = t.get("topic_name") or ""
-            if not tid or not tname:
-                continue
-            bucket = topic_map.setdefault(tid, {"topic_id": tid, "topic_name": tname, "stock_codes": []})
-            bucket["stock_codes"].append(code)
-        if industry:
-            industry_map.setdefault(industry, []).append(code)
         stocks.append({
             "code": code,
             "name": "",
@@ -214,44 +426,44 @@ def refresh(
             "topics": topics,
         })
 
-    if progress:
-        print(f"  -> 写文件 -> {target_file}")
-
     payload = {
-        "version": SCHEMA_VERSION,
+        "version": DAILY_VERSION,
         "trading_day": today,
         "fetched_at": datetime.now().isoformat(),
-        "source": f"eltdx.helpers.stock_topics (pool_size={pool_size}, workers={workers})",
+        "source": f"eltdx.helpers.stock_topics (pool_size={pool_size}, workers={workers}, groups={total_groups})",
         "stock_count": len(stocks),
-        "industry_count": len(industry_map),
-        "topic_count": len(topic_map),
+        "empty_count": len([s for s in stocks if not s["topics"]]),
         "stocks": stocks,
-        "industries": [
-            {"name": k, "stock_codes": v} for k, v in sorted(industry_map.items(), key=lambda x: -len(x[1]))
-        ],
-        "topics": [
-            {"topic_id": v["topic_id"], "topic_name": v["topic_name"], "stock_codes": v["stock_codes"]}
-            for v in sorted(topic_map.values(), key=lambda x: -len(x["stock_codes"]))
-        ],
     }
-
     _atomic_write(target_file, payload)
     _update_index(today, target_file, payload)
 
+    # 写 sectors 字典 (动态分 category_raw 多个文件)
+    sectors_summary = save_sectors_index(stocks, progress=progress)
+
     elapsed = time.time() - t0
+    cat_summary = ", ".join(
+        "{}:{}".format(c["category_label"], c["sector_count"])
+        for c in sectors_summary["categories"].values()
+    )
     if progress:
         print(
-            f"done. {elapsed:.0f}s, {len(stocks)} stocks, {len(industry_map)} industries, "
-            f"{len(topic_map)} topics ({len(stocks)/elapsed:.0f} 股/s)"
+            f"done. {elapsed:.0f}s, {len(stocks)} stocks, "
+            f"{sectors_summary['category_count']} categories ({cat_summary}) "
+            f"({len(stocks)/elapsed:.0f} 股/s, {total_groups} groups)"
         )
 
     return RefreshResult(
         trading_day=today,
         file_path=target_file,
         stock_count=len(stocks),
-        industry_count=len(industry_map),
-        topic_count=len(topic_map),
+        category_count=sectors_summary["category_count"],
+        categories={
+            c["category_label"]: c["sector_count"]
+            for c in sectors_summary["categories"].values()
+        },
         elapsed_s=elapsed,
+        categories_index=CATEGORIES_INDEX_FILE,
     )
 
 
@@ -269,8 +481,6 @@ def _update_index(trading_day: str, file_path: Path, payload: dict[str, Any]) ->
         "trading_day": trading_day,
         "file": str(file_path.relative_to(STOCK_UNIVERSE_DIR)),
         "stock_count": payload["stock_count"],
-        "industry_count": payload["industry_count"],
-        "topic_count": payload["topic_count"],
         "fetched_at": payload["fetched_at"],
     })
     index["versions"] = history[:30]
@@ -278,7 +488,23 @@ def _update_index(trading_day: str, file_path: Path, payload: dict[str, Any]) ->
     _atomic_write(STOCK_UNIVERSE_INDEX_FILE, index)
 
 
+# ---------------------------------------------------------------------------
+# 加载 hotpath
+# ---------------------------------------------------------------------------
+
+
+def _read_json(path: Path, default=None) -> dict[str, Any] | None:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.debug("read %s failed: %s", path, exc)
+        return default
+
+
 def load_latest() -> dict[str, Any] | None:
+    """加载最近的每日快照. 用于行情/实时快照查询."""
     if not STOCK_UNIVERSE_INDEX_FILE.exists():
         return None
     try:
@@ -294,34 +520,131 @@ def load_latest() -> dict[str, Any] | None:
     return json.loads(fp.read_text(encoding="utf-8"))
 
 
-# ---------- 运行时便捷查询 ----------
+def load_sectors_index() -> dict[str, Any] | None:
+    """加载 sectors/index.json. 列出所有 category 概况."""
+    return _read_json(CATEGORIES_INDEX_FILE)
 
 
-def find_industry_for(code: str) -> str | None:
-    """hotpath: 查某只 code 属于哪个行业 (用最近一份 universe)."""
-    universe = load_latest()
-    if not universe:
-        return None
-    for s in universe.get("stocks", []):
-        if s.get("code") == code:
-            return s.get("industry") or None
-    return None
+def load_category(category_raw: int) -> dict[str, Any] | None:
+    """加载单个 category 文件 sectors_xxx_<n>.json.
+
+    未来加新 category_raw 直接传新数字即可, 不用改代码.
+    """
+    return _read_json(_category_file(category_raw), None)
 
 
-def find_topics_for(code: str) -> list[dict[str, Any]]:
-    """hotpath: 查某只 code 所属题材."""
-    universe = load_latest()
-    if not universe:
+# ---------------------------------------------------------------------------
+# 行业 / 概念板块 公开 API (hotpath 友好)
+# ---------------------------------------------------------------------------
+
+
+def list_categories() -> list[dict[str, Any]]:
+    """列出所有 category (从 sectors/index.json). [{category_raw, category_label, sector_count, file}]."""
+    idx = load_sectors_index()
+    if not idx:
         return []
-    for s in universe.get("stocks", []):
-        if s.get("code") == code:
-            return s.get("topics") or []
+    return list(idx.get("categories", {}).values())
+
+
+def list_sectors_by_category(category_raw: int) -> list[dict[str, Any]]:
+    """列出某 category 下的所有 sector. [{name, topic_id, stock_count, stock_codes}, ...]."""
+    data = load_category(category_raw)
+    if not data:
+        return []
+    return data.get("sectors", [])
+
+
+# 兼容旧 API: list_industries = list_sectors_by_category(0)
+def list_industries() -> list[dict[str, Any]]:
+    return list_sectors_by_category(0)
+
+
+# 兼容旧 API: list_topics = list_sectors_by_category(2)
+def list_topics() -> list[dict[str, Any]]:
+    return list_sectors_by_category(2)
+
+
+def get_sector_stocks(category_raw: int, *, name: str | None = None, topic_id: str | None = None) -> list[str]:
+    """根据 category_raw + name/topic_id 拿成分股 codes."""
+    if not name and not topic_id:
+        return []
+    sectors = list_sectors_by_category(category_raw)
+    for s in sectors:
+        if topic_id and str(s.get("topic_id")) == str(topic_id):
+            return s.get("stock_codes", [])
+        if name and s.get("name") == name:
+            return s.get("stock_codes", [])
     return []
 
 
-def list_industries() -> list[dict[str, Any]]:
-    """hotpath: 列出所有行业 + 成分股 codes."""
-    universe = load_latest()
-    if not universe:
-        return []
-    return universe.get("industries", [])
+# 兼容旧 API: get_industry_stocks(name) = get_sector_stocks(0, name=name)
+def get_industry_stocks(name: str) -> list[str]:
+    return get_sector_stocks(0, name=name)
+
+
+# 兼容旧 API: get_concept_stocks(topic_id, topic_name) = get_sector_stocks(2, ...)
+def get_concept_stocks(topic_id: str | None = None, topic_name: str | None = None) -> list[str]:
+    return get_sector_stocks(2, topic_id=topic_id, name=topic_name)
+
+
+def find_sectors_for(code: str, category_raw: int | None = None) -> list[dict[str, Any]]:
+    """某 code 所属某 category 的所有 sector.
+
+    category_raw=None 时, 遍历所有 category 找.
+    返回 [{category_raw, category_label, name, topic_id}]
+    """
+    if category_raw is not None:
+        cats = [category_raw]
+    else:
+        idx = load_sectors_index()
+        cats = [int(c) for c in (idx or {}).get("categories", {}).keys()]
+    out: list[dict[str, Any]] = []
+    for cr in cats:
+        for s in list_sectors_by_category(cr):
+            if code in s.get("stock_codes", []):
+                out.append({
+                    "category_raw": cr,
+                    "category_label": _category_label(cr),
+                    "name": s.get("name"),
+                    "topic_id": s.get("topic_id"),
+                })
+    return out
+
+
+# 兼容旧 API
+def find_industries_for(code: str) -> list[str]:
+    """某 code 所属所有行业 (cat=0). 返回 name 列表."""
+    return [s["name"] for s in find_sectors_for(code, category_raw=0)]
+
+
+def find_concepts_for(code: str) -> list[dict[str, Any]]:
+    """某 code 所属所有概念 (cat=2)."""
+    return [
+        {"topic_id": s.get("topic_id"), "topic_name": s.get("name")}
+        for s in find_sectors_for(code, category_raw=2)
+    ]
+
+
+def find_industry_for(code: str) -> str | None:
+    inds = find_industries_for(code)
+    return inds[0] if inds else None
+
+
+def find_topics_for(code: str) -> list[dict[str, Any]]:
+    return find_concepts_for(code)
+
+
+# ---------------------------------------------------------------------------
+# 仅从最新每日快照查的便捷方法 (单股快照, 不进 sectors 字典)
+# ---------------------------------------------------------------------------
+
+
+def find_stock_meta(code: str) -> dict[str, Any] | None:
+    """某 code 在每日快照里的元数据 (含完整 topics). 不走 sectors.json."""
+    latest = load_latest()
+    if not latest:
+        return None
+    for s in latest.get("stocks", []):
+        if s.get("code") == code:
+            return s
+    return None
