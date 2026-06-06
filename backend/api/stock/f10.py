@@ -10,7 +10,14 @@ from typing import Any, Callable
 from flask import Blueprint, jsonify, request
 
 from backend.services.stock.f10 import get_fundamentals_service
-from backend.services.stock.f10.helpers import stock_topics, topic_stocks
+from backend.services.stock.f10.helpers import (
+    all_concept_index_codes,
+    all_industry_index_codes,
+    concept_index_kline,
+    industry_index_kline,
+    stock_topics,
+    topic_stocks,
+)
 from backend.services.stock.f10.limit_count import (
     merge_into_breadth,
     read_limit_up_down_cache,
@@ -196,6 +203,59 @@ def f10_sectors_market_concept():
             sort_by=sort_by, count=count, ascending=ascending, start=start
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# 行业 / 概念 指数 K 线（完整历史）— 全程走 eltdx bars.get(kind="index")
+# ---------------------------------------------------------------------------
+
+
+@f10_bp.route('/api/stock-chart/eltdx/industry-index-kline')
+def f10_eltdx_industry_index_kline():
+    """申万行业指数完整 K 线（``sh8803XX``，来自 :data:`INDUSTRY_INDEX_CODES`）。"""
+    code = str(request.args.get('code', '')).strip() or 'sh880301'
+    period = str(request.args.get('period', 'day')).strip() or 'day'
+    try:
+        count = int(request.args.get('count', 120))
+    except (TypeError, ValueError):
+        count = 120
+    try:
+        return jsonify(industry_index_kline(code, period=period, count=count))
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'error_type': 'bad_request'}), 400
+
+
+@f10_bp.route('/api/stock-chart/eltdx/concept-index-kline')
+def f10_eltdx_concept_index_kline():
+    """概念主题指数完整 K 线（``sh8804XX``，来自 :data:`CONCEPT_INDEX_CODES`）。"""
+    code = str(request.args.get('code', '')).strip() or 'sh880401'
+    period = str(request.args.get('period', 'day')).strip() or 'day'
+    try:
+        count = int(request.args.get('count', 120))
+    except (TypeError, ValueError):
+        count = 120
+    try:
+        return jsonify(concept_index_kline(code, period=period, count=count))
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'error_type': 'bad_request'}), 400
+
+
+@f10_bp.route('/api/stock-chart/eltdx/index-codes')
+def f10_eltdx_index_codes():
+    """返回所有行业 / 概念 指数代码（用于前端下拉选）。
+
+    ``kind``: ``industry`` / ``concept`` / 留空返回全部。
+    """
+    kind = str(request.args.get('kind', '')).strip().lower()
+    if kind in {'', 'all', 'both'}:
+        items = all_industry_index_codes() + all_concept_index_codes()
+    elif kind == 'industry':
+        items = all_industry_index_codes()
+    elif kind == 'concept':
+        items = all_concept_index_codes()
+    else:
+        return jsonify({'error': f"kind 仅支持 industry/concept/空, 收到 {kind!r}"}), 400
+    return jsonify({'items': items, 'count': len(items), 'source': 'index_codes.py'})
 
 
 # ---------------------------------------------------------------------------

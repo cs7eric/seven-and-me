@@ -861,6 +861,172 @@ paths:
         "502": { $ref: "#/components/responses/UpstreamFailure" }
 
   # ====================================================================
+  # Industry / Concept Application (独立于 application-analysis)
+  # ====================================================================
+  /api/stock-chart/industry-application/targets:
+    get:
+      tags: [Stock Chart]
+      summary: 行业 / 概念 应用面 targets 列表
+      description: |
+        独立于 application-analysis 的 targets 集合。
+        持久化在 `reference/industry-application/targets.json`。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndustryApplicationConfig" }
+        "501":
+          description: industry_application_service 未安装
+    put:
+      tags: [Stock Chart]
+      summary: 保存行业 / 概念 应用面 targets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                horizon: { $ref: "#/components/schemas/Horizon" }
+                items:
+                  type: array
+                  items: { $ref: "#/components/schemas/IndustryApplicationTarget" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndustryApplicationConfig" }
+
+  /api/stock-chart/industry-application/target-codes:
+    get:
+      tags: [Stock Chart]
+      summary: 行业 / 概念 指数代码全集
+      parameters:
+        - in: query
+          name: kind
+          schema: { type: string, enum: [industry, concept, ""] }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/IndexCodeItem" }
+                  count: { type: integer }
+                  source: { type: string, example: "index_codes.py" }
+
+  /api/stock-chart/industry-application/kline:
+    get:
+      tags: [Stock Chart]
+      summary: 行业 / 概念 指数 K 线（不落盘）
+      parameters:
+        - in: query
+          name: target_type
+          required: true
+          schema: { type: string, enum: [industry, concept] }
+        - in: query
+          name: symbol
+          required: true
+          schema: { type: string, example: "sh880301" }
+        - in: query
+          name: period
+          schema: { type: string, default: day }
+        - in: query
+          name: count
+          schema: { type: integer, default: 120, maximum: 2000, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndustryApplicationKlineResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "502": { $ref: "#/components/responses/UpstreamFailure" }
+
+  /api/stock-chart/industry-application/refresh:
+    post:
+      tags: [Stock Chart]
+      summary: 触发一次 eltdx 拉取 + 落盘
+      description: |
+        对所有 enabled 标的（``enabled=true``）拉 K 线 + 落盘到
+        `reference/industry-application/results/<kind>-<symbol>.json`。
+        也可指定 ``target_id`` 单独刷新。
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_id: { type: string, nullable: true }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        ok: { type: boolean }
+                        kline_count: { type: integer }
+                        error: { type: string }
+                  count: { type: integer }
+                  error: { type: string }
+
+  /api/stock-chart/industry-application/results/{target_id}:
+    parameters:
+      - in: path
+        name: target_id
+        required: true
+        schema: { type: string, example: "industry-sh880301" }
+    get:
+      tags: [Stock Chart]
+      summary: 读某个 target 的最新 result
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndustryApplicationResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/stock-chart/industry-application/results:
+    get:
+      tags: [Stock Chart]
+      summary: 列出 reference/industry-application/results/ 下所有 result
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        filename: { type: string }
+                        path: { type: string }
+                        size_bytes: { type: integer }
+                        updated_at: { type: string, format: date-time }
+                  count: { type: integer }
+
+  # ====================================================================
   # F10
   # ====================================================================
   /api/stock-chart/f10/ping:
@@ -962,6 +1128,89 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StockTopicsResponse" }
+
+  /api/stock-chart/eltdx/industry-index-kline:
+    get:
+      tags: [F10]
+      summary: 申万行业指数 K 线（完整历史）
+      description: |
+        通过 eltdx `client.bars.get(kind="index")` 拉取某个**申万行业指数**的
+        完整 K 线历史。`code` 必须是 `sh8803XX` 格式，可选列表见
+        `GET /api/stock-chart/eltdx/index-codes?kind=industry`。
+        `period` 支持 `1m / 5m / 15m / 30m / 60m / 1d / 1w / 1M`。
+        涨跌幅用本地算：`pct = (close - prev_close) / prev_close`。
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string, default: "sh880301" }
+        - in: query
+          name: period
+          schema: { type: string, default: day }
+        - in: query
+          name: count
+          schema: { type: integer, default: 120, maximum: 2000, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexKlineResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/stock-chart/eltdx/concept-index-kline:
+    get:
+      tags: [F10]
+      summary: 概念主题指数 K 线（完整历史）
+      description: |
+        通过 eltdx `client.bars.get(kind="index")` 拉取某个**概念主题指数**的
+        完整 K 线历史。`code` 必须是 `sh8804XX` 格式，可选列表见
+        `GET /api/stock-chart/eltdx/index-codes?kind=concept`。
+      parameters:
+        - in: query
+          name: code
+          required: true
+          schema: { type: string, default: "sh880401" }
+        - in: query
+          name: period
+          schema: { type: string, default: day }
+        - in: query
+          name: count
+          schema: { type: integer, default: 120, maximum: 2000, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IndexKlineResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/stock-chart/eltdx/index-codes:
+    get:
+      tags: [F10]
+      summary: 行业 / 概念 指数代码全集
+      description: |
+        返回前端可下拉选的全部指数代码 + 中文名。
+        数据源是项目内置的 `backend/services/stock/f10/index_codes.py`，
+        全程不联网（开箱即用），eltdx 仅用于取行情。
+      parameters:
+        - in: query
+          name: kind
+          schema: { type: string, enum: [industry, concept, all, ""], default: "" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/IndexCodeItem" }
+                  count: { type: integer }
+                  source: { type: string, example: "index_codes.py" }
+        "400": { $ref: "#/components/responses/BadRequest" }
 
   /api/stock-chart/f10/theme-market:
     get:
@@ -2000,6 +2249,112 @@ components:
         topics:
           type: array
           items: { $ref: "#/components/schemas/StockTopic" }
+
+    # eltdx 行业/概念 指数 K 线
+    IndexBar:
+      type: object
+      properties:
+        time: { type: string, example: "2026-06-05 15:00:00+08:00" }
+        open: { type: number }
+        high: { type: number }
+        low: { type: number }
+        close: { type: number }
+        prev_close:
+          type: number
+          nullable: true
+          description: "上一根收盘价 (来自 eltdx last_close_price_milli / 1000)"
+        pct:
+          type: number
+          nullable: true
+          description: "涨跌幅 % = (close - prev_close) / prev_close * 100"
+        volume_lots: { type: integer }
+        amount: { type: number }
+    IndexKlineResponse:
+      type: object
+      properties:
+        code: { type: string, example: "sh880301" }
+        name: { type: string, example: "农副食品" }
+        kind: { type: string, enum: [industry, concept] }
+        period: { type: string, example: "day" }
+        count: { type: integer }
+        source: { type: string, example: "eltdx" }
+        bars:
+          type: array
+          items: { $ref: "#/components/schemas/IndexBar" }
+    IndexCodeItem:
+      type: object
+      properties:
+        code: { type: string, example: "sh880301" }
+        name: { type: string, example: "农副食品" }
+        kind: { type: string, enum: [industry, concept] }
+
+    # ---- 行业 / 概念 应用面 ----
+    IndustryApplicationTarget:
+      type: object
+      properties:
+        id: { type: string, example: "industry-sh880301" }
+        target_type: { type: string, enum: [industry, concept] }
+        symbol: { type: string, example: "sh880301" }
+        name: { type: string, example: "农副食品" }
+        enabled: { type: boolean, default: true }
+        interval_minutes: { type: integer, default: 60 }
+        tags:
+          type: array
+          items: { type: string }
+    IndustryApplicationConfig:
+      type: object
+      properties:
+        version: { type: integer, example: 1 }
+        updated_at: { type: string, format: date-time, nullable: true }
+        horizon: { $ref: "#/components/schemas/Horizon" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/IndustryApplicationTarget" }
+    IndustryApplicationKlineResponse:
+      type: object
+      properties:
+        target_type: { type: string, enum: [industry, concept] }
+        code: { type: string, example: "sh880301" }
+        name: { type: string, example: "农副食品" }
+        period: { type: string, example: "day" }
+        kline:
+          type: array
+          items: { $ref: "#/components/schemas/IndexBar" }
+        indicators: { $ref: "#/components/schemas/IndustryApplicationIndicators" }
+        fetched_at: { type: string, format: date-time }
+        source: { type: string, example: "eltdx" }
+    IndustryApplicationIndicators:
+      type: object
+      properties:
+        latest_close: { type: number }
+        latest_pct: { type: number, nullable: true }
+        latest_time: { type: string }
+        ma20: { type: number, nullable: true }
+        ma60: { type: number, nullable: true }
+        ma120: { type: number, nullable: true }
+        ma250: { type: number, nullable: true }
+        above_ma20: { type: boolean }
+        above_ma60: { type: boolean }
+        above_ma20_pct: { type: number, nullable: true }
+        above_ma60_pct: { type: number, nullable: true }
+        above_ma20_streak: { type: integer }
+        high_20: { type: number, nullable: true }
+        low_20: { type: number, nullable: true }
+        range_pos_20: { type: number, nullable: true, description: "0-1 位置百分比" }
+        return_5d: { type: number, nullable: true, description: "5 日累计收益 %" }
+        return_20d: { type: number, nullable: true, description: "20 日累计收益 %" }
+        return_60d: { type: number, nullable: true, description: "60 日累计收益 %" }
+        bar_count: { type: integer }
+    IndustryApplicationResult:
+      type: object
+      properties:
+        target: { $ref: "#/components/schemas/IndustryApplicationTarget" }
+        updated_at: { type: string, format: date-time }
+        kline:
+          type: array
+          items: { $ref: "#/components/schemas/IndexBar" }
+        indicators: { $ref: "#/components/schemas/IndustryApplicationIndicators" }
+        meta: { type: object, additionalProperties: true }
 
     # ---------------- MP4 History ----------------
     MP4History:

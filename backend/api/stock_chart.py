@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from flask import Blueprint, jsonify, request
 
@@ -505,3 +506,117 @@ def stock_chart_market_overview():
         return jsonify(build_market_overview())
     except Exception as exc:
         return jsonify({'error': str(exc)}), 502
+
+
+# =============================================================================
+# 行业 / 概念 应用面分析（独立于 application-analysis）
+# 数据源：eltdx bars.get(kind="index")
+# 持久化：reference/industry-application/  (独立)
+# =============================================================================
+
+try:
+    from backend.services.stock import industry_application_service as ia_service
+    from backend.services.stock.industry_application_store import load_targets as ia_load_targets
+    from backend.services.stock.industry_application_store import save_targets as ia_save_targets
+except ImportError:  # 允许模块缺失时仍启动
+    ia_service = None  # type: ignore[assignment]
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/targets', methods=['GET'])
+def industry_application_list_targets():
+    """行业 / 概念 应用面分析 targets 列表。"""
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    return jsonify(ia_service.fetch_targets())
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/targets', methods=['PUT'])
+def industry_application_save_targets():
+    """保存 targets。"""
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    payload = request.get_json(silent=True) or {}
+    return jsonify(ia_service.upsert_targets(payload))
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/target-codes')
+def industry_application_target_codes():
+    """返回所有可加进 targets 的 行业 / 概念 代码（来自 index_codes.py）。
+
+    ``kind`` 可选: ``industry`` / ``concept`` / 留空返回全部。
+    """
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    kind = str(request.args.get('kind', '')).strip().lower()
+    items = ia_service.collect_all_target_codes()
+    if kind in {'industry', 'concept'}:
+        items = [it for it in items if it.get('kind') == kind]
+    return jsonify({'items': items, 'count': len(items), 'source': 'index_codes.py'})
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/kline')
+def industry_application_kline():
+    """拉取某个行业 / 概念 指数的 K 线 + 技术指标（不落盘）。"""
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    target_type = str(request.args.get('target_type', '')).strip().lower() or 'industry'
+    symbol = str(request.args.get('symbol', '')).strip().lower()
+    period = str(request.args.get('period', 'day')).strip() or 'day'
+    try:
+        count = int(request.args.get('count', 120))
+    except (TypeError, ValueError):
+        count = 120
+    if not symbol:
+        return jsonify({'error': 'symbol 不能为空'}), 400
+    try:
+        return jsonify(ia_service.fetch_kline(target_type, symbol, period=period, count=count))
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'error_type': 'bad_request'}), 400
+    except Exception as exc:
+        return jsonify({'error': str(exc), 'error_type': 'upstream_failure'}), 502
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/refresh', methods=['POST'])
+def industry_application_refresh():
+    """触发一次拉取 + 落盘 (targets.json 里所有 enabled 标的)。"""
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    payload = request.get_json(silent=True) or {}
+    only_id = payload.get('target_id')
+
+    targets = ia_service.fetch_targets()
+    items = [
+        it for it in targets.get('items', [])
+        if it.get('enabled', True) and (not only_id or it.get('id') == only_id)
+    ]
+    if not items:
+        return jsonify({'ok': False, 'error': '没有 enabled 标的', 'count': 0}), 200
+
+    results: list[dict[str, Any]] = []
+    for item in items:
+        try:
+            r = ia_service.refresh_target(item)
+            results.append({'id': item.get('id'), 'ok': True, 'kline_count': r.get('kline_count')})
+        except Exception as exc:  # noqa: BLE001
+            results.append({'id': item.get('id'), 'ok': False, 'error': str(exc)})
+    ok = all(r.get('ok') for r in results)
+    return jsonify({'ok': ok, 'items': results, 'count': len(results)})
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/results/<target_id>')
+def industry_application_read_result(target_id: str):
+    """读某个 target 的最新 result.json。"""
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    payload = ia_service.fetch_result(target_id)
+    if payload is None:
+        return jsonify({'error': 'target 不存在或 result 未生成'}), 404
+    return jsonify(payload)
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/results')
+def industry_application_list_results():
+    """列出 reference/industry-application/results/ 下所有 json。"""
+    if ia_service is None:
+        return jsonify({'error': 'industry_application_service 未安装'}), 501
+    return jsonify({'items': ia_service.list_all_results(), 'count': len(ia_service.list_all_results())})

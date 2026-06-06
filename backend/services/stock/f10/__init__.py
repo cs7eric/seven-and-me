@@ -42,7 +42,14 @@ from .schemas import (
     TurnoverRateSeries,
     Valuation,
 )
-from .helpers import stock_topics, topic_stocks
+from .helpers import (
+    all_concept_index_codes,
+    all_industry_index_codes,
+    concept_index_kline,
+    industry_index_kline,
+    stock_topics,
+    topic_stocks,
+)
 from .service import (
     FundamentalsService,
     get_fundamentals_service,
@@ -89,4 +96,8 @@ __all__ = [
     "reset_fundamentals_service",
     "stock_topics",
     "topic_stocks",
+    "industry_index_kline",
+    "concept_index_kline",
+    "all_industry_index_codes",
+    "all_concept_index_codes",
 ]

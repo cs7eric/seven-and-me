@@ -50,6 +50,7 @@ const STATIC_NAV_ITEMS: PaletteItem[] = [
   { id: "page-stock-chart", label: "Stock Chart · Workspace", group: "Pages", icon: TrendingUp, to: "/stock-chart", keywords: "stock chart kline k 线" },
   { id: "page-stock-overview", label: "Stock Overview · 市场情景", group: "Pages", icon: LineChart, to: "/stock-overview", keywords: "market regime overview 大盘" },
   { id: "page-app-analysis", label: "Application Analysis", group: "Pages", icon: Compass, to: "/stock-overview/application-analysis", keywords: "application analysis 题材 120 日 4 段" },
+  { id: "page-industry-application", label: "Industry / Concept · 行业概念", group: "Pages", icon: Compass, to: "/stock-overview/industry-application", keywords: "industry concept sector 行业 概念 板块 sh8803 sh8804 eltdx" },
   { id: "page-self-selected", label: "Self-Selected · 自选", group: "Pages", icon: Star, to: "/stock-overview/self-selected", keywords: "self selected watchlist 自选" },
   { id: "page-stock-review", label: "Stock Review", group: "Pages", icon: LineChart, to: "/stock-review", keywords: "stock review" },
   { id: "page-scheduler", label: "Settings · Scheduler", group: "Pages", icon: Sparkles, to: "/settings/scheduler", keywords: "scheduler settings 调度" },

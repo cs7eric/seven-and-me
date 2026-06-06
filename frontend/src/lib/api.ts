@@ -2,6 +2,13 @@ import type { Phase, SSEEvent, QAResponse, TransferProgress } from "./types";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
 import type { StockAdjust, StockAnnotation, StockAuctionSnapshot, StockIntradayResponse, StockKlineBar, StockPeriod, StockSearchItem, StockTargetType, StockWorkspace, ApplicationAnalysisResponse } from "@/views/stock-chart/lib/types";
 import type { ApplicationAnalysisDailySnapshot } from "@/views/application-analysis/lib/types";
+import type {
+  IndustryApplicationConfig,
+  IndustryApplicationIndicators,
+  IndustryApplicationIndexBar,
+  IndustryApplicationKlinePayload,
+  IndustryApplicationTargetCode,
+} from "@/views/industry-application/lib/types";
 
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
@@ -997,4 +1004,79 @@ export async function deleteSelfSelectedItem(itemId: string): Promise<SelfSelect
       method: "DELETE",
     }),
   )
+}
+
+// =============================================================================
+// 行业 / 概念 应用面分析（独立于 application-analysis）
+// =============================================================================
+
+export async function fetchIndustryApplicationTargets(): Promise<IndustryApplicationConfig> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/targets`)
+  return (await res.json()) as IndustryApplicationConfig
+}
+
+export async function saveIndustryApplicationTargets(payload: {
+  horizon: { days: number; segments: number }
+  items: IndustryApplicationConfig["items"]
+}): Promise<IndustryApplicationConfig> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/targets`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  return (await res.json()) as IndustryApplicationConfig
+}
+
+export async function fetchIndustryApplicationTargetCodes(): Promise<{
+  items: IndustryApplicationTargetCode[]
+  count: number
+  source: string
+}> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/target-codes`)
+  return (await res.json()) as { items: IndustryApplicationTargetCode[]; count: number; source: string }
+}
+
+export async function fetchIndustryApplicationKline(
+  target_type: "industry" | "concept",
+  symbol: string,
+  opts: { period?: string; count?: number } = {},
+): Promise<IndustryApplicationKlinePayload> {
+  const params = new URLSearchParams({ target_type, symbol })
+  if (opts.period) params.set("period", opts.period)
+  if (opts.count) params.set("count", String(opts.count))
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/kline?${params.toString()}`)
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || "拉取行业 K 线失败")
+  }
+  return (await res.json()) as IndustryApplicationKlinePayload
+}
+
+export async function refreshIndustryApplication(targetId: string | null): Promise<{
+  ok: boolean
+  items?: { id: string; ok: boolean; kline_count?: number; error?: string }[]
+  count?: number
+  error?: string
+}> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ target_id: targetId || null }),
+  })
+  return (await res.json()) as { ok: boolean; items?: { id: string; ok: boolean; kline_count?: number; error?: string }[]; count?: number; error?: string }
+}
+
+export async function fetchIndustryApplicationResult(targetId: string): Promise<{
+  target: { id?: string; target_type?: string; symbol?: string; name?: string; tags?: string[] }
+  updated_at: string
+  kline: IndustryApplicationIndexBar[]
+  indicators: IndustryApplicationIndicators
+  meta?: Record<string, unknown>
+}> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/results/${encodeURIComponent(targetId)}`)
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string }
+    throw new Error(data.error || "拉取行业结果失败")
+  }
+  return (await res.json()) as { target: { id?: string; target_type?: string; symbol?: string; name?: string; tags?: string[] }; updated_at: string; kline: IndustryApplicationIndexBar[]; indicators: IndustryApplicationIndicators; meta?: Record<string, unknown> }
 }

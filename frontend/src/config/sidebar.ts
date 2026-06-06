@@ -79,6 +79,10 @@ export const sidebarConfig = {
           url: "/stock-overview/application-analysis",
         },
         {
+          title: "industry",
+          url: "/stock-overview/industry-application",
+        },
+        {
           title: "self-selected",
           url: "/stock-overview/self-selected",
         },
@@ -141,6 +145,11 @@ export const sidebarConfig = {
     {
       name: "Application Analysis",
       url: "/stock-overview/application-analysis",
+      icon: LineChart,
+    },
+    {
+      name: "Industry / Concept",
+      url: "/stock-overview/industry-application",
       icon: LineChart,
     },
     {
