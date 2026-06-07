@@ -18,6 +18,7 @@ from backend.services.stock.auction_ai_analysis_service import (
     run_auction_ai_analysis_target,
 )
 from backend.services.stock.kline_service import build_intraday_snapshot, resolve_stock_klines
+from backend.services.stock.etf_poc_service import build_etf_poc
 from backend.services.stock.application_analysis_service import run_application_analysis
 from backend.services.stock.feature_summary import build_stock_feature_summary
 from backend.services.stock.application_analysis_scheduler import (
@@ -123,6 +124,37 @@ def stock_chart_klines():
     }
     write_json_file(cache_file, payload)
     return jsonify(payload)
+
+
+@stock_chart_bp.route('/api/stock-chart/etf/poc')
+def stock_chart_etf_poc():
+    symbol = str(request.args.get('symbol', '510300')).strip() or '510300'
+    period = str(request.args.get('period', '1d')).strip() or '1d'
+    adjust = str(request.args.get('adjust', 'qfq')).strip() or 'qfq'
+    try:
+        kline_count = int(request.args.get('count') or 120)
+    except (TypeError, ValueError):
+        kline_count = 120
+    try:
+        holdings_limit = int(request.args.get('holdings_limit') or 20)
+    except (TypeError, ValueError):
+        holdings_limit = 20
+
+    try:
+        return jsonify(build_etf_poc(
+            symbol,
+            period=period,
+            adjust=adjust,
+            kline_count=max(1, min(kline_count, 500)),
+            holdings_limit=max(1, min(holdings_limit, 100)),
+        ))
+    except Exception as exc:
+        return jsonify({
+            'ok': False,
+            'target_type': 'etf',
+            'symbol': symbol,
+            'error': str(exc),
+        }), 502
 
 
 @stock_chart_bp.route('/api/stock-chart/intraday')
@@ -680,3 +712,65 @@ def industry_application_heatmap():
             "error": str(exc),
         })
     return jsonify(payload)
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/tdx-industry-56')
+def tdx_industry_56():
+    """TDX 56 个行业指数的实时行情快照.
+
+    URL: /api/stock-chart/industry-application/tdx-industry-56
+    拉取逻辑: ``backend.services.stock.f10.tdx_industry_service``.
+    """
+    from backend.services.stock.f10.tdx_industry_service import (
+        build_industry_market_payload,
+    )
+    try:
+        payload = build_industry_market_payload()
+        payload["ok"] = True
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "kind": "industries",
+            "label": "行业",
+            "count": 0,
+            "items": [],
+            "error": str(exc),
+            "source": "eltdx.get_index_codes_all + get_quote (failed)",
+        }), 200
+    return jsonify(payload)
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/tdx-industry-kline')
+def tdx_industry_kline():
+    """单个 TDX 行业指数 K 线.
+
+    URL: /api/stock-chart/industry-application/tdx-industry-kline
+        ?code=880471&period=day&count=120
+    """
+    from backend.services.stock.f10.tdx_industry_service import fetch_industry_kline
+    code = (request.args.get("code") or "").strip()
+    period = (request.args.get("period") or "day").strip().lower()
+    try:
+        count = int(request.args.get("count") or 120)
+    except (TypeError, ValueError):
+        count = 120
+    if not code:
+        return jsonify({"ok": False, "error": "code is required", "items": []}), 400
+    rows = fetch_industry_kline(code, period=period, count=count)
+    return jsonify({"ok": True, "code": code, "period": period, "count": count, "items": rows})
+
+
+@stock_chart_bp.route('/api/stock-chart/industry-application/tdx-industry-snapshot')
+def tdx_industry_snapshot():
+    """单个 TDX 行业指数实时快照.
+
+    URL: /api/stock-chart/industry-application/tdx-industry-snapshot?code=880471
+    """
+    from backend.services.stock.f10.tdx_industry_service import fetch_industry_snapshot
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        return jsonify({"ok": False, "error": "code is required"}), 400
+    row = fetch_industry_snapshot(code)
+    if not row:
+        return jsonify({"ok": False, "error": f"no quote for {code}"}), 200
+    return jsonify({"ok": True, "item": row})

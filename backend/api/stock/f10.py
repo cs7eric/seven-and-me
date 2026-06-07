@@ -9,12 +9,13 @@ from typing import Any, Callable
 
 from flask import Blueprint, jsonify, request
 
-from backend.services.stock.f10 import get_fundamentals_service
+from backend.services.stock.f10 import all_index_codes, get_fundamentals_service
 from backend.services.stock.f10.helpers import (
     all_concept_index_codes,
     all_industry_index_codes,
     concept_index_kline,
     industry_index_kline,
+    index_kline,
     stock_topics,
     topic_stocks,
 )
@@ -240,21 +241,45 @@ def f10_eltdx_concept_index_kline():
         return jsonify({'error': str(exc), 'error_type': 'bad_request'}), 400
 
 
+@f10_bp.route('/api/stock-chart/eltdx/index-kline')
+def f10_eltdx_index_kline():
+    """通用板块 / 指数 K 线（支持 ``880xxx`` / ``881xxx`` / ``sh88xxxx``）。"""
+    code = str(request.args.get('code', '')).strip() or '881111'
+    period = str(request.args.get('period', 'day')).strip() or 'day'
+    try:
+        count = int(request.args.get('count', 120))
+    except (TypeError, ValueError):
+        count = 120
+    try:
+        return jsonify(index_kline(code, period=period, count=count))
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'error_type': 'bad_request'}), 400
+
+
 @f10_bp.route('/api/stock-chart/eltdx/index-codes')
 def f10_eltdx_index_codes():
-    """返回所有行业 / 概念 指数代码（用于前端下拉选）。
+    """返回所有行业 / 概念 / 板块 指数代码（用于前端下拉选）。
 
-    ``kind``: ``industry`` / ``concept`` / 留空返回全部。
+    ``kind``: ``industry`` / ``concept`` / ``sector`` / 留空返回全部。
     """
     kind = str(request.args.get('kind', '')).strip().lower()
     if kind in {'', 'all', 'both'}:
-        items = all_industry_index_codes() + all_concept_index_codes()
+        items = [
+            {'code': code, 'name': name, 'kind': item_kind}
+            for code, name, item_kind in all_index_codes()
+        ]
     elif kind == 'industry':
         items = all_industry_index_codes()
     elif kind == 'concept':
         items = all_concept_index_codes()
+    elif kind == 'sector':
+        items = [
+            {'code': code, 'name': name, 'kind': item_kind}
+            for code, name, item_kind in all_index_codes()
+            if item_kind == 'sector'
+        ]
     else:
-        return jsonify({'error': f"kind 仅支持 industry/concept/空, 收到 {kind!r}"}), 400
+        return jsonify({'error': f"kind 仅支持 industry/concept/sector/空, 收到 {kind!r}"}), 400
     return jsonify({'items': items, 'count': len(items), 'source': 'index_codes.py'})
 
 

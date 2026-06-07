@@ -47,6 +47,7 @@ from .helpers import (
     all_industry_index_codes,
     concept_index_kline,
     industry_index_kline,
+    index_kline,
     stock_topics,
     topic_stocks,
 )
@@ -100,4 +101,5 @@ __all__ = [
     "concept_index_kline",
     "all_industry_index_codes",
     "all_concept_index_codes",
+    "index_kline",
 ]

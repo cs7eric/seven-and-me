@@ -1,3 +1,5 @@
+import logging
+
 from flask import Flask
 
 from backend.api.mp4_history import create_mp4_history_bp
@@ -27,6 +29,9 @@ from backend.services.stock.f10 import get_fundamentals_service
 from backend.services.task_runtime_service import runtime_store
 
 
+logger = logging.getLogger(__name__)
+
+
 def is_api_configured() -> bool:
     return bool(API_KEY and GROUP_ID)
 
@@ -46,19 +51,19 @@ def register_blueprints(app: Flask) -> None:
         try:
             start_application_analysis_scheduler()
         except Exception as exc:
-            print(f'[Bootstrap] Application Analysis scheduler 启动失败: {exc}', flush=True)
+            logger.exception('Application Analysis scheduler start failed: %s', exc)
     if is_turnover_scheduler_enabled():
         try:
             start_turnover_scheduler()
         except Exception as exc:
-            print(f'[Bootstrap] Turnover scheduler 启动失败: {exc}', flush=True)
+            logger.exception('Turnover scheduler start failed: %s', exc)
     if is_auction_analysis_scheduler_enabled():
         try:
             start_auction_analysis_scheduler()
         except Exception as exc:
-            print(f'[Bootstrap] Auction Analysis scheduler 启动失败: {exc}', flush=True)
+            logger.exception('Auction Analysis scheduler start failed: %s', exc)
     if is_stock_universe_scheduler_enabled():
         try:
             start_stock_universe_scheduler()
         except Exception as exc:
-            print(f'[Bootstrap] Stock Universe scheduler 启动失败: {exc}', flush=True)
+            logger.exception('Stock Universe scheduler start failed: %s', exc)

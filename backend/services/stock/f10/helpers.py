@@ -32,6 +32,9 @@ from .index_codes import (
     INDUSTRY_INDEX_CODES,
     get_concept_codes,
     get_industry_codes,
+    infer_index_kind,
+    lookup_index_name,
+    normalize_index_code,
 )
 from .schemas import StockTopic, StockTopics, TopicDetail, TopicStock, TopicStockTable
 
@@ -201,10 +204,13 @@ def _fetch_index_kline_bars(
     """
     if count <= 0 or count > 2000:
         raise ValueError("count 必须在 1-2000 之间")
+    normalized_code = normalize_index_code(code)
+    if not normalized_code:
+        raise ValueError("code 不能为空")
     normalized = _normalize_period(period)
     with TdxClient(timeout=5) as client:
         page = client.bars.get(
-            code,
+            normalized_code,
             period=normalized,
             count=count,
             kind="index",
@@ -263,10 +269,11 @@ def industry_index_kline(
             "source": "eltdx",
         }
     """
-    name = _lookup_index_name(code, INDUSTRY_INDEX_CODES)
-    bars = _fetch_index_kline_bars(code, period=period, count=count)
+    normalized_code = normalize_index_code(code)
+    name = _lookup_index_name(normalized_code, INDUSTRY_INDEX_CODES)
+    bars = _fetch_index_kline_bars(normalized_code, period=period, count=count)
     return {
-        "code": code,
+        "code": normalized_code,
         "name": name or "",
         "kind": "industry",
         "period": _normalize_period(period),
@@ -286,10 +293,11 @@ def concept_index_kline(
 
     ``code`` 必须是 ``sh8804XX`` 格式 (来自 :data:`CONCEPT_INDEX_CODES`)。
     """
-    name = _lookup_index_name(code, CONCEPT_INDEX_CODES)
-    bars = _fetch_index_kline_bars(code, period=period, count=count)
+    normalized_code = normalize_index_code(code)
+    name = _lookup_index_name(normalized_code, CONCEPT_INDEX_CODES)
+    bars = _fetch_index_kline_bars(normalized_code, period=period, count=count)
     return {
-        "code": code,
+        "code": normalized_code,
         "name": name or "",
         "kind": "concept",
         "period": _normalize_period(period),
@@ -310,11 +318,33 @@ def all_concept_index_codes() -> list[dict[str, str]]:
 
 
 def _lookup_index_name(code: str, table: Iterable[tuple[str, str]]) -> str | None:
-    code_lower = code.strip().lower()
+    code_lower = normalize_index_code(code)
     for c, n in table:
-        if c.lower() == code_lower:
+        if normalize_index_code(c) == code_lower:
             return n
-    return None
+    return lookup_index_name(code_lower)
+
+
+def index_kline(
+    code: str,
+    *,
+    period: str = "day",
+    count: int = 120,
+) -> dict[str, Any]:
+    normalized_code = normalize_index_code(code)
+    if not normalized_code:
+        raise ValueError("code 不能为空")
+    bars = _fetch_index_kline_bars(normalized_code, period=period, count=count)
+    kind = infer_index_kind(normalized_code)
+    return {
+        "code": normalized_code,
+        "name": lookup_index_name(normalized_code) or "",
+        "kind": kind,
+        "period": _normalize_period(period),
+        "count": len(bars),
+        "bars": bars,
+        "source": "eltdx",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +388,7 @@ __all__ = [
     "all_industry_index_codes",
     "concept_index_kline",
     "industry_index_kline",
+    "index_kline",
     "stock_topics",
     "topic_stocks",
 ]
-

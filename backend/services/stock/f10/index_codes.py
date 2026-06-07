@@ -18,7 +18,11 @@ eltdx 库**没有**"列出所有行业板块 / 概念板块"分类编号清单�
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Final
+
+from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
+from backend.utils.json_io import read_json_file
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +132,78 @@ CONCEPT_INDEX_CODES: Final[list[tuple[str, str]]] = [
 # 工具方法
 # ---------------------------------------------------------------------------
 
+INDEX_OVERRIDES_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'industry_index_overrides.json'
+
+
+def normalize_index_code(code: str) -> str:
+    value = str(code or '').strip().lower()
+    if not value:
+        return ''
+    if value.startswith(('sh', 'sz', 'bj')):
+        return value
+    if value.isdigit():
+        return f'sh{value}'
+    return value
+
+
+def _normalize_override_items(raw_items) -> list[dict[str, str]]:
+    items: list[dict[str, str]] = []
+    if not isinstance(raw_items, list):
+        return items
+    for raw in raw_items:
+        if not isinstance(raw, dict):
+            continue
+        code = normalize_index_code(raw.get('code'))
+        name = str(raw.get('name') or '').strip()
+        kind = str(raw.get('kind') or '').strip().lower()
+        if not code or not name:
+            continue
+        items.append({
+            'code': code,
+            'name': name,
+            'kind': kind or 'unknown',
+        })
+    return items
+
+
+def load_index_code_overrides() -> list[dict[str, str]]:
+    return _normalize_override_items(read_json_file(INDEX_OVERRIDES_FILE, []))
+
+
+def lookup_index_override(code: str) -> dict[str, str] | None:
+    normalized = normalize_index_code(code)
+    if not normalized:
+        return None
+    for item in load_index_code_overrides():
+        if item.get('code') == normalized:
+            return item
+    return None
+
+
+def lookup_index_name(code: str) -> str | None:
+    normalized = normalize_index_code(code)
+    override = lookup_index_override(normalized)
+    if override:
+        return override.get('name')
+    for current_code, name, _kind in all_index_codes():
+        if current_code == normalized:
+            return name
+    return None
+
+
+def infer_index_kind(code: str) -> str:
+    normalized = normalize_index_code(code)
+    override = lookup_index_override(normalized)
+    if override and override.get('kind'):
+        return str(override['kind'])
+    if normalized.startswith('sh8803'):
+        return 'industry'
+    if normalized.startswith('sh8804'):
+        return 'concept'
+    if normalized.startswith('sh881'):
+        return 'sector'
+    return 'unknown'
+
 
 def get_industry_codes() -> list[tuple[str, str]]:
     return list(INDUSTRY_INDEX_CODES)
@@ -144,4 +220,9 @@ def all_index_codes() -> list[tuple[str, str, str]]:
         out.append((code, name, "industry"))
     for code, name in CONCEPT_INDEX_CODES:
         out.append((code, name, "concept"))
+    for item in load_index_code_overrides():
+        code = item['code']
+        if any(existing_code == code for existing_code, _, _ in out):
+            continue
+        out.append((code, item['name'], item.get('kind') or 'unknown'))
     return out

@@ -6,8 +6,8 @@
 
 行情 (change_pct / amount / volume) 走 hotpath, 默认通过
 :func:`fetch_realtime_quotes` 拿 —— 默认实现是用 eltdx ``list_by_category(6)``
-按 sort_by=涨幅 / 振幅 4 个角度取, 已经能稳定给到 ~1300 只股票
-的实时行情 (日均实时变动).
+按 sort_by=涨幅 / 成交额 多个角度取，覆盖涨跌两端和高成交股票
+的实时行情。
 
 如果后续接其它行情 API (东方财富 push2 / 同花顺 / 雪球), 改
 ``fetch_realtime_quotes`` 的实现即可, 上层 treemap 渲染逻辑不动.
@@ -55,6 +55,27 @@ SHARES_CACHE_DIR = STOCK_UNIVERSE_DIR / "_shares_cache"
 #                       "amount": 3984001792.0, "total_hand": 31303, "current_hand": 560,
 #                       "open_amount_yuan": 74109950.0, "rise_speed": 0, ...} }
 
+def _normalize_quote_code(code: Any, exchange: Any = "") -> str:
+    raw = str(code or "").strip().lower()
+    if not raw:
+        return ""
+    if raw.startswith(("sh", "sz", "bj")) and len(raw) == 8:
+        return raw
+    six = raw[-6:]
+    if not six.isdigit():
+        return raw
+    ex = str(exchange or "").strip().lower()
+    if ex in ("sh", "sz", "bj"):
+        return ex + six
+    if six.startswith(("6", "5", "9")):
+        return "sh" + six
+    if six.startswith(("0", "1", "2", "3")):
+        return "sz" + six
+    if six.startswith(("4", "8")):
+        return "bj" + six
+    return six
+
+
 QuoteFetcher = Callable[[list[str]], dict[str, dict[str, Any]]]
 
 
@@ -72,8 +93,7 @@ def _realtime_quote_fetcher(codes: list[str]) -> dict[str, dict[str, Any]]:
     jobs = [
         {"sort_by": "涨幅", "ascending": False},
         {"sort_by": "涨幅", "ascending": True},
-        {"sort_by": "振幅", "ascending": False},
-        {"sort_by": "振幅", "ascending": True},
+        {"sort_by": "成交额", "ascending": False},
     ]
     for job in jobs:
         start = 0
@@ -90,7 +110,9 @@ def _realtime_quote_fetcher(codes: list[str]) -> dict[str, dict[str, Any]]:
             if not items:
                 break
             for raw in items:
-                code = str(raw.get("code") or "").strip()
+                raw_code = str(raw.get("code") or raw.get("full_code") or "").strip()
+                exchange = str(raw.get("exchange") or "").lower()
+                code = _normalize_quote_code(raw_code, exchange)
                 if not code or code in seen:
                     continue
                 seen.add(code)
@@ -99,12 +121,13 @@ def _realtime_quote_fetcher(codes: list[str]) -> dict[str, dict[str, Any]]:
                 out[code] = {
                     "last_price": last,
                     "pre_close_price": pre_close,
+                    "change_pct": raw.get("change_pct"),
                     "amount": float(raw.get("amount") or 0),
                     "total_hand": float(raw.get("total_hand") or 0),
                     "current_hand": float(raw.get("current_hand") or 0),
                     "open_amount_yuan": float(raw.get("open_amount") or 0),
                     "rise_speed": float(raw.get("rise_speed") or 0),
-                    "exchange": str(raw.get("exchange") or "").lower(),
+                    "exchange": exchange,
                 }
             if len(items) < 80:
                 break
@@ -317,9 +340,11 @@ def _kline_quote_fetcher(codes: list[str]) -> dict[str, dict[str, Any]]:
             prev_close = float(bars[-2].close or 0)
             if not last_close or not prev_close:
                 return
+            change_pct = _safe_pct(last_close, prev_close)
             payload = {
                 "last_price": last_close,
                 "pre_close_price": prev_close,
+                "change_pct": change_pct,
                 "amount": float(bars[-1].amount or 0),
                 "total_hand": float(bars[-1].volume_lots or 0),
                 "current_hand": 0.0,
@@ -353,22 +378,16 @@ def _kline_quote_fetcher(codes: list[str]) -> dict[str, dict[str, Any]]:
 
 
 def _default_quote_fetcher(codes: list[str]) -> dict[str, dict[str, Any]]:
-    """默认 fetcher: 交易日走实时; 非交易日走 K-line 回退 (上一交易日日 K 收盘价).
+    """默认 fetcher: 交易日走实时; 非交易日走 K-line 回退 (上一交易日日 K 收盘价)."""
+    if not is_trading_day():
+        logger.info("non-trading day, switching to kline fallback (codes=%d)", len(codes))
+        return _attach_turnover(_kline_quote_fetcher(codes))
 
-    注意: 实时 fetcher 走 list_by_category(6) 拿到的是 eltdx 服务端排序的 ~1300
-    只, 其 key 格式跟 universe 的 ``sh600519``/``sz000001``/``bj920211`` 不一定一致
-    (eltdx 可能返回纯 6 位数字, 也可能带前缀), 所以判定走不走 fallback 不能
-    看实时 dict 是否空, 而要看跟 ``codes`` 的实际交集.
-    """
     quotes = _realtime_quote_fetcher(codes)
     hit = {c: quotes[c] for c in codes if c in quotes}
     if hit:
         # 给所有命中的 quote 挂 turnover_rate (从 0x0010 finance_batch 拉流通股本本地算)
         return _attach_turnover(hit)
-    if not is_trading_day():
-        logger.info("non-trading day, switching to kline fallback (codes=%d, realtime_hit=0)",
-                    len(codes))
-        return _attach_turnover(_kline_quote_fetcher(codes))
     return hit
 
 
@@ -385,6 +404,20 @@ def _safe_pct(last: float, pre_close: float) -> float | None:
     if not last or not pre_close:
         return None
     return (last - pre_close) / pre_close * 100.0
+
+
+def _quote_change_pct(q: dict[str, Any]) -> float | None:
+    raw = q.get("change_pct")
+    if raw is not None and raw != "":
+        try:
+            pct = float(raw)
+            if abs(pct) <= 50:
+                return pct
+        except (TypeError, ValueError):
+            pass
+    last = float(q.get("last_price") or 0)
+    pre_close = float(q.get("pre_close_price") or 0)
+    return _safe_pct(last, pre_close)
 
 
 # ---------------------------------------------------------------------------
@@ -522,19 +555,22 @@ def build_market_heatmap(kind: str = "all", top_n: int = 200) -> dict[str, Any]:
         if not sec_quotes:
             continue
 
-        # 板块自身涨跌幅 = sector 内个股 amount 加权 zdf
+        # 板块涨跌幅用成分股等权平均；成交额只用于 treemap 面积。
+        # 不再用成交额加权，否则单只高成交额大票会把整个板块颜色带偏。
         amount_sum = 0.0
-        w_change_sum = 0.0
+        pct_sum = 0.0
+        pct_count = 0
         rising = falling = flat = limit_up = 0
         children: list[dict[str, Any]] = []
         for c, q in sec_quotes.items():
             last = float(q.get("last_price") or 0)
             pre_close = float(q.get("pre_close_price") or 0)
             amount = float(q.get("amount") or 0)
-            pct = _safe_pct(last, pre_close)
+            pct = _quote_change_pct(q)
             amount_sum += amount
             if pct is not None and abs(pct) <= 30:
-                w_change_sum += pct * amount
+                pct_sum += pct
+                pct_count += 1
             if pct is None or abs(pct) < 0.0001:
                 flat += 1
             elif pct > 0:
@@ -565,7 +601,7 @@ def build_market_heatmap(kind: str = "all", top_n: int = 200) -> dict[str, Any]:
                 "kind": g["kind"],
             })
 
-        change_pct = round(w_change_sum / amount_sum, 2) if amount_sum > 0 else None
+        change_pct = round(pct_sum / pct_count, 2) if pct_count > 0 else None
         children.sort(key=lambda x: -(x.get("amount") or 0))
         items.append({
             "name": sec.get("name"),
