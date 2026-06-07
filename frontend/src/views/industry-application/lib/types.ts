@@ -140,7 +140,9 @@ export interface StockHeatmapItem {
 export interface HeatmapSectorNode {
   name: string
   sectorCode: string
-  kind: "industry"
+  kind: "industry" | "concepts" | "industries" | "styles"
+  kindLabel?: string
+  topicId?: string | string[]
   value: number
   changePercent: number | null
   amount: number

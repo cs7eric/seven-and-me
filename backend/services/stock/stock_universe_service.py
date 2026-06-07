@@ -79,20 +79,44 @@ SHARD_SIZES = [1000, 500, 200, 100, 50, 50]
 DAILY_VERSION = 2
 
 # ---------- reason 字段提取行业 ----------
-# 样本: "公司属于白酒（通达信研究行业）"
-_INDUSTRY_RE = re.compile(r"公司属于([\u4e00-\u9fa5]+)（通达信研究行业）")
-_FALLBACK_INDUSTRY_RE = re.compile(r"公司主营([\u4e00-\u9fa5]+)")
+# 样本:
+#   "公司属于白酒（通达信研究行业）"                  -> 白酒
+#   "公司主营业务属于光纤通信行业, 以网络总线..."        -> 光纤通信
+#   "公司业务属于半导体设备制造领域"                   -> 半导体设备制造
+#   "公司业务为废旧动力电池回收及梯次利用"               -> 废旧动力电池回收及梯次利用 (太长了, 截短)
+#   "公司主营电力、热力生产和供应业"                    -> 电力、热力生产和供应业
+_INDUSTRY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"公司属于([\u4e00-\u9fa5]+)（通达信研究行业）"),
+    re.compile(r"公司主营业务属于([\u4e00-\u9fa5]+)"),
+    re.compile(r"公司主营([\u4e00-\u9fa5]{2,16}?)业?[，,。；;是为]"),
+    re.compile(r"公司业务属于([\u4e00-\u9fa5]+)"),
+    re.compile(r"公司业务为([\u4e00-\u9fa5]{2,16})"),
+    re.compile(r"公司业务是([\u4e00-\u9fa5]{2,16}?)的"),
+    re.compile(r"公司聚焦于([\u4e00-\u9fa5]+)"),
+    re.compile(r"公司主营([\u4e00-\u9fa5]+)"),
+)
+
+# 不应作为行业名的停用关键词 (业务描述被误抓时的兜底过滤)
+_INDUSTRY_BLACKLIST: frozenset[str] = frozenset({
+    "研发", "生产", "销售", "服务", "管理", "咨询",
+    "的", "了", "是", "在", "和", "与", "及", "或", "等",
+})
 
 
 def extract_industry_from_reason(reason: str) -> str | None:
     if not reason:
         return None
-    m = _INDUSTRY_RE.search(reason)
-    if m:
-        return m.group(1)
-    m2 = _FALLBACK_INDUSTRY_RE.search(reason)
-    if m2:
-        return m2.group(1)
+    for pat in _INDUSTRY_PATTERNS:
+        m = pat.search(reason)
+        if not m:
+            continue
+        name = m.group(1).strip()
+        if not name or name in _INDUSTRY_BLACKLIST:
+            continue
+        if len(name) > 16:
+            # 太长通常是 reason 整段被吃进来, 截到 8 字
+            name = name[:8]
+        return name
     return None
 
 

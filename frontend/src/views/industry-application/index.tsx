@@ -31,6 +31,7 @@ import {
   refreshIndustryApplication,
   saveIndustryApplicationTargets,
 } from "@/lib/api"
+import type { HeatmapKind } from "@/lib/api"
 import type { ApplicationAnalysisTarget } from "@/lib/api"
 import type { StockKlineBar } from "../stock-chart/lib/types"
 import type {
@@ -149,6 +150,8 @@ export default function IndustryApplicationPage() {
   const [heatmapData, setHeatmapData] = useState<MarketHeatmapResponse | null>(null)
   const [heatmapLoading, setHeatmapLoading] = useState(false)
   const [heatmapAutoRefresh, setHeatmapAutoRefresh] = useState(false)
+  // industry / concept / style 三个独立屏, 默认 "industries"
+  const [heatmapKind, setHeatmapKind] = useState<HeatmapKind>("industries")
 
   const latestTargetsRef = useRef<IndustryApplicationTarget[]>([])
   latestTargetsRef.current = targets
@@ -209,10 +212,10 @@ export default function IndustryApplicationPage() {
   }, [loadAll])
 
   // Overview Tab: 拉全市场行业 + 个股热力图
-  const loadHeatmap = useCallback(async () => {
+  const loadHeatmap = useCallback(async (kind: HeatmapKind = heatmapKind) => {
     setHeatmapLoading(true)
     try {
-      const data = await fetchMarketHeatmap()
+      const data = await fetchMarketHeatmap(kind)
       setHeatmapData(data)
     } catch (err) {
       notification.danger({
@@ -230,13 +233,21 @@ export default function IndustryApplicationPage() {
     }
   }, [activeMainTab, heatmapData, heatmapLoading, loadHeatmap])
 
+  // kind 切换时主动重拉 (覆盖已有的 heatmapData)
+  useEffect(() => {
+    if (activeMainTab === "overview") {
+      void loadHeatmap(heatmapKind)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatmapKind])
+
   useEffect(() => {
     if (!heatmapAutoRefresh || activeMainTab !== "overview") return
     const timer = window.setInterval(() => {
-      void loadHeatmap()
+      void loadHeatmap(heatmapKind)
     }, 15_000)
     return () => window.clearInterval(timer)
-  }, [activeMainTab, heatmapAutoRefresh, loadHeatmap])
+  }, [activeMainTab, heatmapAutoRefresh, heatmapKind, loadHeatmap])
 
   // URL query: ?target_type=industry&symbol=sh880301 → 预览
   useEffect(() => {
@@ -465,13 +476,13 @@ export default function IndustryApplicationPage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Industry / Concept Application" fullBleed>
-      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-4 sm:p-6">
+      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-1 sm:p-1.5">
       <Tabs
         value={activeMainTab}
         onValueChange={(value) => setActiveMainTab(value as MainTab)}
         className="flex h-full min-h-0 flex-col gap-4"
       >
-          <header className="flex min-h-0 shrink-0 flex-col gap-3">
+          <header className="flex min-h-0 shrink-0 flex-col gap-2">
             {previewTarget ? (
               <div className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-amber-800">
                 <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-700">
@@ -518,11 +529,6 @@ export default function IndustryApplicationPage() {
                   </TabsTrigger>
                 ))}
               </TabsList>
-              <Separator orientation="vertical" className="mx-1 h-5" />
-              <div className="ml-auto text-[11px] text-slate-500">
-                数据源: <span className="font-mono text-slate-700">eltdx</span> · 持久化:{" "}
-                <span className="font-mono text-slate-700">reference/industry-application/</span>
-              </div>
             </div>
           </header>
 
@@ -531,9 +537,11 @@ export default function IndustryApplicationPage() {
               <SectorHeatmap
                 data={heatmapData}
                 loading={heatmapLoading}
-                onRefresh={() => void loadHeatmap()}
+                onRefresh={() => void loadHeatmap(heatmapKind)}
                 autoRefresh={heatmapAutoRefresh}
                 onAutoRefreshChange={setHeatmapAutoRefresh}
+                kind={heatmapKind}
+                onKindChange={setHeatmapKind}
               />
             </TabsContent>
 

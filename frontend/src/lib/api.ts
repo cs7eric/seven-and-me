@@ -1103,8 +1103,14 @@ export async function fetchIndustryApplicationOverview(
   return (await res.json()) as IndustryApplicationOverviewResponse
 }
 
-export async function fetchMarketHeatmap(): Promise<MarketHeatmapResponse> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/heatmap`)
+export type HeatmapKind = "industries" | "concepts" | "styles"
+
+export async function fetchMarketHeatmap(
+  kind: HeatmapKind = "industries",
+  top_n = 200
+): Promise<MarketHeatmapResponse> {
+  const params = new URLSearchParams({ kind, top_n: String(top_n) })
+  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/heatmap?${params.toString()}`)
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || "拉取市场热力图失败")

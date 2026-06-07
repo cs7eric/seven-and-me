@@ -658,16 +658,25 @@ def industry_application_heatmap():
     from backend.services.stock.market_heatmap_service import build_market_heatmap
     import logging
     _log = logging.getLogger(__name__)
+    # ?kind=all|industries|concepts|styles  &top_n=200
+    kind = (request.args.get("kind") or "all").strip().lower()
+    if kind not in ("all", "industries", "concepts", "styles"):
+        kind = "all"
     try:
-        payload = build_market_heatmap()
+        top_n = int(request.args.get("top_n") or 200)
+    except (TypeError, ValueError):
+        top_n = 200
+    try:
+        payload = build_market_heatmap(kind=kind, top_n=top_n)
     except Exception as exc:
         _log.warning("build_market_heatmap failed: %s", exc)
         return jsonify({
             "ok": False,
+            "kind": kind,
             "items": [],
             "totalStocks": 0,
             "fetchedAt": None,
-            "source": "eltdx.list_by_category(6) (failed)",
+            "source": "sectors.json + fallback (failed)",
             "error": str(exc),
         })
     return jsonify(payload)

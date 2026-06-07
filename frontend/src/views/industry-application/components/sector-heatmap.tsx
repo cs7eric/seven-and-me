@@ -46,6 +46,8 @@ interface Props {
   onRefresh: () => void
   autoRefresh: boolean
   onAutoRefreshChange: (value: boolean) => void
+  kind: "industries" | "concepts" | "styles"
+  onKindChange: (kind: "industries" | "concepts" | "styles") => void
 }
 
 type ViewMode = "market" | "sector"
@@ -60,6 +62,12 @@ const QUICK_FILTER_OPTIONS: Array<{ value: HeatmapQuickFilter; label: string }> 
   { value: "amountTop100", label: "只看成交额前100" },
   { value: "turnoverTop100", label: "只看换手率前100" },
   { value: "limitStreak", label: "只看连板股" },
+]
+
+const KIND_OPTIONS: Array<{ value: "industries" | "concepts" | "styles"; label: string }> = [
+  { value: "industries", label: "行业" },
+  { value: "concepts", label: "概念" },
+  { value: "styles", label: "风格" },
 ]
 
 const AREA_OPTIONS: Array<{ value: HeatmapAreaBy; label: string }> = [
@@ -183,42 +191,41 @@ type EChartsTreemapNode = {
 }
 
 /**
- * 9 档涨跌色 + 灰色中性。涨红跌绿, 越远越深。
- * 涨跌停 (>±9%) 用更深的极值色, 一眼能看出极端行情。
+ * 8 档涨跌色 + 1 档中性。涨红跌绿, 越远越深。阈值 ±0.5% / ±2% / ±5% / ±10%。
  */
 type HeatmapBand =
-  | "upExtreme"    // 涨停 >= +9%
-  | "upStrong"     // +5% ~ +9%
+  | "upExtreme"    // 涨停 >= +10%
+  | "upStrong"     // +5% ~ +10%
   | "upMid"        // +2% ~ +5%
-  | "upLight"      // +0.05% ~ +2%
-  | "flat"         // ±0.05%
-  | "downLight"    // -2% ~ -0.05%
+  | "upLight"      // +0.5% ~ +2%
+  | "flat"         // ±0.5%
+  | "downLight"    // -2% ~ -0.5%
   | "downMid"      // -5% ~ -2%
-  | "downStrong"   // -9% ~ -5%
-  | "downExtreme"  // 跌停 <= -9%
+  | "downStrong"   // -10% ~ -5%
+  | "downExtreme"  // 跌停 <= -10%
 
 const BAND_COLORS: Record<HeatmapBand, { bg: string; fg: string }> = {
-  upExtreme:   { bg: "#7f1d1d", fg: "#ffffff" }, // 深红
-  upStrong:    { bg: "#dc2626", fg: "#ffffff" }, // 红
-  upMid:       { bg: "#fca5a5", fg: "#7f1d1d" }, // 浅红
-  upLight:     { bg: "#fee2e2", fg: "#7f1d1d" }, // 极浅红
-  flat:        { bg: "#e2e8f0", fg: "#475569" }, // slate-200
-  downLight:   { bg: "#dcfce7", fg: "#14532d" }, // 极浅绿
-  downMid:     { bg: "#86efac", fg: "#14532d" }, // 浅绿
-  downStrong:  { bg: "#22c55e", fg: "#ffffff" }, // 绿
-  downExtreme: { bg: "#14532d", fg: "#ffffff" }, // 深绿
+  upExtreme:   { bg: "#B71C1C", fg: "#ffffff" }, // 涨停: 深红
+  upStrong:    { bg: "#D32F2F", fg: "#ffffff" }, // 大涨: 正红
+  upMid:       { bg: "#F44336", fg: "#ffffff" }, // 明显上涨: 亮红
+  upLight:     { bg: "#EF9A9A", fg: "#7f1d1d" }, // 小幅上涨: 浅红
+  flat:        { bg: "#9E9E9E", fg: "#ffffff" }, // 基本持平: 灰
+  downLight:   { bg: "#A5D6A7", fg: "#14532d" }, // 小幅下跌: 浅绿
+  downMid:     { bg: "#4CAF50", fg: "#ffffff" }, // 明显下跌: 绿
+  downStrong:  { bg: "#2E7D32", fg: "#ffffff" }, // 大跌: 深绿
+  downExtreme: { bg: "#1B5E20", fg: "#ffffff" }, // 跌停: 暗绿
 }
 
 function bandForPct(pct: number | null | undefined): HeatmapBand {
   if (pct == null || !Number.isFinite(pct) || Math.abs(pct) > 50) return "flat"
-  if (pct >= 9) return "upExtreme"
+  if (pct >= 10) return "upExtreme"
   if (pct >= 5) return "upStrong"
   if (pct >= 2) return "upMid"
-  if (pct >= 0.05) return "upLight"
-  if (pct <= -9) return "downExtreme"
+  if (pct >= 0.5) return "upLight"
+  if (pct <= -10) return "downExtreme"
   if (pct <= -5) return "downStrong"
   if (pct <= -2) return "downMid"
-  if (pct <= -0.05) return "downLight"
+  if (pct <= -0.5) return "downLight"
   return "flat"
 }
 
@@ -230,6 +237,7 @@ function buildTreemap(
   sectors: HeatmapSectorNode[],
   areaBy: HeatmapAreaBy,
   _colorBy: HeatmapColorBy,
+  mode: "sector" | "stock" = "sector",
 ): EChartsTreemapNode[] {
   // value 严格 = amount(或流通市值), 这是面积; 颜色由 cell 的 changePercent 决定, 不受 amount 量级影响。
   void _colorBy
@@ -240,39 +248,76 @@ function buildTreemap(
 
     const c = colorForPct(sector.changePercent)
 
+    // mode="sector"  (首屏): 板块本身当 leaf cell, 不展开 children, cell 染色 = 板块自身涨跌幅
+    // mode="stock"   (钻入): 板块当 parent, children = 成分股 cell
+    if (mode === "sector") {
+      return {
+        name: sector.name,
+        value: Math.max(sectorValue, 1),
+        _changePercent: sector.changePercent ?? 0,
+        _amount: sector.amount ?? 0,
+        _kind: "sector",
+        _sectorNode: sector,  // 钻入时回传原始 sector 节点
+        itemStyle: {
+          color: c.bg,
+          borderColor: "#e2e8f0",
+          borderWidth: 2,
+          gapWidth: 4,
+        },
+        upperLabel: { show: false },
+        label: {
+          show: true,
+          color: c.fg,
+          fontSize: 13,
+          fontWeight: 700,
+          lineHeight: 18,
+          formatter: () => {
+            return `{name|${sector.name}}\n{pct|${formatPct(sector.changePercent ?? 0)}}`
+          },
+          rich: {
+            name: { color: c.fg, fontSize: 13, fontWeight: 700, lineHeight: 18 },
+            pct:  { color: c.fg, fontSize: 11, fontWeight: 600, lineHeight: 16 },
+          },
+        },
+      }
+    }
+
+    // mode === "stock" 钻入
     return {
       name: sector.name,
       value: Math.max(sectorValue, 1),
       _changePercent: sector.changePercent ?? 0,
       _amount: sector.amount ?? 0,
-      _kind: "industry",
+      _kind: "sector",
       itemStyle: {
         color: c.bg,
-        borderColor: "#ffffff",
-        borderWidth: 0.5,
-        gapWidth: 1,
+        // 父节点 (行业/概念/风格 板块) 之间需要明显 margin. 浅灰底 + 细白边
+        borderColor: "#e2e8f0",
+        borderWidth: 2,
+        gapWidth: 4,
+        // treemap cell 的内部 padding, 让 upperLabel 不贴边
+        padding: [18, 4, 4, 4],
       },
-      upperLabel: { show: false },
-      label: {
+      // 父节点 (行业/概念/风格 板块) 顶部 upperLabel: 显示板块名 + 涨跌幅.
+      // 字号小一些, 在 margin 之上, 避免压住 children.
+      upperLabel: {
         show: true,
-        // cell-level formatter: 拼 rich text 字符串, 走 cell.label.rich 拿颜色
+        height: 18,
         color: c.fg,
-        fontSize: 13,
+        fontSize: 11,
         fontWeight: 600,
-        lineHeight: 18,
+        backgroundColor: "rgba(255,255,255,0.92)",
+        padding: [2, 6, 2, 6],
         formatter: () => {
-          // 注意: treemap 渲染时, cell-level formatter params.data 仍是当前 cell 节点,
-          // 而 ECharts 内部会保留我们挂的 _changePercent / _amount / _kind.
-          // 但 callback 里拿不到 params -> 我们在 buildTreemap 时闭包注入 sector
-          const cellName = sector.name
-          const pct = sector.changePercent ?? 0
-          const amount = sector.amount ?? 0
-          return `{name|${cellName}}\n{pct|${formatPct(pct)}  成交 ${formatAmount(amount)}}`
+          return `{name|${sector.name}} {pct|${formatPct(sector.changePercent ?? 0)}}`
         },
         rich: {
-          name: { color: c.fg, fontSize: 13, fontWeight: 700, lineHeight: 18 },
-          pct:  { color: c.fg, fontSize: 11, fontWeight: 600, lineHeight: 16 },
+          name: { color: c.fg, fontSize: 11, fontWeight: 700, lineHeight: 14 },
+          pct:  { color: c.fg, fontSize: 10, fontWeight: 600, lineHeight: 14 },
         },
+      },
+      label: {
+        show: false,  // 父节点自己不显示 label (children cell 才有 label)
       },
       children: sector.children.map((stock) => {
         const cellValue = areaBy === "amount"
@@ -323,6 +368,11 @@ function resolveClickMeta(
   const data = params?.data
   if (!data) return null
   const name: string = data.name
+  // 首屏 sector mode: cell 是 sector 自己, _sectorNode 挂在 data 上
+  if (data._sectorNode) {
+    return { kind: "industry", sector: data._sectorNode as HeatmapSectorNode }
+  }
+  // 钻入 stock mode: cell 是个股, 通过 treePath 找上层 sector
   const treePath: Array<{ name: string }> = params.treePathInfo || []
   const leafSectorName = treePath.length > 1 ? treePath[treePath.length - 2]?.name : name
   const sector = sectors.find((s) => s.name === leafSectorName || s.name === name)
@@ -337,7 +387,7 @@ function resolveClickMeta(
 // 主组件
 // ---------------------------------------------------------------------------
 
-export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRefreshChange }: Props) {
+export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRefreshChange, kind, onKindChange }: Props) {
   // eslint-disable-next-line no-console
   console.log("[SectorHeatmap] render", {
     hasData: !!data,
@@ -367,9 +417,10 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
     if (viewMode === "sector" && activeSector) {
       // 钻入行业: 把单个 sector 当作 root, 让 ECharts 用一级布局切个股
       const wrapped: HeatmapSectorNode = { ...activeSector, value: activeSector.value || activeSector.amount || 1 }
-      return buildTreemap([wrapped], areaBy, colorBy)
+      return buildTreemap([wrapped], areaBy, colorBy, "stock")
     }
-    return buildTreemap(filtered, areaBy, colorBy)
+    // 首屏: sector 当 leaf cell, 不展开成分股
+    return buildTreemap(filtered, areaBy, colorBy, "sector")
   }, [filtered, activeSector, viewMode, areaBy, colorBy])
 
   // 实例化 + resize
@@ -466,6 +517,10 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
           nodeClick: false,
           breadcrumb: { show: false },
           animationDurationUpdate: 400,
+          // 父节点 (行业/概念/风格 板块) 之间 + 跟外边界的间距.
+          // 浅灰底 + 6px 间距, 不同板块之间有明显 margin.
+          nodeGap: 6,
+          nodePadding: 2,
           // 用 callback formatter, 从原始 data 上读 changePercent / amount 自己拼字符串
           label: {
             show: true,
@@ -474,7 +529,17 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
             fontSize: 12,
             lineHeight: 16,
           },
-          upperLabel: { show: false },
+          // 父节点 (行业/概念/风格) 顶部标签: 显示板块名 + 涨跌幅.
+          // node-level upperLabel 会覆盖这个全局配置.
+          upperLabel: {
+            show: true,
+            height: 24,
+            backgroundColor: "rgba(255,255,255,0.85)",
+            color: "#0f172a",
+            fontSize: 13,
+            fontWeight: 700,
+            padding: [4, 6, 4, 6],
+          },
           data: treemapData,
         },
       ],
@@ -487,11 +552,16 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
     const chart = instanceRef.current
     if (!chart) return
     const handler = (params: any) => {
-      const meta = resolveClickMeta(params, filtered)
-      if (meta?.kind === "industry" && viewMode === "market") {
-        setSelectedSector(meta.sector.sectorCode)
-        setViewMode("sector")
+      // 首屏 (viewMode=market): 点击 sector cell 钻入成分股
+      if (viewMode === "market") {
+        const meta = resolveClickMeta(params, filtered)
+        if (meta?.kind === "industry" && meta.sector) {
+          setSelectedSector(meta.sector.sectorCode)
+          setViewMode("sector")
+        }
+        return
       }
+      // 钻入视图 (viewMode=sector): 板块当 parent, 个股 cell 直接点 (无钻入行为)
     }
     chart.on("click", handler)
     return () => {
@@ -504,37 +574,49 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
   const limitUpTotal = useMemo(() => filtered.reduce((sum, sector) => sum + sector.limitUpCount, 0), [filtered])
 
   return (
-    <Card className="flex h-full min-h-[720px] flex-col rounded-2xl border-slate-200/80 bg-white text-slate-800 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-      <CardHeader className="shrink-0 border-b border-slate-200/60 pb-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
-              <span className="inline-flex size-8 items-center justify-center rounded-xl bg-slate-950 text-white">
-                <TrendingUp className="size-4" />
-              </span>
-              市场热力图
-              <span className="text-xs font-normal text-slate-400">同花顺式 · ECharts Treemap</span>
-            </CardTitle>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
-              <Badge variant="outline" className="rounded-full border-blue-200 bg-blue-50 text-blue-700">
-                <Building2 className="mr-1 size-3" />行业 {filtered.length}
-              </Badge>
-              <Badge variant="outline" className="rounded-full border-violet-200 bg-violet-50 text-violet-700">
-                股票 {statTotal}
-              </Badge>
-              <Badge variant="outline" className="rounded-full border-red-200 bg-red-50 text-red-700">
-                涨停 {limitUpTotal}
-              </Badge>
-              {data?.fetchedAt ? (
-                <span>· 刷新 {new Date(data.fetchedAt).toLocaleString("zh-CN", { hour12: false })}</span>
-              ) : null}
-              <span>· 数据源 {data?.source || "—"}</span>
-              {(data as any)?.hiddenStocks ? (
-                <span>· 隐藏其它 {(data as any).hiddenStocks}</span>
-              ) : null}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
+    <Card className="flex h-full min-h-0 flex-col rounded-xl border-slate-200/60 bg-white text-slate-800">
+      <CardContent className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500 mr-1">板块</span>
+          {KIND_OPTIONS.map((opt) => (
+            <FilterChip
+              key={opt.value}
+              active={kind === opt.value}
+              label={opt.label}
+              onClick={() => onKindChange(opt.value)}
+            />
+          ))}
+          <span className="mx-2 h-4 w-px bg-slate-200" />
+          <FilterChip active={quickFilter === "all"} label="全部" onClick={() => setQuickFilter("all")} />
+          <FilterChip
+            active={quickFilter === "limitUp"}
+            label="只看涨停"
+            onClick={() => setQuickFilter(quickFilter === "limitUp" ? "all" : "limitUp")}
+          />
+          <FilterChip
+            active={quickFilter === "amountTop100"}
+            label="只看成交额前 100"
+            onClick={() => setQuickFilter(quickFilter === "amountTop100" ? "all" : "amountTop100")}
+          />
+          <FilterChip
+            active={quickFilter === "turnoverTop100"}
+            label="只看高换手率"
+            onClick={() => setQuickFilter(quickFilter === "turnoverTop100" ? "all" : "turnoverTop100")}
+          />
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onAutoRefreshChange(!autoRefresh)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition",
+                autoRefresh
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-slate-200 bg-white text-slate-500 hover:border-slate-300",
+              )}
+            >
+              <Zap className="size-3.5" />
+              实时刷新
+            </button>
             {viewMode === "sector" ? (
               <Button size="sm" variant="outline" onClick={() => { setViewMode("market"); setSelectedSector(null) }}>
                 <ArrowLeft className="mr-1 size-3.5" />返回全市场
@@ -546,43 +628,10 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
             </Button>
           </div>
         </div>
-      </CardHeader>
 
-      <CardContent className="flex min-h-0 flex-1 flex-col gap-4 p-4">
-        <div className="grid gap-3 xl:grid-cols-[1.4fr_1fr_1fr_1fr]">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
-            <Input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索行业 / 股票 / 概念" className="pl-9" />
-          </div>
-          <SelectBar value={areaBy} options={AREA_OPTIONS} onChange={(v) => setAreaBy(v as HeatmapAreaBy)} />
-          <SelectBar value={colorBy} options={COLOR_OPTIONS} onChange={(v) => setColorBy(v as HeatmapColorBy)} />
-          <SelectBar value={sortBy} options={SORT_OPTIONS} onChange={(v) => setSortBy(v as HeatmapSortBy)} />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <FilterChip active={quickFilter === "all"} label="全部" onClick={() => setQuickFilter("all")} />
-          {QUICK_FILTER_OPTIONS.map((option) => (
-            <FilterChip key={option.value} active={quickFilter === option.value} label={option.label} onClick={() => setQuickFilter(option.value)} />
-          ))}
-          <button
-            type="button"
-            onClick={() => onAutoRefreshChange(!autoRefresh)}
-            className={cn(
-              "ml-auto inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs transition",
-              autoRefresh
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-slate-200 bg-white text-slate-500 hover:border-slate-300",
-            )}
-          >
-            <Zap className="size-3.5" />
-            实时刷新
-          </button>
-        </div>
-
-        <div className="grid min-h-[560px] flex-1 gap-4">
-          <div className="relative h-full min-h-[560px] overflow-hidden rounded-2xl border border-slate-200 bg-white">
-            {/* chartRef 始终挂载, 否则 treemapData 从 0 → 非 0 时, deps=[] 的 init effect 不会重跑, ECharts 不会初始化 */}
-            <div ref={chartRef} className="h-full min-h-[560px] w-full" />
+        <div className="grid min-h-0 flex-1 gap-1.5">
+          <div className="relative h-full min-h-0 overflow-hidden rounded-lg bg-white">
+            <div ref={chartRef} className="h-full w-full" />
             {treemapData.length === 0 ? (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-slate-400">
                 {loading ? "热力图加载中…" : "当前筛选条件下暂无数据"}
