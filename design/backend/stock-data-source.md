@@ -3,6 +3,11 @@
 > 适用范围：`backend/adapters/market/` + `backend/services/stock/{kline_service, market_data_provider, auction_service, search_service, config_service}.py` + `backend/repositories/stock/workspace_repo.py`
 > 维护原则：数据源增减、缓存协议变更、provider 顺序调整，**必须同步更新本文档**。
 
+> **新加的同花顺 90 行业 / akshare / qt.gtimg.cn 等** 新数据源 + 行情页 / F10 / 资金流等新能力已**不只走 `adapters/market/` 单一目录**,
+> 而是散落在 `backend/services/stock/f10/<source>_service.py` 和 `backend/services/stock/market_pulse_service.py` 等多个 service.
+> 这些能力 + 数据源映射的全景, 见 **[`data-source-capability-matrix.md`](./data-source-capability-matrix.md)**.
+> 本文聚焦**老的 K 线 / 分时 / 集合竞价 / 搜索 / meta** 6 个核心能力 (3.1-3.5 节之前) 的协议 / 缓存 / 兜底.
+
 ---
 
 ## 1. 目标 & 边界

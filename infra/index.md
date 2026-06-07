@@ -95,7 +95,9 @@ backend/
 │   ├── task_runtime_service.py ← 内存态任务（transcription）
 │   ├── scheduler/
 │   │   ├── auction_analysis_scheduler.py
-│   │   └── turnover_scheduler.py
+│   │   ├── turnover_scheduler.py
+│   │   ├── stock_universe_scheduler.py
+│   │   └── market_pulse_scheduler.py        ← 行情页调度 (盘内 10min + 收盘 15:30 + 15:35 90 行业全量)
 │   └── stock/                  ← 股票分析核心
 │       ├── application_analysis_service.py  ← 当日分时 AI + 短趋势 30 天
 │       ├── application_analysis_scheduler.py
@@ -106,15 +108,30 @@ backend/
 │       ├── market_data_provider.py           ← 行情聚合
 │       ├── market_overview_service.py
 │       ├── market_overview_metrics.py
+│       ├── market_heatmap_service.py         ← 行业 / 概念 heatmap
+│       ├── market_pulse_service.py           ← 行情页 (强势 / 资金流 / 轮动 / 跨日趋势 / 钻入)
 │       ├── search_service.py                 ← 标的搜索
 │       ├── config_service.py
 │       ├── feature_summary.py                ← 个股综合打分
+│       ├── sector_quote_service.py           ← eltdx 200742 主力资金 (板块代理)
+│       ├── industry_application_service.py   ← TDX 56 行业 application AI
+│       ├── industry_application_store.py
 │       ├── workspace_service.py
 │       ├── turnover_repo.py
 │       ├── sample_data_service.py
 │       ├── analysis_data_reader.py
-│       ├── f10/                              ← F10 业务（财报/估值/榜单…）
-│       └── market_overview/                  ← 大盘分析（情绪/行业/相似场景…）
+│       ├── etf_poc_service.py                ← ETF POC (k 线复用)
+│       ├── trading_calendar.py               ← 交易日 / 交易时间判定 (scheduler 用)
+│       ├── f10/                              ← F10 业务 (财报/估值/榜单/资金/行业 全部)
+│       │   ├── base.py / schemas.py / helpers.py
+│       │   ├── eltdx_adapter.py              ← f10 业务 TDX 适配
+│       │   ├── index_codes.py / limit_count.py / turnover.py / service.py
+│       │   ├── tdx_industry_codes.py         ← TDX 56 行业代码表
+│       │   ├── tdx_industry_service.py        ← TDX 56 行业实时
+│       │   ├── tdx_industry_seeds.py          ← 200742 seed pool
+│       │   ├── ths_industry_service.py        ← 同花顺 90 行业 (akshare + 爬虫)
+│       │   └── qt_fund_flow_service.py        ← qt.gtimg.cn 个股资金流 (88 字段)
+│       └── market_overview/                  ← 大盘分析 (情绪/行业/相似场景…)
 ├── repositories/               ← 纯文件 IO，无业务
 │   ├── reference_index.py      ← 维护 reference/index.json 顶层索引
 │   ├── mp4_history_repo.py     ← MP4 parse 历史落盘
@@ -127,7 +144,7 @@ backend/
 
 ### 3.2 路由速查（`backend/api/`）
 
-#### `stock_chart.py` — 主力（34 个路由）
+#### `stock_chart.py` — 主力（63 个路由）
 
 | 路径 | 方法 | 用途 |
 | --- | --- | --- |
@@ -151,10 +168,35 @@ backend/
 | `/api/stock-chart/application-analysis` | POST | **当日分时 AI 逻辑分析**（上一轮定位的） |
 | `/api/stock-chart/application-analysis/recent30/...` | GET / POST | 短趋势 30 天 |
 | `/api/stock-chart/market-overview` | GET | 大盘概览 |
+| `/api/stock-chart/etf/poc` | GET | ETF POC (k 线数据复用) |
+| `/api/stock-chart/industry-application/...` | GET / POST | **TDX 56 行业 application AI** (`targets` / `results` / `overview` / `heatmap` / `tdx-industry-56` / `tdx-industry-kline` / `tdx-industry-snapshot` / `refresh`) |
+| `/api/stock-chart/market-pulse/strong` | GET | **行情页 M1**: 强势板块 (akshare 90 行业 Top N) |
+| `/api/stock-chart/market-pulse/capital-flow` | GET | **行情页 M2**: 行业主力净流入 (akshare 90 行业真实资金流) |
+| `/api/stock-chart/market-pulse/rotation` | GET | **行情页 M3**: 行业轮动 (每天 15:30 落盘的 Top N 快照) |
+| `/api/stock-chart/market-pulse/rotation-trend` | GET | **行情页 M4**: 行业轮动跨日趋势 (出现/消失/排名迁移) |
+| `/api/stock-chart/market-pulse/industry-detail` | GET | **行情页钻入**: 单行业 (akshare 90 行业数据 + 领涨股 + K 线 + 30 天资金流) |
+| `/api/stock-chart/market-pulse/all` | GET | **行情页首屏**: 一次拿三块 (M1 + M2 + M3) |
+| `/api/stock-chart/market-pulse-scheduler/status` | GET | Market Pulse 调度器状态 |
+| `/api/stock-chart/market-pulse-scheduler/trigger` | POST | 手动触发今日 Top N snapshot |
+| `/api/stock-chart/market-pulse-scheduler/trigger-constituents` | POST | 手动触发 90 行业成分股全量刷新 (Playwright) |
+| `/api/stock-chart/ths-industry/list` | GET | 同花顺 90 行业列表 (name + code 881xxx) |
+| `/api/stock-chart/ths-industry/info` | GET | 单行业 9 项实时 (今开/昨收/最高/最低/成交量/成交额/涨跌幅/涨跌额/振幅/换手率) |
+| `/api/stock-chart/ths-industry/kline` | GET | 单行业 K 线 (akshare `stock_board_industry_index_ths`, 5 年 975 bars) |
+| `/api/stock-chart/ths-industry/payload` | GET | 同花顺 90 行业聚合 (list + info 全量) |
+| `/api/stock-chart/ths-industry/constituents` | GET | 单行业成分股 (HTML 爬虫, 13 列; IP 封后只 1 页 20 只) |
+| `/api/stock-chart/ths-industry/constituents-all` | GET | 90 行业全量成分股 (慢, scheduler 每日 15:35 跑) |
+| `/api/stock-chart/qt/fund-flow` | GET | **qt.gtimg.cn 个股资金流 (88 字段主接口 + s_pk 盘口)**: 外盘/内盘/主动净流入手/折算金额/盘口大单小单占比 |
+| `/api/stock-chart/qt/fund-flow-batch` | GET | qt 个股资金流批量 (max 80) |
+| `/api/stock-chart/individual/main-fund-flow` | GET | eltdx 200742 个股所属板块 30 天资金流 (**不是该股自身**) |
+
+> **完整路由数**:
+> - `stock_chart.py` ≈ **63** 路由 (主力)
+> - `stock/f10.py` ≈ **24** 路由 (F10 业务)
+> - 其他 bp 路由见下方
 
 #### `stock/f10.py` — 24 个路由
 
-F10 全套：`/f10/{stock-info, company-profile, business-composition, valuation, finance-report, finance-diagnosis, stock-score, profit-forecast, ranking-detail, governance, topics, topic-compare, theme-market}` + `/sectors-market/{industry, concept}` + `/limit-count[/refresh]` + `/turnover[/refresh/refresh-all/scheduler/...]` + `/f10/ping`
+F10 全套: `/f10/{ping, stock-info, company-profile, business-composition, valuation, finance-report, finance-diagnosis, stock-score, profit-forecast, ranking-detail, governance, topics, topic-compare, topic-stocks, stock-topics, theme-market}` + `/sectors-market[/industry, /concept]` + `/limit-count[/refresh]` + `/turnover[/refresh, /refresh-all, /scheduler/status, /scheduler/trigger]` + `/eltdx/{industry-index-kline, concept-index-kline, index-kline, index-codes}`
 
 #### `mp4_history.py`（工厂）
 
@@ -220,6 +262,18 @@ F10 全套：`/f10/{stock-info, company-profile, business-composition, valuation
 - **scheduler 状态写在 `scheduler/*.json`**：3 个调度器（`turnover_refresh` / `auction_ai_analysis` / `application_analysis`）启动时读、运行时更新；`application_analysis` 的状态写在 `reference/application-analysis/scheduler.json`，另两个写在 `scheduler/<id>_job.json`
 - **自选股数据写在 `reference/self-selected/`**：`groups.json` + `items.json` 两个文件，repository 走锁 + 原子写，删 group 时级联删 item
 - **认证未启用**：所有 API 默认开放访问，生产环境部署前需要补
+
+### 3.4 能力索引 (新加 / 设计相关需求必读)
+
+> **做"加新能力 / 改接口 / 换数据源"前必看**: [**`../design/backend/data-source-capability-matrix.md`**](../design/backend/data-source-capability-matrix.md).
+>
+> 那里是**项目所有能力的全景图**: 7 大类能力 × 5+ 数据源, 含字段口径 / 已知坑 / 选源指南.
+>
+> **本节**只做"路由在哪"快速定位; **能力矩阵** 才是"接口 = 能力 = 数据源"的源头.
+
+- **行情 / K 线 / 分时 / 集合竞价 / 搜索 / meta (老的 6 个)** → 仍以 [`../design/backend/stock-data-source.md`](../design/backend/stock-data-source.md) 为准
+- **行业 / 资金流 / 轮动 / 个股资金流 / F10 / 大盘 / 风格 (新加的)** → 看 [能力矩阵](../design/backend/data-source-capability-matrix.md) §3
+- **数据源 IP 封禁现状** → 看 [能力矩阵](../design/backend/data-source-capability-matrix.md) §1 / §5.1
 
 ---
 
@@ -323,7 +377,9 @@ frontend/src/
 | 新增 / 删除 scheduler | [infra/index.md](file:///f:/dev-repo/mp4-to-word-new/infra/index.md) §3.1 + `backend/bootstrap.py` + `scheduler/*.json` |
 | 改 annotation 协议（如新增 overlay_type） | [infra/index.md](file:///f:/dev-repo/mp4-to-word-new/infra/index.md) §3.3 + `annotation_repo.py` + 共享 `_PROMPT_DIR` 里的 `period` 约定 |
 | 改 AI 输出 schema | 同 prompt 流程（更新 `.md` + 加载点代码的硬约束段） |
-| 改行情数据源 | `backend/adapters/market/` + `backend/services/stock/market_data_provider.py` + 新增/修改对应 cache 目录 | 并且更新 design/stock-data-source.md 
+| 改行情数据源 | `backend/adapters/market/` + `backend/services/stock/market_data_provider.py` + 新增/修改对应 cache 目录 | 并且更新 [design/stock-data-source.md](../design/backend/stock-data-source.md) + [design/backend/data-source-capability-matrix.md](../design/backend/data-source-capability-matrix.md) |
+| 加新能力 / 改接口字段 / 换数据源 | [design/backend/data-source-capability-matrix.md](../design/backend/data-source-capability-matrix.md) §3 + 本文档 §3.2 路由表 + 后端 service 文件 | 改完三处必须一致 |
+| 加新 scheduler 周期 | [infra/index.md](file:///f:/dev-repo/mp4-to-word-new/infra/index.md) §3.1 + `backend/bootstrap.py` + `scheduler/*.json` + §3.2 scheduler 状态路由 (如新) | 同步 `frontend/src/views/settings/scheduler/` (走 `/api/scheduler/jobs/*` 通用接口) |
 | 改前端依赖 | [frontend/package.json](file:///f:/dev-repo/mp4-to-word-new/frontend/package.json) + pnpm-lock.yaml + §4.1 |
 
 ### 5.3 几个常踩的坑

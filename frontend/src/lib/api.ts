@@ -658,6 +658,55 @@ export async function fetchMarketPulse(
   return data
 }
 
+export async function fetchMarketPulseRotationTrend(
+  days = 10,
+  topN = 10
+): Promise<Record<string, unknown>> {
+  const url = `${API_BASE}/api/stock-chart/market-pulse/rotation-trend?days=${days}&topN=${topN}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取轮动趋势失败")
+  return data
+}
+
+export async function fetchIndustryDetail(
+  name: string,
+  topN = 30
+): Promise<Record<string, unknown>> {
+  const url = `${API_BASE}/api/stock-chart/market-pulse/industry-detail?name=${encodeURIComponent(name)}&topN=${topN}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error(`获取行业 ${name} 详情失败`)
+  return data
+}
+
+export async function fetchIndustryConstituents(
+  name: string,
+  refresh = false
+): Promise<Record<string, unknown>> {
+  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents?name=${encodeURIComponent(name)}${refresh ? "&refresh=1" : ""}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error(`获取行业 ${name} 成分股失败`)
+  return data
+}
+
+export async function fetchMarketPulseSchedulerStatus(): Promise<Record<string, unknown>> {
+  const url = `${API_BASE}/api/stock-chart/market-pulse-scheduler/status`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取 scheduler 状态失败")
+  return data
+}
+
+export async function triggerMarketPulseSnapshot(): Promise<Record<string, unknown>> {
+  const url = `${API_BASE}/api/stock-chart/market-pulse-scheduler/trigger`
+  const res = await fetch(url, { method: "POST" })
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("手动触发 snapshot 失败")
+  return data
+}
+
 export async function askQuestion(
   taskId: string,
   question: string

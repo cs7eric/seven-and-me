@@ -21,6 +21,10 @@ from backend.services.scheduler.stock_universe_scheduler import (
     is_stock_universe_scheduler_enabled,
     start_stock_universe_scheduler,
 )
+from backend.services.scheduler.market_pulse_scheduler import (
+    is_market_pulse_scheduler_enabled,
+    start_market_pulse_scheduler,
+)
 from backend.services.stock.application_analysis_scheduler import (
     is_application_analysis_scheduler_enabled,
     start_application_analysis_scheduler,
@@ -67,3 +71,8 @@ def register_blueprints(app: Flask) -> None:
             start_stock_universe_scheduler()
         except Exception as exc:
             logger.exception('Stock Universe scheduler start failed: %s', exc)
+    if is_market_pulse_scheduler_enabled():
+        try:
+            start_market_pulse_scheduler()
+        except Exception as exc:
+            logger.exception('Market Pulse scheduler start failed: %s', exc)

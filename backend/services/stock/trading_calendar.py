@@ -194,6 +194,33 @@ __all__ = [
     "previous_trading_day",
     "next_trading_day",
     "is_weekend",
+    "is_trade_time",
     "HOLIDAYS",
     "WORKDAYS_OVERTIME",
 ]
+
+
+# ---------------------------------------------------------------------------
+# 交易时间窗: 9:30-11:30 / 13:00-15:00
+# ---------------------------------------------------------------------------
+def is_trade_time(t: datetime | None = None) -> bool:
+    """``t`` (默认当前北京时间) 是否处于 A 股交易时段.
+
+    A 股:
+      - 上午 09:30:00 - 11:30:00
+      - 下午 13:00:00 - 15:00:00
+    """
+    if t is None:
+        t = _today_dt()
+    if t.weekday() >= 5:
+        return False
+    if not is_trading_day(t.date()):
+        return False
+    hm = t.hour * 60 + t.minute
+    morning = 9 * 60 + 30 <= hm <= 11 * 60 + 30
+    afternoon = 13 * 60 <= hm <= 15 * 60
+    return morning or afternoon
+
+
+def _today_dt() -> datetime:
+    return datetime.utcnow() + timedelta(hours=8)

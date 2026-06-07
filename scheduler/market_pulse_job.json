@@ -1,0 +1,11 @@
+{
+  "name": "market_pulse_snapshot",
+  "lastRunAt": null,
+  "lastRunOk": null,
+  "lastRunError": null,
+  "lastInsideRefreshAt": null,
+  "lastCloseSnapshotAt": null,
+  "totalInside": 0,
+  "totalClose": 0,
+  "schedulerStartedAt": "2026-06-07T22:23:52"
+}

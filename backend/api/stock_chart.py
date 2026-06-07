@@ -795,18 +795,14 @@ def market_pulse_strong():
 
 @stock_chart_bp.route('/api/stock-chart/market-pulse/capital-flow')
 def market_pulse_capital_flow():
-    """行业主力净流入: eltdx 200742. URL: ?days=30&topN=20"""
+    """行业主力净流入: akshare 同花顺 90 行业真实资金流. URL: ?topN=20"""
     from backend.services.stock.market_pulse_service import build_capital_flow
-    try:
-        days = int(request.args.get("days") or 30)
-    except (TypeError, ValueError):
-        days = 30
     try:
         top_n = int(request.args.get("topN") or 20)
     except (TypeError, ValueError):
         top_n = 20
     try:
-        return jsonify(build_capital_flow(days=days, top_n=top_n))
+        return jsonify(build_capital_flow(top_n=top_n))
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc), "inflow": [], "outflow": []}), 200
 
@@ -855,3 +851,305 @@ def market_pulse_all():
             "flow":   {"ok": False, "inflow": [], "outflow": []},
             "rotation": {"ok": False, "rows": [], "dates": []},
         }), 200
+
+
+# ---------------------------------------------------------------------------
+# 历史 Top 10 趋势 (跨日)
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/market-pulse/rotation-trend')
+def market_pulse_rotation_trend():
+    """跨日 Top 10 趋势: 给每个行业一个 (date -> rank) 序列 + 出现频次/排名迁移.
+
+    URL: ?days=10&topN=10
+    """
+    from backend.services.stock.market_pulse_service import build_rotation_trend
+    try:
+        days = int(request.args.get("days") or 10)
+    except (TypeError, ValueError):
+        days = 10
+    try:
+        top_n = int(request.args.get("topN") or 10)
+    except (TypeError, ValueError):
+        top_n = 10
+    try:
+        return jsonify(build_rotation_trend(days=days, top_n=top_n))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "industries": [], "dates": []}), 200
+
+
+# ---------------------------------------------------------------------------
+# M1 卡片钻入: 行业成分股 + 领涨股
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/market-pulse/industry-detail')
+def market_pulse_industry_detail():
+    """行业钻入: 当前 akshare 90 行业 → 成分股 + 领涨股详情.
+
+    URL: ?name=银行&topN=30
+        (按行业名匹配, akshare stock_fund_flow_industry 的"行业"字段)
+    """
+    from backend.services.stock.market_pulse_service import build_industry_detail
+    name = (request.args.get("name") or "").strip()
+    try:
+        top_n = int(request.args.get("topN") or 30)
+    except (TypeError, ValueError):
+        top_n = 30
+    if not name:
+        return jsonify({"ok": False, "error": "name is required", "constituents": []}), 400
+    try:
+        return jsonify(build_industry_detail(name=name, top_n=top_n))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "constituents": []}), 200
+
+
+# ---------------------------------------------------------------------------
+# Scheduler 状态
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/market-pulse-scheduler/status')
+def market_pulse_scheduler_status():
+    from backend.services.scheduler.market_pulse_scheduler import get_market_pulse_scheduler_status
+    return jsonify(get_market_pulse_scheduler_status())
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse-scheduler/trigger', methods=['POST'])
+def market_pulse_scheduler_trigger():
+    """手动触发今日 snapshot (运维/测试用)."""
+    from backend.services.stock.market_pulse_service import snapshot_today_rotation
+    try:
+        snap = snapshot_today_rotation(top_n=10, persist=True)
+        return jsonify({"ok": True, "triggeredAt": snap.get("fetchedAt"), "items": snap.get("items", [])[:5]})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse-scheduler/trigger-constituents', methods=['POST'])
+def market_pulse_scheduler_trigger_constituents():
+    """手动触发 90 行业全量成分股刷新 (Playwright, 慢)."""
+    import time as _time
+    from backend.services.stock.f10.ths_industry_service import get_all_constituents
+    try:
+        t0 = _time.time()
+        out = get_all_constituents(refresh=True)
+        elapsed = round((_time.time() - t0) * 1000)
+        ok_count = sum(1 for v in out.values() if v)
+        return jsonify({
+            "ok": True,
+            "elapsedMs": elapsed,
+            "industriesOk": ok_count,
+            "industriesTotal": 90,
+            "codes": list(out.keys()),
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
+
+
+# ---------------------------------------------------------------------------
+# 同花顺行业 (akshare stock_board_industry_*_ths)
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/ths-industry/list')
+def ths_industry_list():
+    """同花顺 90 行业列表: name + code (881xxx)."""
+    from backend.services.stock.f10.ths_industry_service import get_industry_list
+    try:
+        refresh = request.args.get("refresh") == "1"
+        items = get_industry_list(refresh=refresh)
+        return jsonify({
+            "ok": True,
+            "count": len(items),
+            "byCode": items,
+            "nameToCode": {v["name"]: v["code"] for v in items.values()},
+            "source": "akshare.stock_board_industry_name_ths",
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "byCode": {}, "nameToCode": {}}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/info')
+def ths_industry_info():
+    """同花顺单行业 9 项实时 (今开/昨收/最高/最低/成交量/成交额/涨跌幅/涨跌额/振幅/换手率).
+
+    URL: ?name=半导体&refresh=1   (name 或 code 都行)
+    """
+    from backend.services.stock.f10.ths_industry_service import get_industry_info
+    name_or_code = (request.args.get("name") or request.args.get("code") or "").strip()
+    if not name_or_code:
+        return jsonify({"ok": False, "error": "name or code is required"}), 400
+    try:
+        refresh = request.args.get("refresh") == "1"
+        row = get_industry_info(name_or_code, refresh=refresh)
+        if not row:
+            return jsonify({"ok": False, "error": f"no info for {name_or_code}"}), 200
+        return jsonify({"ok": True, "item": row})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/kline')
+def ths_industry_kline():
+    """同花顺行业指数 K 线 (日 K). URL: ?name=半导体&start_date=20240101&end_date=20260607&refresh=1"""
+    from backend.services.stock.f10.ths_industry_service import get_industry_kline
+    name_or_code = (request.args.get("name") or request.args.get("code") or "").strip()
+    if not name_or_code:
+        return jsonify({"ok": False, "error": "name or code is required", "rows": []}), 400
+    start_date = (request.args.get("start_date") or "").strip() or None
+    end_date = (request.args.get("end_date") or "").strip() or None
+    period = (request.args.get("period") or "day").strip().lower()
+    try:
+        refresh = request.args.get("refresh") == "1"
+        rows = get_industry_kline(name_or_code, period=period, start_date=start_date, end_date=end_date, refresh=refresh)
+        return jsonify({"ok": True, "name": name_or_code, "period": period, "count": len(rows), "rows": rows})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "rows": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/individual/main-fund-flow')
+def individual_main_fund_flow():
+    """个股所属板块 30 天主力/大/中/小单资金流 (eltdx 200742).
+
+    URL: ?code=sh600519&limit=30
+
+    重要: eltdx 200742 接口对个股只能拿到"该股所属板块"30 天资金,
+    不是"该股自身"30 天资金. 响应里会返 ``sectorName`` 字段标明归属板块.
+    """
+    from backend.services.stock.sector_quote_service import get_main_capital_flow
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        return jsonify({"ok": False, "error": "code is required", "rows": []}), 400
+    try:
+        limit = int(request.args.get("limit") or 30)
+    except (TypeError, ValueError):
+        limit = 30
+    limit = max(1, min(120, limit))
+    try:
+        rows = get_main_capital_flow(code) or []
+        if limit and limit < len(rows):
+            rows = rows[:limit]
+        sector_name = rows[0].get("sector_name") if rows else None
+        # 计算连入/连出天数 + 累计净额
+        streak = 0
+        sign = 0
+        for r in rows:
+            v = r.get("main_net") or 0
+            if v == 0:
+                break
+            if sign == 0:
+                sign = 1 if v > 0 else -1
+                streak = 1
+            elif (v > 0 and sign > 0) or (v < 0 and sign < 0):
+                streak += 1
+            else:
+                break
+        main_sum = sum(float(r.get("main_net") or 0) for r in rows)
+        return jsonify({
+            "ok": True,
+            "code": code,
+            "sectorName": sector_name,
+            "count": len(rows),
+            "mainNetSum": main_sum,
+            "consecutiveDays": streak if sign != 0 else 0,
+            "note": "eltdx f10 200742 接口对个股只能拿到该股所属板块的资金, 不是该股自身资金. "
+                    "前端展示时建议标注 '所属于板块'.",
+            "rows": rows,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "rows": []}), 200
+
+
+# ---------------------------------------------------------------------------
+# qt.gtimg.cn 个股资金流 (88 字段主接口 + s_pk 盘口)
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/qt/fund-flow')
+def qt_fund_flow():
+    """qt.gtimg.cn 个股资金流 (主接口 88 字段 + 盘口占比 s_pk).
+
+    URL: ?code=sh600519&refresh=1
+        (code 形如 sh600519 / sz000858 / bj830799)
+
+    返回字段:
+      code, name, lastPrice, preClose, open, high, low,
+      change, changePct, amountWan, turnoverRate, pe, pb, amplitude,
+      volumeLots (成交量手), outerDisc (外盘手=主动买入), insideDish (内盘手=主动卖出),
+      activeNetLots (主动净流入手), activeNetAmountWan (折算成元/万),
+      activeBuyRatio, activeSellRatio,          # 主动买卖占比 0~1
+      disk.{buyBigRatio, buySmallRatio, sellBigRatio, sellSmallRatio}  # 盘口大单/小单占比
+    """
+    from backend.services.stock.f10.qt_fund_flow_service import fetch_qt_fund_flow
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        return jsonify({"ok": False, "error": "code is required"}), 400
+    refresh = request.args.get("refresh") == "1"
+    try:
+        blob = fetch_qt_fund_flow(code, refresh=refresh)
+        if not blob:
+            return jsonify({"ok": False, "error": f"no data for {code}"}), 200
+        return jsonify({"ok": True, **blob})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/qt/fund-flow-batch')
+def qt_fund_flow_batch():
+    """qt.gtimg.cn 个股资金流批量 (q=a,b,c 一次 200ms).
+
+    URL: ?codes=sh600519,sh601398,sz000858&refresh=1
+    """
+    from backend.services.stock.f10.qt_fund_flow_service import fetch_qt_fund_flow_batch
+    codes_param = (request.args.get("codes") or "").strip()
+    if not codes_param:
+        return jsonify({"ok": False, "error": "codes is required, comma separated", "data": {}}), 400
+    codes = [c.strip() for c in codes_param.split(",") if c.strip()]
+    if len(codes) > 80:
+        return jsonify({"ok": False, "error": "max 80 codes per request"}), 400
+    refresh = request.args.get("refresh") == "1"
+    try:
+        out = fetch_qt_fund_flow_batch(codes, refresh=refresh)
+        return jsonify({"ok": True, "count": len(out), "data": out})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "data": {}}), 200
+
+
+# ---------------------------------------------------------------------------
+# 同花顺行业 (akshare stock_board_industry_*_ths)
+# ---------------------------------------------------------------------------
+def ths_industry_payload():
+    """一次拿三块: 90 行业列表 + 9 项实时聚合."""
+    from backend.services.stock.f10.ths_industry_service import build_industry_payload
+    try:
+        return jsonify(build_industry_payload())
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/constituents')
+def ths_industry_constituents():
+    """同花顺行业成分股 (HTML 爬虫). URL: ?name=半导体&refresh=1"""
+    from backend.services.stock.f10.ths_industry_service import get_constituents_payload
+    name_or_code = (request.args.get("name") or request.args.get("code") or "").strip()
+    if not name_or_code:
+        return jsonify({"ok": False, "error": "name or code is required", "rows": []}), 400
+    try:
+        refresh = request.args.get("refresh") == "1"
+        payload = get_constituents_payload(name_or_code, refresh=refresh)
+        rows = payload.get("rows") or []
+        return jsonify({
+            "ok": True,
+            "name": payload.get("name") or name_or_code,
+            "code": payload.get("code") or name_or_code,
+            "pages": payload.get("pages") or 0,
+            "pageRowCounts": payload.get("pageRowCounts") or [],
+            "count": len(rows),
+            "rows": rows,
+        })
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "rows": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-all')
+def ths_industry_constituents_all():
+    """90 行业全量成分股 (8 并发, 慢). URL: ?refresh=1"""
+    from backend.services.stock.f10.ths_industry_service import get_all_constituents
+    try:
+        refresh = request.args.get("refresh") == "1"
+        out = get_all_constituents(refresh=refresh)
+        return jsonify({"ok": True, "count": len(out), "industries": list(out.keys()), "byCode": out})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "byCode": {}}), 200
