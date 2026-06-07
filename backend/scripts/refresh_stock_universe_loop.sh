@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
-# 一键跑全流程: init + N 组 + run-failed + aggregate
+# 一键跑全流程: init + 各组 + run-failed 循环 + aggregate
 # 第一轮: shard-size/组, 间歇 sleep_first
-# 重试 (run-failed): 间歇 sleep_retry
+# 重试: run-failed 循环到 failed = 0 (max_rounds 上限)
 #
 # 用法:
 #   ./backend/scripts/refresh_stock_universe_loop.sh
-#   ./backend/scripts/refresh_stock_universe_loop.sh 1000 60 150   # 1000/组 60s/150s
-#   ./backend/scripts/refresh_stock_universe_loop.sh 600 30 5      # 默认
+#   ./backend/scripts/refresh_stock_universe_loop.sh 1000 60 30 30   # 1000/组 60s/30s 30 rounds
+#   ./backend/scripts/refresh_stock_universe_loop.sh 800 100 5 30   # 默认
 
 set -e
 
-SHARD_SIZE=${1:-600}
-SLEEP_FIRST=${2:-30}
+SHARD_SIZE=${1:-800}
+SLEEP_FIRST=${2:-100}
 SLEEP_RETRY=${3:-5}
+MAX_RETRY_ROUNDS=${4:-30}
 PROJ_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$PROJ_ROOT"
 
 echo "=== refresh_stock_universe_loop.sh ==="
-echo "  project:       $PROJ_ROOT"
-echo "  shard_size:    $SHARD_SIZE (init --shard-size)"
-echo "  sleep_first:   ${SLEEP_FIRST}s (第一轮每组)"
-echo "  sleep_retry:   ${SLEEP_RETRY}s (run-failed 之前/之后)"
+echo "  project:        $PROJ_ROOT"
+echo "  shard_size:     $SHARD_SIZE (init --shard-size)"
+echo "  sleep_first:    ${SLEEP_FIRST}s (第一轮每组)"
+echo "  sleep_retry:    ${SLEEP_RETRY}s (run-failed 之间)"
+echo "  max_retry:      $MAX_RETRY_ROUNDS rounds (run-failed 循环上限)"
 echo ""
 
 # 1. init
@@ -37,9 +39,6 @@ echo "============================================="
 python -m backend.scripts.refresh_stock_universe_sharded clean
 echo ""
 
-echo "[sleep ${SLEEP_FIRST}s]"
-sleep "$SLEEP_FIRST"
-
 # 2-N. 跑第一轮每组
 TOTAL_GROUPS=$(ls reference/stock-universe/groups/ 2>/dev/null | wc -l)
 echo "  -> 共 $TOTAL_GROUPS 个组"
@@ -55,19 +54,68 @@ for ((g=1; g<=TOTAL_GROUPS; g++)); do
     sleep "$SLEEP_FIRST"
 done
 
-# 重试 (run-failed 之前 间歇 150s 让限流恢复)
-echo ""
-echo "============================================="
-echo "[$((TOTAL_GROUPS+2))/$((TOTAL_GROUPS+2))] sleep ${SLEEP_RETRY}s before run-failed"
-echo "============================================="
-sleep "$SLEEP_RETRY"
+# run-failed 循环 (跑到 failed = 0)
+# 第一轮跑完到 run-failed 之间不 sleep
+FAILED_FILE="reference/stock-universe/_failed_codes.json"
 
-python -m backend.scripts.refresh_stock_universe_sharded run-failed
-echo ""
-echo "[sleep ${SLEEP_RETRY}s]"
-sleep "$SLEEP_RETRY"
+for ((r=1; r<=MAX_RETRY_ROUNDS; r++)); do
+    # 读 failed 数量
+    COUNT=-1
+    if [ -f "$FAILED_FILE" ]; then
+        COUNT=$(python -c "
+import json
+try:
+    d = json.load(open('$FAILED_FILE', encoding='utf-8'))
+    print(len(d.get('codes') or []))
+except Exception:
+    print(-1)
+")
+    else
+        COUNT=0
+    fi
+
+    if [ "$COUNT" -le 0 ]; then
+        echo ""
+        echo "============================================="
+        echo "[$((TOTAL_GROUPS+2))/$((TOTAL_GROUPS+2))] run-failed: 0 failed, skip"
+        echo "============================================="
+        break
+    fi
+
+    echo ""
+    echo "============================================="
+    echo "[retry $r/$MAX_RETRY_ROUNDS] run-failed (当前 failed=$COUNT)"
+    echo "============================================="
+    python -m backend.scripts.refresh_stock_universe_sharded run-failed
+
+    # 检查这一轮跑完
+    COUNT_AFTER=-1
+    if [ -f "$FAILED_FILE" ]; then
+        COUNT_AFTER=$(python -c "
+import json
+try:
+    d = json.load(open('$FAILED_FILE', encoding='utf-8'))
+    print(len(d.get('codes') or []))
+except Exception:
+    print(-1)
+")
+    else
+        COUNT_AFTER=0
+    fi
+
+    if [ "$COUNT_AFTER" -le 0 ]; then
+        echo "  -> retry $r done, all failed cleared"
+        break
+    fi
+    echo "  -> retry $r done, $COUNT -> $COUNT_AFTER, sleep ${SLEEP_RETRY}s"
+    sleep "$SLEEP_RETRY"
+done
 
 # aggregate
+echo ""
+echo "============================================="
+echo "[aggregate] 写 sectors_xxx_<n>.json + index.json"
+echo "============================================="
 python -m backend.scripts.refresh_stock_universe_sharded aggregate
 echo ""
 echo "=== final status ==="
