@@ -631,6 +631,33 @@ export async function fetchMarketOverview(): Promise<Record<string, unknown>> {
   return data
 }
 
+// =============================================================================
+// Stock Overview · Market Pulse
+// =============================================================================
+export type MarketPulseOptions = {
+  /** 刷新今日轮动快照并落盘 (其它历史日期不动). */
+  refreshRotation?: boolean
+  /** 行业轮动返回的交易日数. 默认 10. */
+  days?: number
+  /** 强势板块 / 行业轮动 Top N. 默认 10. */
+  topN?: number
+}
+
+export async function fetchMarketPulse(
+  options: MarketPulseOptions = {}
+): Promise<Record<string, unknown>> {
+  const params = new URLSearchParams()
+  if (options.refreshRotation) params.set("refresh", "1")
+  if (options.days)            params.set("days", String(options.days))
+  if (options.topN)            params.set("topN", String(options.topN))
+  const qs = params.toString()
+  const url = `${API_BASE}/api/stock-chart/market-pulse/all${qs ? `?${qs}` : ""}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取 Market Pulse 失败")
+  return data
+}
+
 export async function askQuestion(
   taskId: string,
   question: string

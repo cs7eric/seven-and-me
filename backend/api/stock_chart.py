@@ -774,3 +774,84 @@ def tdx_industry_snapshot():
     if not row:
         return jsonify({"ok": False, "error": f"no quote for {code}"}), 200
     return jsonify({"ok": True, "item": row})
+
+
+# ---------------------------------------------------------------------------
+# Stock Overview · Market Pulse (行情页)
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/market-pulse/strong')
+def market_pulse_strong():
+    """强势板块: TDX 56 行业指数, 按当日 change_pct 排序. URL: ?topN=10"""
+    from backend.services.stock.market_pulse_service import build_strong_sectors
+    try:
+        top_n = int(request.args.get("topN") or 10)
+    except (TypeError, ValueError):
+        top_n = 10
+    try:
+        return jsonify(build_strong_sectors(top_n=top_n))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "top": [], "bottom": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/capital-flow')
+def market_pulse_capital_flow():
+    """行业主力净流入: eltdx 200742. URL: ?days=30&topN=20"""
+    from backend.services.stock.market_pulse_service import build_capital_flow
+    try:
+        days = int(request.args.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    try:
+        top_n = int(request.args.get("topN") or 20)
+    except (TypeError, ValueError):
+        top_n = 20
+    try:
+        return jsonify(build_capital_flow(days=days, top_n=top_n))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "inflow": [], "outflow": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/rotation')
+def market_pulse_rotation():
+    """行业轮动: 读 reference/stock-universe/market_pulse/rotation/*.json 持久化数据.
+
+    URL: ?days=10&topN=10&refresh=1
+        refresh=1 强制重新抓今日快照并落盘 (其它历史日期不动).
+    """
+    from backend.services.stock.market_pulse_service import (
+        build_industry_rotation,
+        snapshot_today_rotation,
+    )
+    try:
+        days = int(request.args.get("days") or 10)
+    except (TypeError, ValueError):
+        days = 10
+    try:
+        top_n = int(request.args.get("topN") or 10)
+    except (TypeError, ValueError):
+        top_n = 10
+    if request.args.get("refresh") == "1":
+        try:
+            snapshot_today_rotation(top_n=top_n, persist=True)
+        except Exception as exc:
+            logger.warning("refresh rotation failed: %s", exc)
+    try:
+        return jsonify(build_industry_rotation(days=days, top_n=top_n))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "rows": [], "dates": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/all')
+def market_pulse_all():
+    """一次拿三块, 行情页首屏用. URL: ?days=30&topN=10"""
+    from backend.services.stock.market_pulse_service import build_market_pulse
+    try:
+        return jsonify(build_market_pulse())
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "strong": {"ok": False, "top": [], "bottom": []},
+            "flow":   {"ok": False, "inflow": [], "outflow": []},
+            "rotation": {"ok": False, "rows": [], "dates": []},
+        }), 200

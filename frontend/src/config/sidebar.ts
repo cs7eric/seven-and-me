@@ -3,6 +3,7 @@ import {
   ComputerIcon,
   Download,
   FileText,
+  Flame,
   GalleryVerticalEnd,
   LayoutDashboard,
   LineChart,
@@ -75,6 +76,10 @@ export const sidebarConfig = {
           url: "/stock-overview",
         },
         {
+          title: "market",
+          url: "/stock-overview/market",
+        },
+        {
           title: "analysis",
           url: "/stock-overview/application-analysis",
         },
@@ -141,6 +146,11 @@ export const sidebarConfig = {
       name: "Stock Overview",
       url: "/stock-overview",
       icon: LineChart,
+    },
+    {
+      name: "Market Pulse",
+      url: "/stock-overview/market",
+      icon: Flame,
     },
     {
       name: "Application Analysis",

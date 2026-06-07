@@ -495,6 +495,62 @@ def build_market_heatmap(kind: str = "all", top_n: int = 200) -> dict[str, Any]:
             "error": f"unknown kind: {kind!r}, must be all/industries/concepts/styles",
         }
 
+    # kind=industries 走 TDX 56 个行业指数直采: 板块自身的最新价/昨收/涨跌额/
+    # 涨跌幅/开高低/成交量/成交额都来自指数行情, 不再做成分股聚合, 颜色和数值
+    # 与同花顺/通达信行业指数完全一致.
+    if kind == "industries":
+        from .f10.tdx_industry_service import build_industry_market_payload
+        try:
+            payload = build_industry_market_payload()
+        except Exception as exc:
+            logger.warning("tdx industry payload failed: %s", exc)
+            payload = {"kind": "industries", "label": "行业", "items": [], "count": 0,
+                       "source": "eltdx.get_index_codes_all + get_quote (failed)"}
+        items: list[dict[str, Any]] = []
+        for it in payload.get("items") or []:
+            amount = it.get("amount") or 0.0
+            cp = it.get("changePercent")
+            items.append({
+                "name": it.get("name"),
+                "sectorCode": it.get("sectorCode") or it.get("fullCode"),
+                "kind": "industries",
+                "kindLabel": "行业",
+                "topicId": [it.get("code6")],
+                "value": amount,
+                "changePercent": cp,
+                "amount": amount,
+                "stockCount": 0,
+                "risingCount": 0,
+                "fallingCount": 0,
+                "flatCount": 0,
+                "limitUpCount": 0,
+                "latestPrice": it.get("latestPrice"),
+                "preClosePrice": it.get("preClosePrice"),
+                "openPrice": it.get("openPrice"),
+                "highPrice": it.get("highPrice"),
+                "lowPrice": it.get("lowPrice"),
+                "change": it.get("change"),
+                "volume": it.get("volume"),
+                "turnoverRate": it.get("turnoverRate"),
+                "children": [],
+            })
+        items.sort(key=lambda b: -(b.get("amount") or 0))
+        return {
+            "ok": True,
+            "kind": "industries",
+            "kinds": ["行业"],
+            "items": items,
+            "totalItems": len(items),
+            "itemsTotal": len(items),
+            "topN": top_n,
+            "totalStocks": 0,
+            "hiddenStocks": 0,
+            "hiddenNoQuote": 0,
+            "hiddenEmptySectors": 0,
+            "fetchedAt": payload.get("fetchedAt"),
+            "source": payload.get("source") or "tdx_industry_service",
+        }
+
     kinds = list(KIND_TO_CAT.keys()) if kind == "all" else [kind]
 
     # 1) 加载 sectors, 收集所有唯一 codes

@@ -12,6 +12,7 @@ import SchedulerSettingsPage from "../views/settings/scheduler"
 import SelfSelectedPage from "../views/self-selected"
 import StockChartPage from "../views/stock-chart"
 import StockOverviewPage from "../views/stock-overview"
+import MarketPulseMock from "../views/stock-overview/mock-market"
 import StockReviewPage from "../views/stock-review"
 
 export const router = createBrowserRouter([
@@ -50,6 +51,10 @@ export const router = createBrowserRouter([
       {
         path: "stock-overview",
         element: <StockOverviewPage />,
+      },
+      {
+        path: "stock-overview/market",
+        element: <MarketPulseMock />,
       },
       {
         path: "stock-overview/application-analysis",
