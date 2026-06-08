@@ -92,11 +92,18 @@ def _save_job_status(status: dict[str, Any]) -> None:
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
     p = SCHEDULER_JOBS_FILE
     p.parent.mkdir(parents=True, exist_ok=True)
-    jobs = read_json_file(p, default=[]) if p.exists() else []
-    if not isinstance(jobs, list):
-        jobs = []
+    if p.exists():
+        data = read_json_file(p, {"version": 1, "jobs": []})
+    else:
+        data = {"version": 1, "jobs": []}
+    # 兼容旧版 / 其他 writer 落盘的顶层 list
+    if isinstance(data, list):
+        data = {"version": 1, "jobs": data}
+    if not isinstance(data, dict):
+        data = {"version": 1, "jobs": []}
+    jobs = data.setdefault("jobs", [])
     # 去重
-    jobs = [j for j in (jobs or []) if j.get("id") != job_id]
+    jobs = [j for j in jobs if j.get("id") != job_id]
     jobs.append({
         "id": job_id,
         "name": name,
@@ -104,7 +111,7 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
         "nextRunTime": next_run_time,
         "updatedAt": _beijing_now().isoformat(timespec="seconds"),
     })
-    write_json_file(p, jobs)
+    write_json_file(p, data)
 
 
 # ---------------------------------------------------------------------------

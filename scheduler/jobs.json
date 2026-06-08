@@ -1,23 +1,66 @@
-[
-  {
-    "id": "market_pulse_inside",
-    "name": "market_pulse_inside_refresh (10min, 交易时间内)",
-    "module": "backend.services.scheduler.market_pulse_scheduler",
-    "nextRunTime": null,
-    "updatedAt": "2026-06-07T22:23:52"
-  },
-  {
-    "id": "market_pulse_close",
-    "name": "market_pulse_close_snapshot (15:30)",
-    "module": "backend.services.scheduler.market_pulse_scheduler",
-    "nextRunTime": null,
-    "updatedAt": "2026-06-07T22:23:52"
-  },
-  {
-    "id": "market_pulse_constituents",
-    "name": "market_pulse_constituents_refresh (15:35, 90 行业全量)",
-    "module": "backend.services.scheduler.market_pulse_scheduler",
-    "nextRunTime": null,
-    "updatedAt": "2026-06-07T22:23:52"
-  }
-]
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "market_pulse_inside",
+      "name": "market_pulse_inside_refresh (10min, 交易时间内)",
+      "module": "backend.services.scheduler.market_pulse_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-08T20:20:47"
+    },
+    {
+      "id": "market_pulse_close",
+      "name": "market_pulse_close_snapshot (15:30)",
+      "module": "backend.services.scheduler.market_pulse_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-08T20:20:47"
+    },
+    {
+      "id": "market_pulse_constituents",
+      "name": "market_pulse_constituents_refresh (15:35, 90 行业全量)",
+      "module": "backend.services.scheduler.market_pulse_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-08T20:20:47"
+    },
+    {
+      "id": "turnover_refresh",
+      "name": "换手率刷新",
+      "description": "工作日盘内每半小时 + 16:00 收盘后，刷新 target.json 中所有标的的换手率",
+      "config_file": "turnover_job.json",
+      "service_module": "backend.services.scheduler.turnover_scheduler",
+      "service_class": "TurnoverRefreshScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-08T20:20:00+08:00"
+    },
+    {
+      "id": "stock_universe_refresh",
+      "name": "A 股全市场持久化",
+      "description": "工作日 17:00 收盘后拉全 A 股行情 + 题材 + 行业归一, 持久化到 reference/stock-universe/",
+      "config_file": "stock_universe_job.json",
+      "service_module": "backend.services.scheduler.stock_universe_scheduler",
+      "service_class": "StockUniverseRefreshScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-08T20:20:00+08:00"
+    },
+    {
+      "id": "auction_ai_analysis",
+      "name": "集合竞价 AI 分析",
+      "description": "工作日 09:26 后，对 application-analysis targets 中 enabled 标的生成集合竞价 AI 解读并持久化",
+      "config_file": "auction_analysis_job.json",
+      "service_module": "backend.services.scheduler.auction_analysis_scheduler",
+      "service_class": "AuctionAnalysisScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-08T20:20:00+08:00"
+    },
+    {
+      "id": "application_analysis",
+      "name": "个股应用分析",
+      "description": "对 application-analysis targets 中 enabled 标的按 interval_minutes 节奏生成 AI 分析 + 盘后 15:30 跑 recent30 快照",
+      "config_file": "reference/application-analysis/scheduler.json",
+      "service_module": "backend.services.stock.application_analysis_scheduler",
+      "service_class": "ApplicationAnalysisScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-08T20:20:00+08:00"
+    }
+  ]
+}

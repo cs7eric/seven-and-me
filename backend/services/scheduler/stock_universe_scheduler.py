@@ -14,19 +14,25 @@ Jobs 注册表：``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``。
 """
 from __future__ import annotations
 
+import logging
 import os
+import subprocess
+import sys
 import threading
 import time
 import traceback
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from backend.config.settings import (
+    BASE_DIR,
     SCHEDULER_DIR,
     SCHEDULER_JOBS_FILE,
 )
-from backend.services.stock import stock_universe_service
 from backend.utils.json_io import read_json_file, write_json_file
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -68,11 +74,10 @@ DEFAULT_JOB_CONFIG: dict[str, Any] = {
     "last_run_slot": None,
     "last_run_date": None,
     "last_status": "idle",
-    "last_stock_count": 0,
-    "last_industry_count": 0,
-    "last_topic_count": 0,
     "last_duration_seconds": None,
     "last_error": None,
+    "last_log_file": None,
+    "last_exit_code": None,
     "last_file": None,
     "total_runs": 0,
     "total_failures": 0,
@@ -130,6 +135,77 @@ def _register_job() -> None:
 # ---------------------------------------------------------------------------
 
 
+# refresh_stock_universe_loop.py 路径 (Python 版, 替代 .ps1)
+_REFRESH_LOOP_SCRIPT = BASE_DIR / "backend" / "scripts" / "refresh_stock_universe_loop.py"
+_REFRESH_LOGS_DIR = BASE_DIR / "reference" / "stock-universe" / "_logs"
+_REFRESH_SNAPSHOT = BASE_DIR / "reference" / "stock-universe" / f"{datetime.now().strftime('%Y-%m-%d')}.json"
+
+
+def _run_refresh_loop_script(slot: str, date_key: str) -> dict[str, Any]:
+    """运行 refresh_stock_universe_loop.py (init → clean → 各组 → run-failed → aggregate).
+
+    Python 版, 替代原来的 .ps1. 在调用方线程里阻塞到脚本结束;
+    stdout+stderr 实时写入 ``_logs/{date}-slot-{HHMM}.log``.
+    返回: ``status`` / ``exit_code`` / ``elapsed_seconds`` / ``log_file`` / ``snapshot_file`` / ``error``
+    """
+    _REFRESH_LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    slot_tag = (slot or "manual").replace(":", "")
+    log_file = _REFRESH_LOGS_DIR / f"{date_key}-slot-{slot_tag}.log"
+    snapshot_file = BASE_DIR / "reference" / "stock-universe" / f"{date_key}.json"
+
+    if not _REFRESH_LOOP_SCRIPT.exists():
+        return {
+            "status": "failed",
+            "exit_code": None,
+            "log_file": str(log_file),
+            "snapshot_file": None,
+            "error": f"script not found: {_REFRESH_LOOP_SCRIPT}",
+        }
+
+    cmd = [
+        sys.executable,
+        "-m", "backend.scripts.refresh_stock_universe_loop",
+    ]
+    logger.info(
+        "[StockUniverseRefreshScheduler] launching loop slot=%s date=%s cmd=%s cwd=%s log=%s",
+        slot, date_key, " ".join(cmd), BASE_DIR, log_file,
+    )
+    started = datetime.now()
+    with log_file.open("w", encoding="utf-8") as logf:
+        logf.write(f"# stock_universe_refresh slot={slot} date={date_key}\n")
+        logf.write(f"# started={started.isoformat()}\n")
+        logf.write(f"# cmd={' '.join(cmd)}\n")
+        logf.write(f"# cwd={BASE_DIR}\n\n")
+        logf.flush()
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(BASE_DIR),
+                stdout=logf,
+                stderr=subprocess.STDOUT,
+                timeout=None,  # 跑完为止, 脚本本身有内部 max_retry 限制
+            )
+        except Exception as exc:
+            logf.write(f"\n# subprocess raised: {exc}\n")
+            logf.write(traceback.format_exc())
+            return {
+                "status": "failed",
+                "exit_code": None,
+                "log_file": str(log_file),
+                "snapshot_file": str(snapshot_file) if snapshot_file.exists() else None,
+                "error": str(exc),
+            }
+    elapsed = round((datetime.now() - started).total_seconds(), 3)
+    return {
+        "status": "success" if proc.returncode == 0 else "failed",
+        "exit_code": proc.returncode,
+        "elapsed_seconds": elapsed,
+        "log_file": str(log_file),
+        "snapshot_file": str(snapshot_file) if snapshot_file.exists() else None,
+        "error": None if proc.returncode == 0 else f"exit_code={proc.returncode}",
+    }
+
+
 class StockUniverseRefreshScheduler:
     """A 股全市场持久化后台调度器 (每 60 秒 tick 一次)."""
 
@@ -150,7 +226,7 @@ class StockUniverseRefreshScheduler:
         _register_job()
         cfg = _load_job_config()
         if not cfg.get("enabled", True):
-            print("[StockUniverseRefreshScheduler] disabled by config, not started", flush=True)
+            logger.info("[StockUniverseRefreshScheduler] disabled by config, not started")
             return
 
         self._stop_event.clear()
@@ -160,7 +236,7 @@ class StockUniverseRefreshScheduler:
         self._thread.start()
         self._started_at = datetime.now()
         _save_job_config(cfg)
-        print("[StockUniverseRefreshScheduler] started", flush=True)
+        logger.info("[StockUniverseRefreshScheduler] started")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -168,7 +244,7 @@ class StockUniverseRefreshScheduler:
             self._thread.join(timeout=2)
         self._thread = None
         self._started_at = None
-        print("[StockUniverseRefreshScheduler] stopped", flush=True)
+        logger.info("[StockUniverseRefreshScheduler] stopped")
 
     def status(self) -> dict[str, Any]:
         cfg = _load_job_config()
@@ -193,8 +269,7 @@ class StockUniverseRefreshScheduler:
             try:
                 self._tick()
             except Exception as exc:
-                print(f"[StockUniverseRefreshScheduler] tick error: {exc}", flush=True)
-                traceback.print_exc()
+                logger.exception("[StockUniverseRefreshScheduler] tick error: %s", exc)
             cfg = _load_job_config()
             sleep_seconds = int(cfg.get("tick_seconds") or 60)
             self._stop_event.wait(sleep_seconds)
@@ -221,49 +296,47 @@ class StockUniverseRefreshScheduler:
     def _run_once(self, slot: str, date_key: str) -> dict[str, Any]:
         with self._lock:
             if self._inflight:
-                print("[StockUniverseRefreshScheduler] previous run still inflight, skip", flush=True)
+                logger.info("[StockUniverseRefreshScheduler] previous run still inflight, skip")
                 return {"status": "skipped", "reason": "inflight"}
             self._inflight = True
 
         started = datetime.now()
         try:
-            print(
-                f"[StockUniverseRefreshScheduler] slot={slot} date={date_key} started",
-                flush=True,
+            logger.info(
+                "[StockUniverseRefreshScheduler] slot=%s date=%s started",
+                slot, date_key,
             )
-            # 关闭 progress 打印, 走 service 自带的 print
-            result = stock_universe_service.refresh(progress=True)
+            # 走 refresh_stock_universe_loop.ps1 (init → groups → run-failed → aggregate)
+            result = _run_refresh_loop_script(slot=slot, date_key=date_key)
             elapsed = (datetime.now() - started).total_seconds()
 
             cfg = _load_job_config()
             cfg["last_run_at"] = datetime.now().isoformat()
             cfg["last_run_slot"] = slot
             cfg["last_run_date"] = date_key
-            cfg["last_status"] = "success"
-            cfg["last_stock_count"] = result.stock_count
-            cfg["last_industry_count"] = result.industry_count
-            cfg["last_topic_count"] = result.topic_count
+            cfg["last_status"] = result["status"]
             cfg["last_duration_seconds"] = round(elapsed, 3)
-            cfg["last_file"] = str(result.file_path)
-            cfg["last_error"] = None
+            cfg["last_error"] = result.get("error")
+            cfg["last_log_file"] = result.get("log_file")
+            cfg["last_exit_code"] = result.get("exit_code")
+            cfg["last_file"] = result.get("snapshot_file")
             cfg["total_runs"] = int(cfg.get("total_runs", 0)) + 1
+            if result["status"] != "success":
+                cfg["total_failures"] = int(cfg.get("total_failures", 0)) + 1
             _save_job_config(cfg)
 
-            print(
-                f"[StockUniverseRefreshScheduler] slot={slot} done "
-                f"stocks={result.stock_count} industries={result.industry_count} "
-                f"topics={result.topic_count} elapsed={elapsed:.0f}s",
-                flush=True,
+            logger.info(
+                "[StockUniverseRefreshScheduler] slot=%s status=%s exit=%s elapsed=%.0fs log=%s",
+                slot, result["status"], result.get("exit_code"), elapsed, result.get("log_file"),
             )
             return {
-                "status": "success",
+                "status": result["status"],
                 "slot": slot,
                 "date": date_key,
                 "elapsed_seconds": elapsed,
-                "stock_count": result.stock_count,
-                "industry_count": result.industry_count,
-                "topic_count": result.topic_count,
-                "file": str(result.file_path),
+                "exit_code": result.get("exit_code"),
+                "log_file": result.get("log_file"),
+                "file": result.get("snapshot_file"),
             }
         except Exception as exc:
             cfg = _load_job_config()
@@ -276,7 +349,7 @@ class StockUniverseRefreshScheduler:
             cfg["total_runs"] = int(cfg.get("total_runs", 0)) + 1
             cfg["total_failures"] = int(cfg.get("total_failures", 0)) + 1
             _save_job_config(cfg)
-            print(f"[StockUniverseRefreshScheduler] slot={slot} failed: {exc}", flush=True)
+            logger.warning("[StockUniverseRefreshScheduler] slot=%s failed: %s", slot, exc)
             return {"status": "failed", "slot": slot, "error": str(exc)}
         finally:
             with self._lock:

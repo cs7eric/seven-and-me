@@ -1,11 +1,33 @@
 {
   "name": "market_pulse_snapshot",
-  "lastRunAt": null,
-  "lastRunOk": null,
+  "lastRunAt": "2026-06-08T15:30:00",
+  "lastRunOk": true,
   "lastRunError": null,
-  "lastInsideRefreshAt": null,
-  "lastCloseSnapshotAt": null,
-  "totalInside": 0,
-  "totalClose": 0,
-  "schedulerStartedAt": "2026-06-07T22:23:52"
+  "lastInsideRefreshAt": "2026-06-08T14:55:58",
+  "lastCloseSnapshotAt": "2026-06-08T15:30:00",
+  "totalInside": 44,
+  "totalClose": 1,
+  "schedulerStartedAt": "2026-06-08T23:23:42",
+  "lastTopN": [
+    {
+      "name": "工程机械",
+      "changePct": 1.04
+    },
+    {
+      "name": "油气开采及服务",
+      "changePct": 0.94
+    },
+    {
+      "name": "银行",
+      "changePct": 0.42
+    },
+    {
+      "name": "非金属材料",
+      "changePct": -0.28
+    },
+    {
+      "name": "保险",
+      "changePct": -0.28
+    }
+  ]
 }

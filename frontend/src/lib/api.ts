@@ -658,6 +658,29 @@ export async function fetchMarketPulse(
   return data
 }
 
+export interface StyleSectorItem {
+  name: string
+  change_pct: number | null
+  valid_size: number
+  sample_size: number
+}
+
+export interface StyleSectorListResponse {
+  ok: boolean
+  items: StyleSectorItem[]
+  count: number
+  names: string[]
+  error?: string
+}
+
+export async function fetchStyleSectors(): Promise<StyleSectorListResponse> {
+  const url = `${API_BASE}/api/stock-chart/style-sectors`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as StyleSectorListResponse | null
+  if (!res.ok || !data) throw new Error("获取风格板块失败")
+  return data
+}
+
 export async function fetchMarketPulseRotationTrend(
   days = 10,
   topN = 10

@@ -1,4 +1,5 @@
 import {
+  Activity,
   AudioWaveform,
   ComputerIcon,
   Download,
@@ -36,11 +37,6 @@ export const sidebarConfig = {
       icon: LayoutDashboard,
     },
     {
-      title: "Downloader",
-      url: "/downloader",
-      icon: Download,
-    },
-    {
       title: "MP4 to Word",
       url: "/mp4-to-word",
       icon: FileText,
@@ -53,16 +49,24 @@ export const sidebarConfig = {
           title: "history",
           url: "/mp4-to-word/history",
         },
+        {
+          title: "downloader",
+          url: "/downloader",
+        },
       ],
     },
     {
-      title: "Stock Chart",
-      url: "/stock-chart",
-      icon: TrendingUp,
+      title: "market",
+      url: "/market/pulse",
+      icon: Activity,
       items: [
         {
-          title: "open",
-          url: "/stock-chart",
+          title: "market pulse",
+          url: "/market/pulse",
+        },
+        {
+          title: "market sentiment",
+          url: "/market/sentiment",
         },
       ],
     },
@@ -74,6 +78,10 @@ export const sidebarConfig = {
         {
           title: "overview",
           url: "/stock-overview",
+        },
+        {
+          title: "chart",
+          url: "/stock-chart",
         },
         {
           title: "market",

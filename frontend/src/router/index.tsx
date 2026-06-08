@@ -13,6 +13,8 @@ import SelfSelectedPage from "../views/self-selected"
 import StockChartPage from "../views/stock-chart"
 import StockOverviewPage from "../views/stock-overview"
 import MarketPulseMock from "../views/stock-overview/mock-market"
+import MarketPulsePage from "../views/market/market-pulse"
+import MarketSentimentPage from "../views/market/market-sentiment"
 import StockReviewPage from "../views/stock-review"
 
 export const router = createBrowserRouter([
@@ -55,6 +57,14 @@ export const router = createBrowserRouter([
       {
         path: "stock-overview/market",
         element: <MarketPulseMock />,
+      },
+      {
+        path: "market/pulse",
+        element: <MarketPulsePage />,
+      },
+      {
+        path: "market/sentiment",
+        element: <MarketSentimentPage />,
       },
       {
         path: "stock-overview/application-analysis",

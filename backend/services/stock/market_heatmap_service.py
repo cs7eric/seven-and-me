@@ -118,10 +118,15 @@ def _realtime_quote_fetcher(codes: list[str]) -> dict[str, dict[str, Any]]:
                 seen.add(code)
                 last = float(raw.get("last_price") or 0)
                 pre_close = float(raw.get("pre_close_price") or 0)
+                raw_change_pct = raw.get("change_pct")
+                # eltdx list_by_category(6) 上游 change_pct 经常是 None,
+                # 用 last / pre_close 自己补一个 (百分数, 与项目里其他板块 API 一致)
+                if raw_change_pct in (None, "", 0) and pre_close > 0 and last > 0:
+                    raw_change_pct = round((last - pre_close) / pre_close * 100.0, 4)
                 out[code] = {
                     "last_price": last,
                     "pre_close_price": pre_close,
-                    "change_pct": raw.get("change_pct"),
+                    "change_pct": raw_change_pct,
                     "amount": float(raw.get("amount") or 0),
                     "total_hand": float(raw.get("total_hand") or 0),
                     "current_hand": float(raw.get("current_hand") or 0),

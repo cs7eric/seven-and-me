@@ -69,7 +69,13 @@ def _load_jobs_registry() -> dict[str, Any]:
     p = _jobs_registry_path()
     if not p.exists():
         return {'version': 1, 'jobs': []}
-    return read_json_file(p, {'version': 1, 'jobs': []})
+    data = read_json_file(p, {'version': 1, 'jobs': []})
+    # 兼容旧版 / 某些 writer 落盘为顶层 list 的情况
+    if isinstance(data, list):
+        return {'version': 1, 'jobs': data}
+    if not isinstance(data, dict):
+        return {'version': 1, 'jobs': []}
+    return data
 
 
 def _resolve_config_path(config_file: str) -> Path:
@@ -358,8 +364,22 @@ def trigger_job(job_id: str):
         return jsonify({'ok': False, 'error': f'unknown job_id: {job_id}'}), 404
     try:
         result = _trigger_scheduler(job_id)
-        # 兼容 trigger_all 把 results 放在 items 字段的情况：把整体也回传
-        return jsonify({'ok': result.get('ok', True), 'job_id': job_id, 'result': result})
+        # 兼容前端 notification 组件: 把 count/failed_count 提升到顶层.
+        # application_analysis 的 result 自带 count/failed_count;
+        # stock_universe / turnover / auction 的 result 是 status 形态, 这里兜底算 1.
+        if "count" in result:
+            top_count = result["count"]
+            top_failed = result.get("failed_count", 0)
+        else:
+            top_count = 1
+            top_failed = 0 if result.get("status") == "success" else 1
+        return jsonify({
+            "ok": result.get("ok", True),
+            "job_id": job_id,
+            "count": top_count,
+            "failed_count": top_failed,
+            "result": result,
+        })
     except Exception as exc:
         traceback.print_exc()
         return jsonify({'ok': False, 'error': str(exc)}), 500

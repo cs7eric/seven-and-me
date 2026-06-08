@@ -1153,3 +1153,45 @@ def ths_industry_constituents_all():
         return jsonify({"ok": True, "count": len(out), "industries": list(out.keys()), "byCode": out})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc), "byCode": {}}), 200
+
+
+# ---------------------------------------------------------------------------
+# Style Sectors (风格板块, 29 个)
+# 读 sectors_styles_4.json → 实时行情 → 等权平均 (走 infra.style_sector.compute_sector_change_pct)
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/style-sectors', methods=['GET'])
+def style_sectors_all():
+    """29 个 style sectors 板块涨跌幅 (一次拉完)."""
+    from backend.services.stock.style_sector_service import (
+        get_all_style_sectors,
+        STYLE_SECTOR_NAMES,
+    )
+    try:
+        items = get_all_style_sectors()
+        return jsonify({
+            "ok": True,
+            "items": items,
+            "count": len(items),
+            "names": STYLE_SECTOR_NAMES,
+        })
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "items": [],
+            "count": 0,
+            "names": STYLE_SECTOR_NAMES,
+        }), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/style-sectors/<string:name>', methods=['GET'])
+def style_sector_one(name: str):
+    """单个 style 板块涨跌幅. name 走 URL decode (中文 OK)."""
+    from backend.services.stock.style_sector_service import get_style_sector
+    try:
+        result = get_style_sector(name)
+    except Exception as exc:
+        return jsonify({"ok": False, "name": name, "error": str(exc)}), 200
+    if result is None:
+        return jsonify({"ok": False, "error": f"unknown style: {name}"}), 404
+    return jsonify({"ok": True, "item": result})
