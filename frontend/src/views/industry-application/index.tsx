@@ -5,7 +5,9 @@
  * 复用 application-analysis 的 chart 组件：
  *  - ChartCard (K 线) — 同样的 SVG 渲染
  *  - ChartHeader (顶部) — 同样的样式 + 同样的 button 风格
- *  - TechnicalIndicatorPanel (技术指标 Tab) — 同样的面板
+ *  - IndustryTechnicalIndicatorPanel (技术指标 Tab) — 行业/概念专用, 不复用 stock 的
+ *    TechnicalIndicatorPanel (那个面板的 analyzeTrend / 风险分 阈值是按个股校准的,
+ *    套到行业指数 2000-5000 价位会跑偏, 见 components/industry-technical-indicator-panel.tsx)
  *
  * 区别只在数据：source = eltdx bars.get(kind="index")，persistence 跟 application-analysis 物理隔离。
  */
@@ -18,7 +20,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { notification } from "@/components/ui/notification"
@@ -36,6 +37,7 @@ import type { ApplicationAnalysisTarget } from "@/lib/api"
 import type { StockKlineBar } from "../stock-chart/lib/types"
 import type {
   IndustryApplicationIndexBar,
+  IndustryApplicationIndicators,
   IndustryApplicationTarget,
   IndustryApplicationTargetCode,
   MarketHeatmapResponse,
@@ -43,11 +45,11 @@ import type {
 
 // 共用的 application-analysis 组件
 import { ChartCard } from "../application-analysis/components/chart-card"
-import { TechnicalIndicatorPanel } from "../stock-chart/components/technical-indicator-panel"
 
 import { NotApplicableCard } from "./components/not-applicable-card"
 import { SectorHeatmap } from "./components/sector-heatmap"
 import { IndustryFundFlowTable } from "./components/industry-fund-flow-table"
+import { IndustryTechnicalIndicatorPanel } from "./components/industry-technical-indicator-panel"
 
 const DEFAULT_HORIZON = { days: 120, segments: 4 }
 
@@ -140,6 +142,7 @@ export default function IndustryApplicationPage() {
   }, [previewTarget, targets, selectedId])
 
   const [kline, setKline] = useState<IndustryApplicationIndexBar[]>([])
+  const [indicators, setIndicators] = useState<IndustryApplicationIndicators | null>(null)
   const [loadingBars, setLoadingBars] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -174,9 +177,13 @@ export default function IndustryApplicationPage() {
       .then((data) => {
         if (!active) return
         setKline(data.kline || [])
+        setIndicators(data.indicators || null)
       })
       .catch(() => {
-        if (active) setKline([])
+        if (active) {
+          setKline([])
+          setIndicators(null)
+        }
       })
       .finally(() => {
         if (active) setLoadingBars(false)
@@ -546,7 +553,7 @@ export default function IndustryApplicationPage() {
               />
             </TabsContent>
 
-            <div className={activeMainTab === "overview" ? "hidden" : "grid h-full min-h-0 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]"}>
+            <div className={activeMainTab === "overview" ? "hidden" : "grid h-full min-h-0 gap-4 xl:grid-cols-[400px_minmax(0,1fr)]"}>
               <aside className="min-h-0 overflow-y-auto">
                 <div className="space-y-4">
                   <IndustryTargetCard
@@ -614,13 +621,16 @@ export default function IndustryApplicationPage() {
                 </TabsContent>
 
                 <TabsContent value="indicator" className="m-0 h-full min-h-0 overflow-auto">
-                  {displayedTarget && stockBars.length > 0 ? (
-                    <TechnicalIndicatorPanel
-                      bars={stockBars}
-                      indexBarsMap={null}
-                      breadth={null}
-                      breadthSeries={null}
-                      stockMeta={null}
+                  {displayedTarget && kline.length > 0 ? (
+                    <IndustryTechnicalIndicatorPanel
+                      name={displayedTarget.name}
+                      code={
+                        (displayedTarget as { code?: string }).code ||
+                        (displayedTarget as { symbol?: string }).symbol ||
+                        ""
+                      }
+                      indicators={indicators}
+                      bars={kline}
                     />
                   ) : (
                     <NotApplicableCard
@@ -840,7 +850,7 @@ function IndustryTargetCard(props: IndustryTargetCardProps) {
                     ? "还没有目标, 从右侧「加入新标的」添加。"
                     : "没有匹配的目标。"
               }
-              maxHeight={collapsed ? "max-h-[28vh]" : "max-h-[40vh]"}
+              maxHeight={collapsed ? "max-h-[28vh]" : "max-h-[52vh]"}
               className=""
               itemClassName=""
             />
@@ -925,22 +935,22 @@ function IndustryAddCard({ codes, onAdd }: IndustryAddCardProps) {
     [codes, filter],
   )
   return (
-    <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-      <CardHeader>
+    <Card className="flex max-h-[min(78vh,680px)] flex-col rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <CardHeader className="shrink-0">
         <CardTitle className="flex items-center gap-2 text-base">
           <Plus className="size-4 text-slate-600" />
           加入新标的
         </CardTitle>
         <CardDescription>来自 index_codes.py 静态全集</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden p-3">
         <Input
           placeholder="搜索名称 / 代码"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="h-8 text-xs"
+          className="h-8 shrink-0 text-xs"
         />
-        <ScrollArea className="max-h-[260px]">
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">
           <div className="space-y-3 p-1">
             {industry.length > 0 ? (
               <Group
@@ -964,7 +974,7 @@ function IndustryAddCard({ codes, onAdd }: IndustryAddCardProps) {
               <div className="px-2 py-4 text-center text-xs text-slate-400">无可加入的标的</div>
             ) : null}
           </div>
-        </ScrollArea>
+        </div>
       </CardContent>
     </Card>
   )

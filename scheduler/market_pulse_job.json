@@ -1,33 +1,39 @@
 {
   "name": "market_pulse_snapshot",
-  "lastRunAt": "2026-06-09T10:29:00",
+  "lastRunAt": "2026-06-09T15:35:00",
   "lastRunOk": true,
   "lastRunError": null,
-  "lastInsideRefreshAt": "2026-06-09T10:29:00",
-  "lastCloseSnapshotAt": "2026-06-08T15:30:00",
-  "totalInside": 55,
-  "totalClose": 1,
-  "schedulerStartedAt": "2026-06-09T10:32:14",
+  "lastInsideRefreshAt": "2026-06-09T14:59:00",
+  "lastCloseSnapshotAt": "2026-06-09T15:30:00",
+  "totalInside": 85,
+  "totalClose": 2,
+  "schedulerStartedAt": "2026-06-09T20:07:55",
   "lastTopN": [
     {
       "name": "电子化学品",
-      "changePct": 3.08
-    },
-    {
-      "name": "塑料制品",
-      "changePct": 2.48
-    },
-    {
-      "name": "其他电源设备",
-      "changePct": 2.47
+      "changePct": 7.05
     },
     {
       "name": "半导体",
-      "changePct": 2.28
+      "changePct": 6.38
     },
     {
-      "name": "影视院线",
-      "changePct": 1.89
+      "name": "元件",
+      "changePct": 5.5
+    },
+    {
+      "name": "其他电子",
+      "changePct": 5.22
+    },
+    {
+      "name": "能源金属",
+      "changePct": 4.92
     }
-  ]
+  ],
+  "lastConstituentsAt": "2026-06-09T15:35:00",
+  "lastConstituentsOk": true,
+  "lastConstituentsError": null,
+  "lastConstituentsElapseMs": 427478,
+  "lastConstituentsIndustriesOk": 90,
+  "lastConstituentsIndustriesTotal": 90
 }
