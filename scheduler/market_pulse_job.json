@@ -1,33 +1,33 @@
 {
   "name": "market_pulse_snapshot",
-  "lastRunAt": "2026-06-08T15:30:00",
+  "lastRunAt": "2026-06-09T10:29:00",
   "lastRunOk": true,
   "lastRunError": null,
-  "lastInsideRefreshAt": "2026-06-08T14:55:58",
+  "lastInsideRefreshAt": "2026-06-09T10:29:00",
   "lastCloseSnapshotAt": "2026-06-08T15:30:00",
-  "totalInside": 44,
+  "totalInside": 55,
   "totalClose": 1,
-  "schedulerStartedAt": "2026-06-08T23:23:42",
+  "schedulerStartedAt": "2026-06-09T10:32:14",
   "lastTopN": [
     {
-      "name": "工程机械",
-      "changePct": 1.04
+      "name": "电子化学品",
+      "changePct": 3.08
     },
     {
-      "name": "油气开采及服务",
-      "changePct": 0.94
+      "name": "塑料制品",
+      "changePct": 2.48
     },
     {
-      "name": "银行",
-      "changePct": 0.42
+      "name": "其他电源设备",
+      "changePct": 2.47
     },
     {
-      "name": "非金属材料",
-      "changePct": -0.28
+      "name": "半导体",
+      "changePct": 2.28
     },
     {
-      "name": "保险",
-      "changePct": -0.28
+      "name": "影视院线",
+      "changePct": 1.89
     }
   ]
 }

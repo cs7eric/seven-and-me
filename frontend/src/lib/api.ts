@@ -714,6 +714,139 @@ export async function fetchIndustryConstituents(
   return data
 }
 
+export interface IndustryFundFlowRow {
+  /** 排名 (1..N, 按净额 desc 重排) */
+  "序号": number
+  /** 行业名称, e.g. "半导体" */
+  "行业": string
+  /** 行业指数涨跌幅 % */
+  "行业指数涨跌幅": number | string | null
+  /** 流入资金(亿) */
+  "流入资金(亿)": number | string | null
+  /** 流出资金(亿) */
+  "流出资金(亿)": number | string | null
+  /** 净额(亿), 正=净流入 */
+  "净额(亿)": number | string | null
+  /** 公司家数 */
+  "公司家数": number | string | null
+  /** 领涨股名称 */
+  "领涨股": string | null
+  /** 领涨股涨跌幅 % */
+  "领涨股涨跌幅": number | string | null
+  /** 领涨股当前价(元) */
+  "当前价(元)": number | string | null
+}
+
+export interface IndustryFundFlowResponse {
+  ok: boolean
+  rowCount: number
+  totalPages: number | null
+  pageRowCounts: number[]
+  fetchedAt: string | null
+  rows: IndustryFundFlowRow[]
+  stale?: boolean
+  staleReason?: string
+  error?: string
+}
+
+export async function fetchIndustryFundFlow(
+  options: { refresh?: boolean; top?: number } = {}
+): Promise<IndustryFundFlowResponse> {
+  const params: string[] = []
+  if (options.refresh) params.push("refresh=1")
+  if (options.top) params.push(`top=${options.top}`)
+  const query = params.length ? `?${params.join("&")}` : ""
+  const url = `${API_BASE}/api/stock-chart/ths-industry/fund-flow${query}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as IndustryFundFlowResponse | null
+  if (!res.ok || !data) throw new Error("获取同花顺行业资金失败")
+  return data
+}
+
+export async function refreshIndustryFundFlow(): Promise<IndustryFundFlowResponse> {
+  const url = `${API_BASE}/api/stock-chart/ths-industry/fund-flow/refresh`
+  const res = await fetch(url, { method: "POST" })
+  const data = (await res.json().catch(() => null)) as IndustryFundFlowResponse | null
+  if (!res.ok || !data) throw new Error("刷新同花顺行业资金失败")
+  return data
+}
+
+export async function fetchIndustryFundFlowHistory(date?: string): Promise<Record<string, unknown>> {
+  const url = date
+    ? `${API_BASE}/api/stock-chart/ths-industry/fund-flow/history?date=${encodeURIComponent(date)}`
+    : `${API_BASE}/api/stock-chart/ths-industry/fund-flow/history`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取行业资金历史失败")
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// 同花顺行业成分股 (hexin-v 破解, q.10jqka 翻全页)
+// 字段 (14 列, 中文表头):
+//   序号 / 代码 / 名称 / 现价 / 涨跌幅(%) / 涨跌 / 涨速(%) / 换手(%) / 量比
+//   / 振幅(%) / 成交额 / 流通股 / 流通市值 / 市盈率
+// ---------------------------------------------------------------------------
+export interface IndustryConstituentRow {
+  "序号": number
+  "代码": number | string
+  "名称": string
+  "现价": number | string
+  "涨跌幅(%)": number | string
+  "涨跌": number | string
+  "涨速(%)": number | string | null
+  "换手(%)": number | string
+  "量比": number | string
+  "振幅(%)": number | string
+  "成交额": string
+  "流通股": string
+  "流通市值": string
+  "市盈率": number | string
+}
+
+export interface IndustryConstituentsResponse {
+  ok: boolean
+  code: string
+  totalPages: number
+  pageRowCounts: number[]
+  fetchedAt: string
+  rowCount: number
+  rows: IndustryConstituentRow[]
+  stale?: boolean
+  staleReason?: string
+  error?: string
+}
+
+export async function fetchIndustryConstituentsByCode(
+  code: string,
+  options: { refresh?: boolean } = {},
+): Promise<IndustryConstituentsResponse> {
+  const params: string[] = []
+  if (options.refresh) params.push("refresh=1")
+  const query = params.length ? `?${params.join("&")}` : ""
+  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-by-code?code=${encodeURIComponent(code)}${query}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as IndustryConstituentsResponse | null
+  if (!res.ok || !data) throw new Error(`获取行业 ${code} 成分股失败`)
+  return data
+}
+
+export async function refreshIndustryConstituentsByCode(code: string): Promise<IndustryConstituentsResponse> {
+  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-by-code/refresh?code=${encodeURIComponent(code)}`
+  const res = await fetch(url, { method: "POST" })
+  const data = (await res.json().catch(() => null)) as IndustryConstituentsResponse | null
+  if (!res.ok || !data) throw new Error(`刷新行业 ${code} 成分股失败`)
+  return data
+}
+
+export async function fetchCachedIndustryConstituentsCodes(): Promise<{ ok: boolean; codes: string[] }> {
+  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-by-code/cached`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as { ok: boolean; codes: string[] } | null
+  if (!res.ok || !data) throw new Error("获取已落盘行业 code 失败")
+  return data
+}
+
 export async function fetchMarketPulseSchedulerStatus(): Promise<Record<string, unknown>> {
   const url = `${API_BASE}/api/stock-chart/market-pulse-scheduler/status`
   const res = await fetch(url)

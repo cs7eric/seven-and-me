@@ -25,6 +25,10 @@ from backend.services.scheduler.market_pulse_scheduler import (
     is_market_pulse_scheduler_enabled,
     start_market_pulse_scheduler,
 )
+from backend.services.scheduler.ths_industry_constituents_scheduler import (
+    is_ths_industry_constituents_scheduler_enabled,
+    start_ths_industry_constituents_scheduler,
+)
 from backend.services.stock.application_analysis_scheduler import (
     is_application_analysis_scheduler_enabled,
     start_application_analysis_scheduler,
@@ -76,3 +80,8 @@ def register_blueprints(app: Flask) -> None:
             start_market_pulse_scheduler()
         except Exception as exc:
             logger.exception('Market Pulse scheduler start failed: %s', exc)
+    if is_ths_industry_constituents_scheduler_enabled():
+        try:
+            start_ths_industry_constituents_scheduler()
+        except Exception as exc:
+            logger.exception('THS Industry Constituents scheduler start failed: %s', exc)

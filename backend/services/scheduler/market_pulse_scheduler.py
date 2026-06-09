@@ -28,7 +28,7 @@ from backend.config.settings import (
     SCHEDULER_MARKET_PULSE_JOB_FILE,
 )
 from backend.services.stock.market_pulse_service import snapshot_today_rotation
-from backend.services.stock.f10.ths_industry_service import get_all_constituents
+from backend.services.stock.f10.ths_industry_constituents_service import get_all_industry_constituents as get_all_constituents
 from backend.services.stock.trading_calendar import is_trade_time, is_trading_day
 from backend.utils.json_io import read_json_file, write_json_file
 

@@ -57,12 +57,35 @@ STOCK_TURNOVER_DIR = REFERENCE_FOLDER / 'stock' / 'turnover'
 STOCK_UNIVERSE_DIR = REFERENCE_FOLDER / 'stock-universe'
 STOCK_UNIVERSE_INDEX_FILE = STOCK_UNIVERSE_DIR / 'index.json'
 
+# ---- 同花顺全行业主力资金（hexin-v 破解）落盘目录 ----
+# 由 backend/services/stock/f10/ths_fund_flow_service.py 维护, 含:
+#   1) latest.json         : 全量最新一份, 给前端直接读
+#   2) history/yyyy-mm-dd.json : 每日 15:30 盘后归档
+THS_FUND_FLOW_DIR = REFERENCE_FOLDER / 'ths-fund-flow'
+
+# ---- 同花顺 90 行业 / 成分股（hexin-v 破解）落盘目录 ----
+# 由 backend/services/stock/f10/ths_industry_service.py (列表/info/K线) +
+# backend/services/stock/f10/ths_industry_constituents_service.py (成分股) 共同维护.
+# 每周六 18:00 由 backend/services/scheduler/ths_industry_constituents_scheduler.py
+# 全量重爬 90 行业成分股, 落盘 constituents/{code}.json
+# 包含:
+#   1) industry_list.json          90 行业 {code: name} + nameToCode
+#   2) industry_info.json          每行业 9 项指数数据 (akshare)
+#   3) kline/                      每行业 975 根 K 线 (akshare)
+#   4) constituents/{code}.json    每行业全量成分股 (hexin-v 破解)
+THS_INDUSTRY_DIR = REFERENCE_FOLDER / 'ths-industry'
+THS_INDUSTRY_LIST_FILE = THS_INDUSTRY_DIR / 'industry_list.json'
+THS_INDUSTRY_INFO_FILE = THS_INDUSTRY_DIR / 'industry_info.json'
+THS_INDUSTRY_KLINE_DIR = THS_INDUSTRY_DIR / 'kline'
+THS_INDUSTRY_CONSTITUENTS_DIR = THS_INDUSTRY_DIR / 'constituents'
+
 # ---- scheduler 维护目录（F:\dev-repo\mp4-to-word-new\scheduler） ----
 SCHEDULER_DIR = BASE_DIR / 'scheduler'
 SCHEDULER_JOBS_FILE = SCHEDULER_DIR / 'jobs.json'
 SCHEDULER_TURNOVER_JOB_FILE = SCHEDULER_DIR / 'turnover_job.json'
 SCHEDULER_AUCTION_ANALYSIS_JOB_FILE = SCHEDULER_DIR / 'auction_analysis_job.json'
 SCHEDULER_MARKET_PULSE_JOB_FILE = SCHEDULER_DIR / 'market_pulse_job.json'
+SCHEDULER_THS_INDUSTRY_CONSTITUENTS_JOB_FILE = SCHEDULER_DIR / 'ths_industry_constituents_job.json'
 APPLICATION_ANALYSIS_AUCTION_FOLDER = APPLICATION_ANALYSIS_FOLDER / 'auction'
 
 UPLOAD_FOLDER = BASE_DIR / 'uploads'
@@ -115,6 +138,10 @@ def ensure_app_directories() -> None:
     INDUSTRY_APPLICATION_FOLDER.mkdir(parents=True, exist_ok=True)
     INDUSTRY_APPLICATION_RESULTS_FOLDER.mkdir(parents=True, exist_ok=True)
     INDUSTRY_APPLICATION_HISTORY_FOLDER.mkdir(parents=True, exist_ok=True)
+    THS_FUND_FLOW_DIR.mkdir(parents=True, exist_ok=True)
+    THS_INDUSTRY_DIR.mkdir(parents=True, exist_ok=True)
+    THS_INDUSTRY_KLINE_DIR.mkdir(parents=True, exist_ok=True)
+    THS_INDUSTRY_CONSTITUENTS_DIR.mkdir(parents=True, exist_ok=True)
     SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
     SELF_SELECTED_FOLDER.mkdir(parents=True, exist_ok=True)
     UPLOAD_FOLDER.mkdir(exist_ok=True)

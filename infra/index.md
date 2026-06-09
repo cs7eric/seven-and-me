@@ -77,7 +77,8 @@ backend/
 │       ├── sina.py             分钟 K 线
 │       ├── tencent.py          备用 K 线
 │       ├── eltdx_adapter.py    TDX 通道
-│       └── mootdx_adapter.py   TDX 通道
+│       ├── mootdx_adapter.py   TDX 通道
+│       └── ths_fund_flow_adapter.py ← 同花顺 hexin-v 破解 + 全行业主力资金 (py_mini_racer + ths.js)
 ├── api/
 │   ├── stock_chart.py      ← 主力 blueprint，34 个 /api/stock-chart/* 路由
 │   ├── stock/
@@ -130,6 +131,7 @@ backend/
 │       │   ├── tdx_industry_service.py        ← TDX 56 行业实时
 │       │   ├── tdx_industry_seeds.py          ← 200742 seed pool
 │       │   ├── ths_industry_service.py        ← 同花顺 90 行业 (akshare + 爬虫)
+│       │   ├── ths_fund_flow_service.py       ← 同花顺全行业主力资金 (hexin-v 破解, 落盘 reference/ths-fund-flow/)
 │       │   └── qt_fund_flow_service.py        ← qt.gtimg.cn 个股资金流 (88 字段)
 │       └── market_overview/                  ← 大盘分析 (情绪/行业/相似场景…)
 ├── repositories/               ← 纯文件 IO，无业务
@@ -188,6 +190,13 @@ backend/
 | `/api/stock-chart/qt/fund-flow` | GET | **qt.gtimg.cn 个股资金流 (88 字段主接口 + s_pk 盘口)**: 外盘/内盘/主动净流入手/折算金额/盘口大单小单占比 |
 | `/api/stock-chart/qt/fund-flow-batch` | GET | qt 个股资金流批量 (max 80) |
 | `/api/stock-chart/individual/main-fund-flow` | GET | eltdx 200742 个股所属板块 30 天资金流 (**不是该股自身**) |
+| `/api/stock-chart/ths-industry/fund-flow` | GET | **同花顺全行业主力资金** (hexin-v 破解, py_mini_racer + ths.js), URL: `?refresh=1&top=10` |
+| `/api/stock-chart/ths-industry/fund-flow/refresh` | POST | 同上, 强制重爬 + 写盘 |
+| `/api/stock-chart/ths-industry/fund-flow/history` | GET | 历史归档, URL: `?date=2026-06-08` (不传返日期列表) |
+| `/api/stock-chart/ths-industry/constituents-by-code` | GET | **同花顺行业成分股** (hexin-v 破解, q.10jqka, 按 6 位 code), URL: `?code=881268&refresh=1` |
+| `/api/stock-chart/ths-industry/constituents-by-code/refresh` | POST | 同上, 强制重爬 + 写盘 |
+| `/api/stock-chart/ths-industry/constituents-by-code/cached` | GET | 列出本地已落盘的行业 code |
+| `/api/scheduler/trigger` (POST) | POST | 手动触发 job, job_id 支持 `ths_industry_constituents_weekly` 强制重爬 90 行业 |
 
 > **完整路由数**:
 > - `stock_chart.py` ≈ **63** 路由 (主力)
@@ -261,6 +270,9 @@ F10 全套: `/f10/{ping, stock-info, company-profile, business-composition, valu
 - **每个 service 自带 `_prompt_text()`**：负责「读 prompt + 追加硬约束段」；改 prompt 时改 `.md`，**别在代码里覆盖**
 - **scheduler 状态写在 `scheduler/*.json`**：3 个调度器（`turnover_refresh` / `auction_ai_analysis` / `application_analysis`）启动时读、运行时更新；`application_analysis` 的状态写在 `reference/application-analysis/scheduler.json`，另两个写在 `scheduler/<id>_job.json`
 - **自选股数据写在 `reference/self-selected/`**：`groups.json` + `items.json` 两个文件，repository 走锁 + 原子写，删 group 时级联删 item
+- **同花顺行业资金 (hexin-v 破解) 落盘 `reference/ths-fund-flow/`**：`latest.json` (默认读这份) + `history/<yyyy-mm-dd>.json` (每日归档)；服务入口 [`backend/services/stock/f10/ths_fund_flow_service.py`](file:///f:/dev-repo/mp4-to-word-new/backend/services/stock/f10/ths_fund_flow_service.py)，进程内 5 分钟缓存，过期自动重爬；前端表格组件 [`frontend/src/views/industry-application/components/industry-fund-flow-table.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/industry-application/components/industry-fund-flow-table.tsx)（挂载在 `industry-application` 视图的「资金流」tab）
+  - **URL 改版记录**：10jqka 在 2026-03 把行业资金页从 `hyzj1/field/tradezdf/order/desc/page/{n}/` (旧, 404) 迁到 `hyzjl/cate/3/page/{n}/` (新, 200)。adapter 走新 URL，表头 11 列在 pandas 之后做归一化 (drop 行业指数、rename 涨跌幅→行业指数涨跌幅、rename 涨跌幅.1→领涨股涨跌幅)，对外契约保持 10 列不变，前端无感
+- **同花顺行业成分股 (hexin-v 破解, q.10jqka) 落盘 `reference/ths-industry/constituents/{code}.json`**：每行业一份。适配器 [`backend/adapters/market/ths_industry_constituents_adapter.py`](file:///f:/dev-repo/mp4-to-word-new/backend/adapters/market/ths_industry_constituents_adapter.py) 完全仿 ths_fund_flow_adapter (py_mini_racer + ths.js + v() + `requests.get` + `pd.read_html` + 翻全页), URL `q.10jqka.com.cn/thshy/detail/code/{code}/page/{n}/`, 14 列 (序号/代码/名称/现价/涨跌幅(%)/涨跌/涨速(%)/换手(%)/量比/振幅(%)/成交额/流通股/流通市值/市盈率); 服务 [`backend/services/stock/f10/ths_industry_constituents_service.py`](file:///f:/dev-repo/mp4-to-word-new/backend/services/stock/f10/ths_industry_constituents_service.py) 带进程内缓存 + 磁盘落盘 + stale 兜底; **每周六 18:00 由 [`backend/services/scheduler/ths_industry_constituents_scheduler.py`](file:///f:/dev-repo/mp4-to-word-new/backend/services/scheduler/ths_industry_constituents_scheduler.py) 全量重爬 90 行业, API 默认从磁盘读 (`refresh=False` 不爬网), 周末后所有 lookups 都返最新落盘数据**; 老 Playwright/urllib 实现 (跟 IP 风控绕) 已删除, 因为 hexin-v 流程根本不需要浏览器
 - **认证未启用**：所有 API 默认开放访问，生产环境部署前需要补
 
 ### 3.4 能力索引 (新加 / 设计相关需求必读)
@@ -304,6 +316,7 @@ F10 全套: `/f10/{ping, stock-info, company-profile, business-composition, valu
 | `/stock-chart` | [`stock-chart/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/stock-chart/index.tsx) | **个股 K 线 + 集合竞价 + 技术指标** |
 | `/stock-overview` | [`stock-overview/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/stock-overview/index.tsx) | 大盘概览 |
 | `/stock-overview/application-analysis` | [`application-analysis/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/application-analysis/index.tsx) | **个股应用分析**（含分时 dialog） |
+| `/stock-overview/industry-application` | [`industry-application/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/industry-application/index.tsx) | **行业 / 概念 应用面分析**（7 个 tab: 总览 / K 线 / AI 方向 / 分析详情 / 分时 / 技术指标 / **资金流** (同花顺 hexin-v 破解全行业资金表格, 接 `industry-fund-flow-table.tsx` + `/api/stock-chart/ths-industry/fund-flow`)） |
 | `/stock-overview/self-selected` | [`self-selected/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/self-selected/index.tsx) | **自选股**（分类 tab + item CRUD，接 `/api/self-selected/*`，持久化到 `reference/self-selected/`） |
 | `/stock-review` | [`stock-review/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/stock-review/index.tsx) | 复盘页（**占位**，未实装） |
 | `/settings/scheduler` | [`settings/scheduler/index.tsx`](file:///f:/dev-repo/mp4-to-word-new/frontend/src/views/settings/scheduler/index.tsx) | **调度任务管理页**（统一管理 `scheduler/jobs.json` 中所有 job：实时状态 / 启用禁用 / 启停线程 / 手动触发） |

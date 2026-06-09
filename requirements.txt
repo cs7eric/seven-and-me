@@ -7,3 +7,10 @@ werkzeug>=3.0.0
 imageio-ffmpeg>=0.4.0
 accelerate>=0.25.0
 datasets>=2.14.0
+
+# 行业 / 板块 行情数据
+akshare>=1.13.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+py-mini-racer>=0.6.0  # 同花顺 hexin-v 加密破解 (V8 嵌入)
+pandas>=2.0.0  # 同花顺全行业资金 (pd.read_html 解析表格)

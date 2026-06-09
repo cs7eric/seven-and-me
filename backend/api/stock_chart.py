@@ -1121,23 +1121,47 @@ def ths_industry_payload():
 
 @stock_chart_bp.route('/api/stock-chart/ths-industry/constituents')
 def ths_industry_constituents():
-    """同花顺行业成分股 (HTML 爬虫). URL: ?name=半导体&refresh=1"""
-    from backend.services.stock.f10.ths_industry_service import get_constituents_payload
+    """同花顺行业成分股 (按 name 查, 内部走 hexin-v 破解新版).
+
+    URL: ?name=半导体&refresh=1    (name 走 ths_industry_service.name_to_code() 解析)
+    返回字段: rows 是 14 列 pandas 解析的 dict (跟 constituents-by-code 一致)
+    """
+    from backend.services.stock.f10.ths_industry_service import (
+        code_to_name,
+        name_to_code,
+    )
+    from backend.services.stock.f10.ths_industry_constituents_service import (
+        get_industry_constituents,
+    )
     name_or_code = (request.args.get("name") or request.args.get("code") or "").strip()
     if not name_or_code:
         return jsonify({"ok": False, "error": "name or code is required", "rows": []}), 400
+    # 解析: 数字 6 位 -> code, 其它 -> name -> code
+    if name_or_code.isdigit() and len(name_or_code) == 6:
+        code = name_or_code
+        target_name = code_to_name(code) or name_or_code
+    else:
+        code = name_to_code(name_or_code) or ""
+        target_name = name_or_code
+    if not code:
+        return jsonify({
+            "ok": False,
+            "error": f"unknown industry: {name_or_code}",
+            "rows": [],
+        }), 404
     try:
         refresh = request.args.get("refresh") == "1"
-        payload = get_constituents_payload(name_or_code, refresh=refresh)
+        payload = get_industry_constituents(code, refresh=refresh)
         rows = payload.get("rows") or []
         return jsonify({
             "ok": True,
-            "name": payload.get("name") or name_or_code,
-            "code": payload.get("code") or name_or_code,
-            "pages": payload.get("pages") or 0,
+            "name": target_name,
+            "code": code,
+            "totalPages": payload.get("totalPages") or 0,
             "pageRowCounts": payload.get("pageRowCounts") or [],
             "count": len(rows),
             "rows": rows,
+            "fetchedAt": payload.get("fetchedAt"),
         })
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc), "rows": []}), 200
@@ -1145,14 +1169,194 @@ def ths_industry_constituents():
 
 @stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-all')
 def ths_industry_constituents_all():
-    """90 行业全量成分股 (8 并发, 慢). URL: ?refresh=1"""
-    from backend.services.stock.f10.ths_industry_service import get_all_constituents
+    """90 行业全量成分股 (单线程, 慢, 8s/行业). URL: ?refresh=1
+
+    走新 hexin-v 爬虫; 调 ``get_all_constituents_v2`` (新模块)
+    """
+    from backend.services.stock.f10.ths_industry_constituents_service import (
+        get_all_industry_constituents,
+    )
     try:
         refresh = request.args.get("refresh") == "1"
-        out = get_all_constituents(refresh=refresh)
+        out = get_all_industry_constituents(refresh=refresh)
         return jsonify({"ok": True, "count": len(out), "industries": list(out.keys()), "byCode": out})
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc), "byCode": {}}), 200
+
+
+# ---------------------------------------------------------------------------
+# 同花顺全行业主力资金 (hexin-v 破解, py_mini_racer + ths.js)
+# 数据源: http://data.10jqka.com.cn/funds/hyzj1/
+# 字段: rank/industry/change_pct/inflow/outflow/net/company_count/
+#       leader_stock/leader_change/leader_price
+# 落盘: reference/ths-fund-flow/latest.json + history/yyyy-mm-dd.json
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow')
+def ths_industry_fund_flow():
+    """同花顺全行业主力资金动向.
+
+    URL: ?refresh=1 (强制重爬) &top=10 (只返 top N, 按净额 desc)
+
+    路由:
+      GET /api/stock-chart/ths-industry/fund-flow           读 latest.json
+      GET /api/stock-chart/ths-industry/fund-flow?refresh=1 强制重爬 + 写盘
+      GET /api/stock-chart/ths-industry/fund-flow?top=10    读 latest, 截前 10
+    """
+    from backend.services.stock.f10.ths_fund_flow_service import (
+        get_industry_fund_flow,
+    )
+    refresh = request.args.get("refresh") == "1"
+    top_param = (request.args.get("top") or "").strip()
+    try:
+        top = int(top_param) if top_param else None
+    except (TypeError, ValueError):
+        top = None
+    if top is not None:
+        top = max(1, min(200, top))
+
+    try:
+        payload = get_industry_fund_flow(refresh=refresh)
+        rows = payload.get("rows") or []
+        if top is not None and len(rows) > top:
+            rows = rows[:top]
+            payload = dict(payload)
+            payload["rows"] = rows
+            payload["rowCount"] = len(rows)
+        return jsonify(payload)
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "rows": [],
+            "rowCount": 0,
+            "fetchedAt": None,
+        }), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow/refresh', methods=['POST'])
+def ths_industry_fund_flow_refresh():
+    """POST 强制刷新, 同步等结果 (前端 loading 用).
+
+    URL: POST /api/stock-chart/ths-industry/fund-flow/refresh
+    """
+    from backend.services.stock.f10.ths_fund_flow_service import (
+        refresh_industry_fund_flow,
+    )
+    try:
+        payload = refresh_industry_fund_flow()
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "error": str(exc),
+            "rows": [],
+            "rowCount": 0,
+        }), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow/history')
+def ths_industry_fund_flow_history():
+    """列出 / 读取 历史归档.
+
+    URL: GET /api/stock-chart/ths-industry/fund-flow/history
+    URL: GET /api/stock-chart/ths-industry/fund-flow/history?date=2026-06-08
+    """
+    from backend.services.stock.f10.ths_fund_flow_service import (
+        list_history_dates,
+        read_history,
+    )
+    date_param = (request.args.get("date") or "").strip()
+    if date_param:
+        payload = read_history(date_param)
+        if payload is None:
+            return jsonify({
+                "ok": False,
+                "error": f"no history for {date_param}",
+                "rows": [],
+                "rowCount": 0,
+            }), 404
+        return jsonify({"ok": True, "date": date_param, **payload})
+    return jsonify({
+        "ok": True,
+        "dates": list_history_dates(),
+    })
+
+
+# ---------------------------------------------------------------------------
+# 同花顺行业成分股 (hexin-v 破解, q.10jqka.com.cn/thshy/detail/code/{n}/page/{n}/)
+# 字段: 序号/代码/名称/现价/涨跌幅(%)/涨跌/涨速(%)/换手(%)/量比/振幅(%)/
+#       成交额/流通股/流通市值/市盈率
+# 落盘: reference/stock-universe/ths_industry/constituents/{code}.json
+# 跟老 /api/stock-chart/ths-industry/constituents 路由分开, 独立 API
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-by-code')
+def ths_industry_constituents_by_code():
+    """同花顺行业成分股 (按 6 位 code 爬, hexin-v 破解, q.10jqka 翻全页).
+
+    URL: ?code=881268&refresh=1
+         (code 形如 881268, 跟 ths_industry_service.get_industry_list() 的 code 字段一致)
+
+    返回:
+      ok, code, totalPages, pageRowCounts, fetchedAt, rowCount, rows[14 列]
+    """
+    from backend.services.stock.f10.ths_industry_constituents_service import (
+        get_industry_constituents,
+    )
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        return jsonify({"ok": False, "error": "code is required", "rows": [], "rowCount": 0}), 400
+    refresh = request.args.get("refresh") == "1"
+    try:
+        payload = get_industry_constituents(code, refresh=refresh)
+        return jsonify(payload)
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "code": code,
+            "error": str(exc),
+            "rows": [],
+            "rowCount": 0,
+        }), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-by-code/refresh', methods=['POST'])
+def ths_industry_constituents_by_code_refresh():
+    """POST 强制刷新, 同步等结果 (前端 loading 用).
+
+    URL: POST /api/stock-chart/ths-industry/constituents-by-code/refresh?code=881268
+    """
+    from backend.services.stock.f10.ths_industry_constituents_service import (
+        refresh_industry_constituents,
+    )
+    code = (request.args.get("code") or "").strip()
+    if not code:
+        return jsonify({"ok": False, "error": "code is required", "rows": [], "rowCount": 0}), 400
+    try:
+        payload = refresh_industry_constituents(code)
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "code": code,
+            "error": str(exc),
+            "rows": [],
+            "rowCount": 0,
+        }), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-by-code/cached')
+def ths_industry_constituents_by_code_cached():
+    """列出本地已落盘的行业 code (用于前端快速预览, 不爬网络).
+
+    URL: GET /api/stock-chart/ths-industry/constituents-by-code/cached
+    """
+    from backend.services.stock.f10.ths_industry_constituents_service import (
+        list_cached_codes,
+    )
+    return jsonify({
+        "ok": True,
+        "codes": list_cached_codes(),
+    })
 
 
 # ---------------------------------------------------------------------------

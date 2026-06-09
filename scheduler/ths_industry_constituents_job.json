@@ -1,0 +1,27 @@
+{
+  "job_name": "ths_industry_constituents_weekly",
+  "description": "每周六 18:00 跑 90 行业全量成分股 (hexin-v 破解), 落盘 reference/ths-industry/constituents/{code}.json, API 默认从磁盘读, 周末后所有 lookups 都返最新落盘数据",
+  "enabled": true,
+  "schedule": {
+    "weekday": 5,
+    "run_time": "18:00",
+    "run_once_per_week": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "inter_industry_sleep_seconds": 1.5,
+  "inter_industry_sleep_jitter": 0.5,
+  "last_run_at": "2026-06-09T00:45:38.805165",
+  "last_run_week": "2026-W24",
+  "last_run_weekday": 1,
+  "last_status": "success",
+  "last_industry_count": 90,
+  "last_total_rows": 4666,
+  "last_failed_codes": [],
+  "last_duration_seconds": 380.012,
+  "last_error": null,
+  "total_runs": 1,
+  "total_industries_crawled": 90,
+  "total_failures": 0,
+  "_saved_at": "2026-06-09T10:32:14.575507"
+}

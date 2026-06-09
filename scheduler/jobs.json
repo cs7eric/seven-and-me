@@ -53,6 +53,16 @@
       "registered_at": "2026-06-08T20:20:00+08:00"
     },
     {
+      "id": "ths_industry_constituents_weekly",
+      "name": "同花顺 90 行业成分股 (每周六 hexin-v 重爬)",
+      "description": "每周六 18:00 全量重爬 90 行业成分股 (hexin-v 破解), 落盘 reference/ths-industry/constituents/{code}.json, API 默认从磁盘读",
+      "config_file": "ths_industry_constituents_job.json",
+      "service_module": "backend.services.scheduler.ths_industry_constituents_scheduler",
+      "service_class": "ThsIndustryConstituentsScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-08T20:20:00+08:00"
+    },
+    {
       "id": "application_analysis",
       "name": "个股应用分析",
       "description": "对 application-analysis targets 中 enabled 标的按 interval_minutes 节奏生成 AI 分析 + 盘后 15:30 跑 recent30 快照",

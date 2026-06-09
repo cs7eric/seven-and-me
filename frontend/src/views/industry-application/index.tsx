@@ -47,6 +47,7 @@ import { TechnicalIndicatorPanel } from "../stock-chart/components/technical-ind
 
 import { NotApplicableCard } from "./components/not-applicable-card"
 import { SectorHeatmap } from "./components/sector-heatmap"
+import { IndustryFundFlowTable } from "./components/industry-fund-flow-table"
 
 const DEFAULT_HORIZON = { days: 120, segments: 4 }
 
@@ -634,10 +635,7 @@ export default function IndustryApplicationPage() {
                 </TabsContent>
 
                 <TabsContent value="fund-flow" className="m-0 h-full min-h-0 overflow-auto">
-                  <NotApplicableCard
-                    title="资金流"
-                    description="板块 / 概念资金流是成分股的合计, 当前接口暂无该聚合, 后续接入。"
-                  />
+                  <IndustryFundFlowTable />
                 </TabsContent>
               </div>
             </div>
