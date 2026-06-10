@@ -200,7 +200,11 @@ export function IndustryFundFlowTable() {
   const [data, setData] = useState<IndustryFundFlowResponse | null>(null)
   const [loading, setLoading] = useState(false)
   // 点击某行业行 -> 弹出该行业成分股 drawer
-  const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null)
+  // 同时存 name (展示) 和 code (调 API 用), code 来自后端 fund-flow 端点 enrich
+  const [selectedIndustry, setSelectedIndustry] = useState<{
+    name: string
+    code: string | null
+  } | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [top, setTop] = useState<number | null>(null)
@@ -390,9 +394,10 @@ export function IndustryFundFlowTable() {
                 ) : (
                   sortedRows.map((row, idx) => {
                     const industryName = row["行业"]
+                    const industryCode = row.code ?? null
                     const openDrawer = () => {
                       if (!industryName) return
-                      setSelectedIndustry(industryName)
+                      setSelectedIndustry({ name: industryName, code: industryCode })
                       setDrawerOpen(true)
                     }
                     return (
@@ -494,7 +499,8 @@ export function IndustryFundFlowTable() {
       </div>
 
       <IndustryConstituentsDrawer
-        industryName={selectedIndustry}
+        industryName={selectedIndustry?.name ?? null}
+        industryCode={selectedIndustry?.code ?? null}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
       />

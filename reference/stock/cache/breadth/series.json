@@ -117,5 +117,22 @@
     "source": "cfi",
     "cachedAt": 1780808601.812962,
     "date": "2026-06-07"
+  },
+  {
+    "upCount": 1425,
+    "downCount": 3536,
+    "limitUpCount": 89,
+    "limitDownCount": 51,
+    "totalCount": 5035,
+    "breakRate": null,
+    "maxLianBan": null,
+    "yesterdayLimitUpReturn": null,
+    "totalTurnover": null,
+    "downOver5Count": null,
+    "new20HighCount": null,
+    "new20LowCount": null,
+    "source": "cfi",
+    "cachedAt": 1781096424.118294,
+    "date": "2026-06-10"
   }
 ]

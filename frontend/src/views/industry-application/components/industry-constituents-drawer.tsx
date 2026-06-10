@@ -1,18 +1,19 @@
 /**
  * 同花顺行业成分股 Drawer
  *
- * 用途: 在「资金流」Tab 点击某一行业时弹出, 展示该行业 (来自 THS 90 行业) 的全部成分股
- *       涨幅 / 涨跌 / 涨速 / 换手 / 量比 / 振幅 / 成交额 / 流通股 / 流通市值 / 市盈率
- *       全部由后端 /api/stock-chart/ths-industry/constituents?name=... 实时返回
- *       (走 hexin-v 破解, 数据源 q.10jqka.com.cn)
+ * 用途: 在「资金流」Tab 点击某一行业时弹出, 展示该行业 (THS 90 行业) 的成分股 14 列行情
  *
- * 落盘位置: reference/ths-industry/constituents/{code}.json
+ * 数据源 (server 端 join):
+ *   - membership: reference/ths-industry/constituents_index.json (50 只 code 列表)
+ *   - 14 列行情:  reference/stock-universe/ths_industry/constituents/{code}.json
+ *   - 后端端点: GET /api/stock-chart/ths-industry/constituents-file?code={code}
+ *   - 进程内按 mtime 缓存, scheduler 重写文件自动失效
  *
- * 交互:
- *   - 打开时自动拉一次 (走磁盘缓存, 网络挂掉就 stale)
- *   - 右上角「刷新」按钮强制重爬
- *   - 表头列点击排序 (默认按涨跌幅 desc, 跟资金流表格风格一致)
- *   - 空数据 / 错误 / 加载中 都有明确状态
+ * 渲染:
+ *   - 14 列: # / 代码 / 名称 / 现价 / 涨跌幅 / 涨跌 / 涨速 / 换手 / 量比 / 振幅 / 成交额 / 流通股 / 流通市值 / 市盈率
+ *   - 涨跌色: 涨红 / 跌绿 (跟资金流表格风格一致)
+ *   - 表头可点击排序 (默认按涨跌幅 desc)
+ *   - 「名称」列是可点击 button, 点开 StockDetailDialog 看 K 线
  */
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
@@ -21,14 +22,11 @@ import {
   ArrowUp,
   Building2,
   ExternalLink,
-  RefreshCw,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Drawer,
-  DrawerClose,
   DrawerContent,
   DrawerDescription,
   DrawerFooter,
@@ -39,13 +37,28 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { notification } from "@/components/ui/notification"
 import { cn } from "@/lib/utils"
 import {
-  fetchIndustryConstituentsFromFile,
-  refreshIndustryConstituentsByName,
+  fetchIndustryConstituentsFromIndexByCode,
+  type IndustryConstituentsIndexResponse,
   type IndustryConstituentRow,
-  type IndustryConstituentsByNameResponse,
 } from "@/lib/api"
+import { StockDetailDialog } from "./stock-detail-dialog"
 
-// 表格列: 跟 IndustryConstituentRow 的 14 列对齐, 一列不少
+export interface IndustryConstituentsDrawerProps {
+  /**
+   * 行业 code (6 位, e.g. "881121")
+   * 直接拿这个 code 调 /constituents-file, 不走 name → code 解析
+   * 解析失败 / 缺失时为 null
+   */
+  industryCode: string | null
+  /** 行业名称, 顶部展示用 (跟资金流表格的「行业」列一致) */
+  industryName: string | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+// ---------------------------------------------------------------------------
+// 表格列 (14 列, 跟 IndustryConstituentRow 对齐, 一列不少)
+// ---------------------------------------------------------------------------
 type ConstituentSortKey =
   | "序号"
   | "现价"
@@ -153,10 +166,8 @@ const COLUMNS: Array<{
 function toNumber(value: number | string | null | undefined): number | null {
   if (value === null || value === undefined || value === "") return null
   if (typeof value === "number") return Number.isFinite(value) ? value : null
-  // 兼容 "4.65" / "4.65%" / "1.29亿" / "7.51" / "--"
   const s = String(value).trim()
   if (!s || s === "--") return null
-  // 处理 "1.29亿" / "25.48亿" 这类中文单位
   let mult = 1
   let body = s
   if (s.endsWith("亿")) {
@@ -168,12 +179,6 @@ function toNumber(value: number | string | null | undefined): number | null {
   } else if (s.endsWith("万亿")) {
     mult = 1e12
     body = s.slice(0, -2)
-  } else if (s.endsWith("千亿")) {
-    mult = 1e11
-    body = s.slice(0, -2)
-  } else if (s.endsWith("百亿")) {
-    mult = 1e10
-    body = s.slice(0, -2)
   }
   const cleaned = body.replace(/[%\s,]/g, "")
   const n = Number(cleaned)
@@ -184,16 +189,10 @@ function toNumber(value: number | string | null | undefined): number | null {
 function formatSignedPercent(value: number | string | null | undefined): React.ReactNode {
   const n = toNumber(value)
   if (n === null) return <span className="text-slate-400">—</span>
-  const positive = n > 0
-  const negative = n < 0
-  const color = positive
-    ? "text-red-600"
-    : negative
-      ? "text-emerald-600"
-      : "text-slate-700"
+  const color = n > 0 ? "text-red-600" : n < 0 ? "text-emerald-600" : "text-slate-700"
   return (
     <span className={cn("tabular-nums", color)}>
-      {positive ? "+" : ""}
+      {n > 0 ? "+" : ""}
       {n.toFixed(2)}%
     </span>
   )
@@ -202,16 +201,10 @@ function formatSignedPercent(value: number | string | null | undefined): React.R
 function formatSigned(value: number | string | null | undefined): React.ReactNode {
   const n = toNumber(value)
   if (n === null) return <span className="text-slate-400">—</span>
-  const positive = n > 0
-  const negative = n < 0
-  const color = positive
-    ? "text-red-600"
-    : negative
-      ? "text-emerald-600"
-      : "text-slate-700"
+  const color = n > 0 ? "text-red-600" : n < 0 ? "text-emerald-600" : "text-slate-700"
   return (
     <span className={cn("tabular-nums", color)}>
-      {positive ? "+" : ""}
+      {n > 0 ? "+" : ""}
       {n.toFixed(2)}
     </span>
   )
@@ -228,24 +221,19 @@ function formatPlain(value: number | string | null | undefined, suffix: string, 
   )
 }
 
-/**
- * 金额字段: 后端返的是 "1.29亿" / "25.48亿" 这种带单位的字符串
- * 前端做原样展示 (跟资金流表格的「流入资金(亿)」风格一致)
- */
-function formatAmount(value: number | string | null | undefined): React.ReactNode {
+function formatAmount(value: string | number | null | undefined): React.ReactNode {
   if (value === null || value === undefined || value === "") {
     return <span className="text-slate-400">—</span>
   }
   return <span className="tabular-nums text-slate-700">{String(value)}</span>
 }
 
-/** 市盈率可能为 "--" / "亏损" / 负数等, 单独处理 */
-function formatPe(value: number | string | null | undefined): React.ReactNode {
+function formatPe(value: string | number | null | undefined): React.ReactNode {
   if (value === null || value === undefined || value === "") {
     return <span className="text-slate-400">—</span>
   }
   const s = String(value).trim()
-  if (!s || s === "--" || s === "亏损" || s === "—") {
+  if (!s || s === "--" || s === "亏损") {
     return <span className="text-slate-400">{s || "—"}</span>
   }
   const n = Number(s)
@@ -264,83 +252,54 @@ function formatFetchedAt(iso: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// 组件
+// 主组件
 // ---------------------------------------------------------------------------
-export interface IndustryConstituentsDrawerProps {
-  /** 行业名称 (跟资金流表格的「行业」列一致, 走 name → code 服务端解析) */
-  industryName: string | null
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}
-
 export function IndustryConstituentsDrawer({
+  industryCode,
   industryName,
   open,
   onOpenChange,
 }: IndustryConstituentsDrawerProps) {
-  const [data, setData] = useState<IndustryConstituentsByNameResponse | null>(null)
+  const [data, setData] = useState<IndustryConstituentsIndexResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
   const [sortKey, setSortKey] = useState<ConstituentSortKey>("涨跌幅(%)")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
+  // 点击某只成分股 -> 弹出个股详情 dialog
+  const [selectedStock, setSelectedStock] = useState<{
+    code: string
+    name: string
+  } | null>(null)
+  const [stockDialogOpen, setStockDialogOpen] = useState(false)
 
-  const load = useCallback(
-    async (name: string, refresh: boolean) => {
-      if (refresh) setRefreshing(true)
-      else setLoading(true)
-      try {
-        if (refresh) {
-          // 显式刷新: 强制重爬网络 (走 hexin-v, 落盘到 reference/ths-industry/constituents/{code}.json)
-          const payload = await refreshIndustryConstituentsByName(name)
-          if (!payload.ok) {
-            throw new Error(payload.error || "加载失败")
-          }
-          setData(payload)
-        } else {
-          // 默认打开: 纯读磁盘落盘文件, 不打网络, 不爬 q.10jqka
-          // 磁盘没有 (404) 时 fallback 到网络, 提示一下
-          try {
-            const payload = await fetchIndustryConstituentsFromFile(name)
-            setData(payload)
-          } catch (err) {
-            const code = (err as Error & { code?: string }).code
-            if (code === "NOT_CACHED") {
-              notification.info({
-                title: "暂无磁盘缓存",
-                description: `行业 ${name} 还没落盘, 已自动从网络拉取一次`,
-              })
-              const fallback = await refreshIndustryConstituentsByName(name)
-              if (!fallback.ok) {
-                throw new Error(fallback.error || "加载失败")
-              }
-              setData(fallback)
-            } else {
-              throw err
-            }
-          }
-        }
-      } catch (err) {
+  const load = useCallback(async (code: string) => {
+    setLoading(true)
+    try {
+      const payload = await fetchIndustryConstituentsFromIndexByCode(code)
+      if (!payload.ok) {
+        throw new Error(payload.error || "加载失败")
+      }
+      setData(payload)
+    } catch (err) {
+      const code = (err as Error & { code?: string }).code
+      if (code !== "NOT_CACHED") {
         notification.danger({
-          title: refresh ? "刷新失败" : "加载失败",
+          title: "加载失败",
           description: err instanceof Error ? err.message : "未知错误",
         })
-      } finally {
-        setLoading(false)
-        setRefreshing(false)
       }
-    },
-    [],
-  )
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-  // 行业变化 / drawer 重新打开时重拉
+  // 行业 code 变化 / drawer 重新打开时重拉
   useEffect(() => {
-    if (!open || !industryName) {
-      // 关闭时清空, 避免下次打开看到上一行业残留
+    if (!open || !industryCode) {
       setData(null)
       return
     }
-    void load(industryName, false)
-  }, [open, industryName, load])
+    void load(industryCode)
+  }, [open, industryCode, load])
 
   const sortedRows = useMemo(() => {
     const rows = (data?.rows ?? []) as IndustryConstituentRow[]
@@ -365,11 +324,6 @@ export function IndustryConstituentsDrawer({
     }
   }
 
-  const handleRefresh = () => {
-    if (!industryName) return
-    void load(industryName, true)
-  }
-
   const rising = useMemo(() => {
     if (!data?.rows) return 0
     return data.rows.filter((r) => toNumber(r["涨跌幅(%)"]) && toNumber(r["涨跌幅(%)"])! > 0).length
@@ -382,73 +336,57 @@ export function IndustryConstituentsDrawer({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction="right">
-      <DrawerContent
-        className="left-auto right-0 top-0 mt-0 h-screen w-full max-w-3xl rounded-none border-l data-[vaul-drawer-direction=right]:sm:max-w-3xl"
-      >
+      <DrawerContent className="left-auto right-0 top-0 mt-0 h-screen w-full max-w-6xl rounded-none border-l data-[vaul-drawer-direction=right]:sm:max-w-6xl">
         <DrawerHeader className="border-b border-slate-100">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
               <DrawerTitle className="flex items-center gap-2 text-base">
                 <Building2 className="size-4 text-slate-600" />
-                {industryName ?? "—"}
+                {data?.name ?? industryName ?? "—"}
                 {data?.code ? (
                   <Badge variant="outline" className="border-slate-200 bg-slate-50 font-mono text-[10px] text-slate-600">
                     {data.code}
                   </Badge>
                 ) : null}
-                {data?.stale ? (
-                  <Badge variant="outline" className="ml-1 border-amber-300 bg-amber-50 text-amber-700">
-                    缓存数据
+                {data?.matched !== undefined && data?.count !== undefined && data.count > 0 ? (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "border-slate-200 bg-slate-50 text-[10px] text-slate-600",
+                      data.matched < data.count && "border-amber-300 bg-amber-50 text-amber-700",
+                    )}
+                  >
+                    行情 {data.matched}/{data.count}
                   </Badge>
                 ) : null}
               </DrawerTitle>
-              <DrawerDescription className="mt-1 text-xs text-slate-500">
-                <span>同花顺行业成分股 · 14 列实时行情</span>
-                {data?.fetchedAt ? (
+              <DrawerDescription className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                <span>同花顺行业成分股 · 14 列行情</span>
+                {data?.rowsFetchedAt ? (
                   <>
-                    <span className="mx-1.5">·</span>
-                    <span>抓取时间: {formatFetchedAt(data.fetchedAt)}</span>
+                    <span>·</span>
+                    <span>
+                      行情抓取: <span className="text-slate-700">{formatFetchedAt(data.rowsFetchedAt)}</span>
+                    </span>
                   </>
                 ) : null}
-                {data?.totalPages ? (
+                {data?.indexFetchedAt ? (
                   <>
-                    <span className="mx-1.5">·</span>
+                    <span>·</span>
                     <span>
-                      共 {data.totalPages} 页 · {(data.count ?? data.rows.length)} 只成分股
+                      索引: <span className="text-slate-700">{formatFetchedAt(data.indexFetchedAt)}</span>
                     </span>
                   </>
                 ) : null}
                 {data?.rows?.length ? (
                   <>
-                    <span className="mx-1.5">·</span>
+                    <span>·</span>
                     <span className="text-red-600">{rising} 涨</span>
-                    <span className="mx-1 text-slate-300">/</span>
+                    <span className="text-slate-300">/</span>
                     <span className="text-emerald-600">{falling} 跌</span>
                   </>
                 ) : null}
               </DrawerDescription>
-              {data?.stale && data.staleReason ? (
-                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700">
-                  最近一次抓取失败, 展示的是磁盘缓存. 原因: {data.staleReason}
-                </div>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5"
-                onClick={handleRefresh}
-                disabled={refreshing || loading || !industryName}
-              >
-                <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
-                刷新
-              </Button>
-              <DrawerClose asChild>
-                <Button size="sm" variant="ghost" className="h-8">
-                  关闭
-                </Button>
-              </DrawerClose>
             </div>
           </div>
         </DrawerHeader>
@@ -502,19 +440,13 @@ export function IndustryConstituentsDrawer({
                 <tbody className="divide-y divide-slate-100">
                   {sortedRows.length === 0 ? (
                     <tr>
-                      <td
-                        colSpan={COLUMNS.length}
-                        className="px-6 py-12 text-center text-sm text-slate-400"
-                      >
-                        {data?.error ? `加载失败: ${data.error}` : "暂无数据, 点击「刷新」手动抓取"}
+                      <td colSpan={COLUMNS.length} className="px-6 py-12 text-center text-sm text-slate-400">
+                        {data?.error ? `加载失败: ${data.error}` : "暂无数据"}
                       </td>
                     </tr>
                   ) : (
                     sortedRows.map((row, idx) => (
-                      <tr
-                        key={`${row["代码"]}-${idx}`}
-                        className="hover:bg-slate-50/60"
-                      >
+                      <tr key={`${row["代码"]}-${idx}`} className="hover:bg-slate-50/60">
                         {COLUMNS.map((col) => {
                           if (col.format) {
                             return (
@@ -531,14 +463,28 @@ export function IndustryConstituentsDrawer({
                               </td>
                             )
                           }
-                          // 名称列: 留作后面可能加点击跳转个股
+                          // 名称列: button, 点击打开个股详情 dialog
                           if (col.key === "名称") {
+                            const stockCode = String(row["代码"] ?? "")
+                            const stockName = String(row["名称"] ?? "")
                             return (
                               <td
                                 key={col.label}
-                                className={cn("whitespace-nowrap px-3 py-1.5 font-medium text-slate-900")}
+                                className="whitespace-nowrap px-3 py-1.5 font-medium text-slate-900"
                               >
-                                {row["名称"]}
+                                <button
+                                  type="button"
+                                  className="cursor-pointer rounded px-1 py-0.5 text-left text-slate-900 transition hover:bg-slate-100 hover:text-blue-600"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (!stockCode) return
+                                    setSelectedStock({ code: stockCode, name: stockName || stockCode })
+                                    setStockDialogOpen(true)
+                                  }}
+                                  title={`查看 ${stockName || stockCode} 详情`}
+                                >
+                                  {stockName || "—"}
+                                </button>
                               </td>
                             )
                           }
@@ -578,7 +524,7 @@ export function IndustryConstituentsDrawer({
                 下跌
               </span>
               <span className="text-slate-400">
-                · 数据源 q.10jqka.com.cn · 落盘 reference/ths-industry/constituents
+                · 数据源 constituents_index.json (membership) + stock-universe/ths_industry/constituents/{data?.code || "code"}.json (14 列行情)
               </span>
             </div>
             {data?.code ? (
@@ -595,6 +541,14 @@ export function IndustryConstituentsDrawer({
           </div>
         </DrawerFooter>
       </DrawerContent>
+
+      <StockDetailDialog
+        open={stockDialogOpen}
+        onOpenChange={setStockDialogOpen}
+        stockCode={selectedStock?.code ?? null}
+        stockName={selectedStock?.name ?? null}
+        industryName={industryName}
+      />
     </Drawer>
   )
 }

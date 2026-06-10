@@ -708,6 +708,12 @@ export interface IndustryFundFlowRow {
   "序号": number
   /** 行业名称, e.g. "半导体" */
   "行业": string
+  /**
+   * 行业 code (6 位, e.g. "881121")
+   * 后端 fund-flow 端点 enrich 进去的, 前端 drawer 拿它直接调 constituents 接口,
+   * 不再走 name → code 解析
+   */
+  "code"?: string | null
   /** 行业指数涨跌幅 % */
   "行业指数涨跌幅": number | string | null
   /** 流入资金(亿) */
@@ -771,28 +777,8 @@ export async function fetchIndustryFundFlowHistory(date?: string): Promise<Recor
 }
 
 // ---------------------------------------------------------------------------
-// 同花顺行业成分股 (hexin-v 破解, q.10jqka 翻全页)
-// 字段 (14 列, 中文表头):
-//   序号 / 代码 / 名称 / 现价 / 涨跌幅(%) / 涨跌 / 涨速(%) / 换手(%) / 量比
-//   / 振幅(%) / 成交额 / 流通股 / 流通市值 / 市盈率
+// 同花顺行业成分股 (hexin-v 破解, q.10jqka 翻全页)  14 列定义见下面 ``IndustryConstituentRow``
 // ---------------------------------------------------------------------------
-export interface IndustryConstituentRow {
-  "序号": number
-  "代码": number | string
-  "名称": string
-  "现价": number | string
-  "涨跌幅(%)": number | string
-  "涨跌": number | string
-  "涨速(%)": number | string | null
-  "换手(%)": number | string
-  "量比": number | string
-  "振幅(%)": number | string
-  "成交额": string
-  "流通股": string
-  "流通市值": string
-  "市盈率": number | string
-}
-
 export interface IndustryConstituentsResponse {
   ok: boolean
   code: string
@@ -877,20 +863,73 @@ export async function refreshIndustryConstituentsByName(
 }
 
 // ---------------------------------------------------------------------------
-// 同花顺行业成分股 (纯读磁盘, 不爬网络)
-// 路由: GET /api/stock-chart/ths-industry/constituents-file?name=...
-// 落盘: reference/ths-industry/constituents/{code}.json (每周六 18:00 调度器重爬)
+// 同花顺行业成分股 (纯读磁盘 join 视图, 不爬网络)
+// 路由: GET /api/stock-chart/ths-industry/constituents-file?code=...&name=...
+//   - 传 code: ?code=881157  (推荐, 6 位数字, 无 name→code 解析)
+//   - 传 name: ?name=半导体   (内部 name→code 解析一次)
+// 数据源 (server 端 join):
+//   - membership: reference/ths-industry/constituents_index.json (50 只 code)
+//   - 14 列行情:  reference/stock-universe/ths_industry/constituents/{code}.json
 // 适用: drawer 打开默认 (高频), 避免每次都打 q.10jqka
-// 返回 404 表示磁盘没文件, 需走 refreshIndustryConstituentsByName
+// 返回 404 表示索引里没这个 industry, 不 fallback 爬网络
 // ---------------------------------------------------------------------------
-export async function fetchIndustryConstituentsFromFile(
+export interface IndustryConstituentRow {
+  "序号": number
+  "代码": string
+  "名称": string | null
+  "现价": number | string | null
+  "涨跌幅(%)": number | string | null
+  "涨跌": number | string | null
+  "涨速(%)": number | string | null
+  "换手(%)": number | string | null
+  "量比": number | string | null
+  "振幅(%)": number | string | null
+  "成交额": string | number | null
+  "流通股": string | number | null
+  "流通市值": string | number | null
+  "市盈率": string | number | null
+}
+
+export interface IndustryConstituentsIndexResponse {
+  ok: boolean
   name: string
-): Promise<IndustryConstituentsByNameResponse> {
+  code: string
+  /** index 里这个 industry 的 code 总数 */
+  count: number
+  /** 在 stock-universe 里实际命中行情的行数 */
+  matched: number
+  /** 索引文件自身的抓取时间 */
+  indexFetchedAt: string | null
+  /** 行情文件 (per-industry) 的抓取时间 */
+  rowsFetchedAt: string | null
+  rows: IndustryConstituentRow[]
+  error?: string
+}
+
+/** 按 6 位 code 查 (推荐, URL 用 ?code=, 无 name→code 解析) */
+export async function fetchIndustryConstituentsFromIndexByCode(
+  code: string
+): Promise<IndustryConstituentsIndexResponse> {
+  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-file?code=${encodeURIComponent(code)}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as IndustryConstituentsIndexResponse | null
+  if (!res.ok || !data) {
+    const errMsg = (data && data.error) || `读取行业 ${code} 成分股失败`
+    const err = new Error(errMsg) as Error & { code?: string }
+    err.code = res.status === 404 ? "NOT_CACHED" : "FETCH_FAILED"
+    throw err
+  }
+  return data
+}
+
+/** 按中文名查 (URL 用 ?name=, server 端 name→code 解析一次) */
+export async function fetchIndustryConstituentsFromIndexByName(
+  name: string
+): Promise<IndustryConstituentsIndexResponse> {
   const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-file?name=${encodeURIComponent(name)}`
   const res = await fetch(url)
-  const data = (await res.json().catch(() => null)) as IndustryConstituentsByNameResponse | null
+  const data = (await res.json().catch(() => null)) as IndustryConstituentsIndexResponse | null
   if (!res.ok || !data) {
-    // 404/400 都当 "磁盘没文件" 处理, 由调用方决定 fallback 到网络爬
     const errMsg = (data && data.error) || `读取行业 ${name} 成分股失败`
     const err = new Error(errMsg) as Error & { code?: string }
     err.code = res.status === 404 ? "NOT_CACHED" : "FETCH_FAILED"

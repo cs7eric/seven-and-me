@@ -1217,6 +1217,17 @@ def ths_industry_fund_flow():
     try:
         payload = get_industry_fund_flow(refresh=refresh)
         rows = payload.get("rows") or []
+        # 每行 enrich 一个 ``code`` 字段 (6 位行业 code, 从 industry_list.json 解析)
+        # 前端不再需要把中文 name 再 name→code 一次, 直接拿 code 调成分股接口
+        from backend.services.stock.f10.ths_industry_service import name_to_code
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if row.get("code"):
+                continue
+            industry_name = row.get("行业")
+            if isinstance(industry_name, str) and industry_name:
+                row["code"] = name_to_code(industry_name) or None
         if top is not None and len(rows) > top:
             rows = rows[:top]
             payload = dict(payload)
@@ -1361,18 +1372,21 @@ def ths_industry_constituents_by_code_cached():
 
 @stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-file')
 def ths_industry_constituents_file():
-    """直接读磁盘落盘文件, 不查内存缓存, 不爬网络.
+    """读磁盘落盘, 不查内存缓存, 不爬网络. 走 join 视图: index 50 只 code + stock-universe 14 列行情.
 
-    URL: ?name=半导体  或  ?code=881101
+    URL: ?name=半导体  或  ?code=881157
     适用: 资金流 drawer 「打开默认」高频场景, 避免每次都打 q.10jqka 触发 hexin-v
-    落盘位置: reference/ths-industry/constituents/{code}.json
+    数据源:
+      - membership: reference/ths-industry/constituents_index.json (50 只 code)
+      - 行情:      reference/stock-universe/ths_industry/constituents/{code}.json (14 列)
+    返回: 14 列完整行情 (序号/代码/名称/现价/涨跌幅/涨跌/涨速/换手/量比/振幅/成交额/流通股/流通市值/市盈率)
     """
     from backend.services.stock.f10.ths_industry_service import (
         code_to_name,
         name_to_code,
     )
     from backend.services.stock.f10.ths_industry_constituents_service import (
-        read_industry_constituents_from_disk,
+        read_industry_constituents_joined,
     )
 
     name_or_code = (request.args.get("name") or request.args.get("code") or "").strip()
@@ -1391,25 +1405,24 @@ def ths_industry_constituents_file():
             "rows": [],
         }), 404
 
-    payload = read_industry_constituents_from_disk(code)
+    payload = read_industry_constituents_joined(code)
     if not payload:
         return jsonify({
             "ok": False,
             "code": code,
-            "error": f"no cached file for {code}, click 刷新 to fetch from network",
+            "error": f"no constituents for {code} (industry not in index)",
             "rows": [],
         }), 404
 
-    rows = payload.get("rows") or []
     return jsonify({
         "ok": True,
-        "name": target_name,
+        "name": payload.get("name") or target_name,
         "code": code,
-        "totalPages": payload.get("totalPages") or 0,
-        "pageRowCounts": payload.get("pageRowCounts") or [],
-        "count": len(rows),
-        "rows": rows,
-        "fetchedAt": payload.get("fetchedAt"),
+        "count": payload.get("count") or 0,
+        "matched": payload.get("matched") or 0,
+        "indexFetchedAt": payload.get("indexFetchedAt"),
+        "rowsFetchedAt": payload.get("rowsFetchedAt"),
+        "rows": payload.get("rows") or [],
     })
 
 

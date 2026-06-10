@@ -78,6 +78,8 @@ THS_INDUSTRY_LIST_FILE = THS_INDUSTRY_DIR / 'industry_list.json'
 THS_INDUSTRY_INFO_FILE = THS_INDUSTRY_DIR / 'industry_info.json'
 THS_INDUSTRY_KLINE_DIR = THS_INDUSTRY_DIR / 'kline'
 THS_INDUSTRY_CONSTITUENTS_DIR = THS_INDUSTRY_DIR / 'constituents'
+# 行业成分股索引 (由 scheduler 维护, 一次性聚合 90 行业)
+THS_INDUSTRY_CONSTITUENTS_INDEX_FILE = THS_INDUSTRY_DIR / 'constituents_index.json'
 
 # ---- scheduler 维护目录（F:\dev-repo\mp4-to-word-new\scheduler） ----
 SCHEDULER_DIR = BASE_DIR / 'scheduler'

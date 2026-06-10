@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import type { StockAdjust, StockPeriod } from "../lib/types"
 
 const periods: Array<{ value: StockPeriod; label: string }> = [
@@ -34,6 +35,7 @@ export function IndicatorToolbar({
   onAdjustChange,
   onToggleIndicator,
   onToggleMALine,
+  compact = false,
 }: {
   period: StockPeriod
   adjust: StockAdjust
@@ -43,34 +45,38 @@ export function IndicatorToolbar({
   onAdjustChange: (value: StockAdjust) => void
   onToggleIndicator: (value: string) => void
   onToggleMALine: (value: number) => void
+  /** compact: 用在 dialog 等空间紧的场景, button/badge 全部 xs 字号, 间距收紧 */
+  compact?: boolean
 }) {
   const availableAdjusts = minutePeriods.includes(period) ? adjusts.filter((item) => item.value === "none") : adjusts
+  const btnSize = compact ? "xs" : "sm"
+  const badgeSize = compact ? "text-[10px]" : "text-xs"
   return (
-    <div className="space-y-3 rounded-2xl border border-white/70 bg-white/80 p-4 shadow-sm">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className={cn("rounded-2xl border border-white/70 bg-white/80 shadow-sm", compact ? "space-y-1.5 p-2" : "space-y-3 p-4")}>
+      <div className={cn("flex flex-wrap items-center", compact ? "gap-1" : "gap-2")}>
         {periods.map((item) => (
-          <Button key={item.value} size="sm" variant={period === item.value ? "default" : "outline"} onClick={() => onPeriodChange(item.value)}>
+          <Button key={item.value} size={btnSize} variant={period === item.value ? "default" : "outline"} onClick={() => onPeriodChange(item.value)}>
             {item.label}
           </Button>
         ))}
         {availableAdjusts.map((item) => (
-          <Button key={item.value} size="sm" variant={adjust === item.value ? "default" : "outline"} onClick={() => onAdjustChange(item.value)}>
+          <Button key={item.value} size={btnSize} variant={adjust === item.value ? "default" : "outline"} onClick={() => onAdjustChange(item.value)}>
             {item.label}
           </Button>
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground">主图均线</span>
+      <div className={cn("flex flex-wrap items-center", compact ? "gap-1" : "gap-2")}>
+        <span className={cn("font-medium text-muted-foreground", compact ? "text-[10px]" : "text-xs")}>主图均线</span>
         {maLineOptions.map((item) => (
-          <Badge key={item} variant={maLines.includes(item) ? "default" : "outline"} className="cursor-pointer" onClick={() => onToggleMALine(item)}>
+          <Badge key={item} variant={maLines.includes(item) ? "default" : "outline"} className={cn("cursor-pointer", badgeSize)} onClick={() => onToggleMALine(item)}>
             MA{item}
           </Badge>
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground">副图指标</span>
+      <div className={cn("flex flex-wrap items-center", compact ? "gap-1" : "gap-2")}>
+        <span className={cn("font-medium text-muted-foreground", compact ? "text-[10px]" : "text-xs")}>副图指标</span>
         {indicators.map((item) => (
-          <Badge key={item.key} variant={activeIndicators.includes(item.key) ? "default" : "outline"} className="cursor-pointer" onClick={() => onToggleIndicator(item.key)}>
+          <Badge key={item.key} variant={activeIndicators.includes(item.key) ? "default" : "outline"} className={cn("cursor-pointer", badgeSize)} onClick={() => onToggleIndicator(item.key)}>
             {item.label}
           </Badge>
         ))}
