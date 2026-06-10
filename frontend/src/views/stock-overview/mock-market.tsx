@@ -39,7 +39,6 @@ import {
   fetchIndustryDetail,
   fetchMarketPulseSchedulerStatus,
   triggerMarketPulseSnapshot,
-  fetchIndustryConstituents,
 } from "@/lib/api"
 
 // =============================================================================

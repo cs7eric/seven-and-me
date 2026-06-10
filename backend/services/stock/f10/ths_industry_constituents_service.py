@@ -126,6 +126,23 @@ def list_cached_codes() -> list[str]:
     return sorted(p.stem for p in CONSTITUENTS_DIR.glob("*.json"))
 
 
+def read_industry_constituents_from_disk(code: str) -> dict[str, Any] | None:
+    """直接读 ``reference/ths-industry/constituents/{code}.json`` 落盘文件.
+
+    跟 ``get_industry_constituents`` 的区别:
+      - 不查进程级内存缓存
+      - 不爬网络 (磁盘没有就返 None, 由调用方决定是报 404 还是退回去爬)
+      - 一次磁盘 I/O, 适合前端 drawer 「打开默认」高频场景
+
+    返回值就是落盘 JSON 的内容 (ok / code / totalPages / pageRowCounts /
+    fetchedAt / rowCount / rows).
+    """
+    code = str(code or "").strip()
+    if not code:
+        return None
+    return _read_disk(code)
+
+
 def get_all_industry_constituents(
     *,
     refresh: bool = False,

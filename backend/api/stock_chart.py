@@ -1359,6 +1359,60 @@ def ths_industry_constituents_by_code_cached():
     })
 
 
+@stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-file')
+def ths_industry_constituents_file():
+    """直接读磁盘落盘文件, 不查内存缓存, 不爬网络.
+
+    URL: ?name=半导体  或  ?code=881101
+    适用: 资金流 drawer 「打开默认」高频场景, 避免每次都打 q.10jqka 触发 hexin-v
+    落盘位置: reference/ths-industry/constituents/{code}.json
+    """
+    from backend.services.stock.f10.ths_industry_service import (
+        code_to_name,
+        name_to_code,
+    )
+    from backend.services.stock.f10.ths_industry_constituents_service import (
+        read_industry_constituents_from_disk,
+    )
+
+    name_or_code = (request.args.get("name") or request.args.get("code") or "").strip()
+    if not name_or_code:
+        return jsonify({"ok": False, "error": "name or code is required", "rows": []}), 400
+    if name_or_code.isdigit() and len(name_or_code) == 6:
+        code = name_or_code
+        target_name = code_to_name(code) or name_or_code
+    else:
+        code = name_to_code(name_or_code) or ""
+        target_name = name_or_code
+    if not code:
+        return jsonify({
+            "ok": False,
+            "error": f"unknown industry: {name_or_code}",
+            "rows": [],
+        }), 404
+
+    payload = read_industry_constituents_from_disk(code)
+    if not payload:
+        return jsonify({
+            "ok": False,
+            "code": code,
+            "error": f"no cached file for {code}, click 刷新 to fetch from network",
+            "rows": [],
+        }), 404
+
+    rows = payload.get("rows") or []
+    return jsonify({
+        "ok": True,
+        "name": target_name,
+        "code": code,
+        "totalPages": payload.get("totalPages") or 0,
+        "pageRowCounts": payload.get("pageRowCounts") or [],
+        "count": len(rows),
+        "rows": rows,
+        "fetchedAt": payload.get("fetchedAt"),
+    })
+
+
 # ---------------------------------------------------------------------------
 # Style Sectors (风格板块, 29 个)
 # 读 sectors_styles_4.json → 实时行情 → 等权平均 (走 infra.style_sector.compute_sector_change_pct)

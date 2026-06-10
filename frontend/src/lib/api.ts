@@ -703,17 +703,6 @@ export async function fetchIndustryDetail(
   return data
 }
 
-export async function fetchIndustryConstituents(
-  name: string,
-  refresh = false
-): Promise<Record<string, unknown>> {
-  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents?name=${encodeURIComponent(name)}${refresh ? "&refresh=1" : ""}`
-  const res = await fetch(url)
-  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
-  if (!res.ok || !data) throw new Error(`获取行业 ${name} 成分股失败`)
-  return data
-}
-
 export interface IndustryFundFlowRow {
   /** 排名 (1..N, 按净额 desc 重排) */
   "序号": number
@@ -844,6 +833,69 @@ export async function fetchCachedIndustryConstituentsCodes(): Promise<{ ok: bool
   const res = await fetch(url)
   const data = (await res.json().catch(() => null)) as { ok: boolean; codes: string[] } | null
   if (!res.ok || !data) throw new Error("获取已落盘行业 code 失败")
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// 同花顺行业成分股 (按 name 查, 内部走 hexin-v 破解新版)
+// 路由: GET /api/stock-chart/ths-industry/constituents?name=...
+// 返回: { ok, name, code, totalPages, pageRowCounts, count, rows, fetchedAt }
+// rows 跟上面 IndustryConstituentRow 14 列一致
+// ---------------------------------------------------------------------------
+export interface IndustryConstituentsByNameResponse {
+  ok: boolean
+  name: string
+  code: string
+  totalPages: number
+  pageRowCounts: number[]
+  count: number
+  rows: IndustryConstituentRow[]
+  fetchedAt: string | null
+  error?: string
+  stale?: boolean
+  staleReason?: string
+}
+
+export async function fetchIndustryConstituentsByName(
+  name: string,
+  options: { refresh?: boolean } = {},
+): Promise<IndustryConstituentsByNameResponse> {
+  const params: string[] = []
+  if (options.refresh) params.push("refresh=1")
+  const query = params.length ? `?${params.join("&")}` : ""
+  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents?name=${encodeURIComponent(name)}${query}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as IndustryConstituentsByNameResponse | null
+  if (!res.ok || !data) throw new Error(`获取行业 ${name} 成分股失败`)
+  return data
+}
+
+export async function refreshIndustryConstituentsByName(
+  name: string
+): Promise<IndustryConstituentsByNameResponse> {
+  return fetchIndustryConstituentsByName(name, { refresh: true })
+}
+
+// ---------------------------------------------------------------------------
+// 同花顺行业成分股 (纯读磁盘, 不爬网络)
+// 路由: GET /api/stock-chart/ths-industry/constituents-file?name=...
+// 落盘: reference/ths-industry/constituents/{code}.json (每周六 18:00 调度器重爬)
+// 适用: drawer 打开默认 (高频), 避免每次都打 q.10jqka
+// 返回 404 表示磁盘没文件, 需走 refreshIndustryConstituentsByName
+// ---------------------------------------------------------------------------
+export async function fetchIndustryConstituentsFromFile(
+  name: string
+): Promise<IndustryConstituentsByNameResponse> {
+  const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-file?name=${encodeURIComponent(name)}`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as IndustryConstituentsByNameResponse | null
+  if (!res.ok || !data) {
+    // 404/400 都当 "磁盘没文件" 处理, 由调用方决定 fallback 到网络爬
+    const errMsg = (data && data.error) || `读取行业 ${name} 成分股失败`
+    const err = new Error(errMsg) as Error & { code?: string }
+    err.code = res.status === 404 ? "NOT_CACHED" : "FETCH_FAILED"
+    throw err
+  }
   return data
 }
 

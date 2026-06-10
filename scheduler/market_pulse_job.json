@@ -1,39 +1,39 @@
 {
   "name": "market_pulse_snapshot",
-  "lastRunAt": "2026-06-09T15:35:00",
+  "lastRunAt": "2026-06-10T15:35:00",
   "lastRunOk": true,
   "lastRunError": null,
-  "lastInsideRefreshAt": "2026-06-09T14:59:00",
-  "lastCloseSnapshotAt": "2026-06-09T15:30:00",
-  "totalInside": 85,
-  "totalClose": 2,
-  "schedulerStartedAt": "2026-06-09T21:57:56",
+  "lastInsideRefreshAt": "2026-06-10T14:59:00",
+  "lastCloseSnapshotAt": "2026-06-10T15:30:00",
+  "totalInside": 130,
+  "totalClose": 3,
+  "schedulerStartedAt": "2026-06-10T20:41:55",
   "lastTopN": [
     {
-      "name": "电子化学品",
-      "changePct": 7.05
+      "name": "保险",
+      "changePct": 3.19
     },
     {
-      "name": "半导体",
-      "changePct": 6.38
+      "name": "银行",
+      "changePct": 1.91
     },
     {
-      "name": "元件",
-      "changePct": 5.5
+      "name": "旅游及酒店",
+      "changePct": 1.88
     },
     {
-      "name": "其他电子",
-      "changePct": 5.22
+      "name": "证券",
+      "changePct": 1.14
     },
     {
-      "name": "能源金属",
-      "changePct": 4.92
+      "name": "化学制品",
+      "changePct": 0.89
     }
   ],
-  "lastConstituentsAt": "2026-06-09T15:35:00",
+  "lastConstituentsAt": "2026-06-10T15:35:00",
   "lastConstituentsOk": true,
   "lastConstituentsError": null,
-  "lastConstituentsElapseMs": 427478,
+  "lastConstituentsElapseMs": 466081,
   "lastConstituentsIndustriesOk": 90,
   "lastConstituentsIndustriesTotal": 90
 }

@@ -37,6 +37,7 @@ import {
   type IndustryFundFlowResponse,
   type IndustryFundFlowRow,
 } from "@/lib/api"
+import { IndustryConstituentsDrawer } from "./industry-constituents-drawer"
 
 const TOP_OPTIONS: Array<{ value: number | null; label: string }> = [
   { value: null, label: "全部" },
@@ -198,6 +199,9 @@ function formatFetchedAt(iso: string | null | undefined): string {
 export function IndustryFundFlowTable() {
   const [data, setData] = useState<IndustryFundFlowResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  // 点击某行业行 -> 弹出该行业成分股 drawer
+  const [selectedIndustry, setSelectedIndustry] = useState<string | null>(null)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [top, setTop] = useState<number | null>(null)
   const [sortKey, setSortKey] = useState<SortKey>("净额(亿)")
@@ -384,8 +388,20 @@ export function IndustryFundFlowTable() {
                     </td>
                   </tr>
                 ) : (
-                  sortedRows.map((row, idx) => (
-                    <tr key={`${row["行业"]}-${idx}`} className="hover:bg-slate-50/60">
+                  sortedRows.map((row, idx) => {
+                    const industryName = row["行业"]
+                    const openDrawer = () => {
+                      if (!industryName) return
+                      setSelectedIndustry(industryName)
+                      setDrawerOpen(true)
+                    }
+                    return (
+                    <tr
+                      key={`${row["行业"]}-${idx}`}
+                      className="cursor-pointer hover:bg-slate-50/80"
+                      onClick={openDrawer}
+                      title={`点击查看 ${industryName} 成分股`}
+                    >
                       {COLUMNS.map((col) => {
                         if (col.key === "sortable" && col.format) {
                           return (
@@ -427,7 +443,8 @@ export function IndustryFundFlowTable() {
                         )
                       })}
                     </tr>
-                  ))
+                    )
+                  })
                 )}
               </tbody>
             </table>
@@ -475,6 +492,12 @@ export function IndustryFundFlowTable() {
           </Button>
         </div>
       </div>
+
+      <IndustryConstituentsDrawer
+        industryName={selectedIndustry}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
     </Card>
   )
 }
