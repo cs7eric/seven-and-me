@@ -500,60 +500,67 @@ def build_market_heatmap(kind: str = "all", top_n: int = 200) -> dict[str, Any]:
             "error": f"unknown kind: {kind!r}, must be all/industries/concepts/styles",
         }
 
-    # kind=industries 走 TDX 56 个行业指数直采: 板块自身的最新价/昨收/涨跌额/
-    # 涨跌幅/开高低/成交量/成交额都来自指数行情, 不再做成分股聚合, 颜色和数值
-    # 与同花顺/通达信行业指数完全一致.
+    # kind=industries 走磁盘快照: 同花顺 90 行业 (reference/ths-industry/industry_list.json
+    # + constituents/{code}.json). 板块自身的涨跌幅/成交额从成分股快照按成交额加权聚合,
+    # 完全离线, 不依赖 akshare / 网络, 首屏热力图秒级响应.
     if kind == "industries":
-        from .f10.tdx_industry_service import build_industry_market_payload
+        from .f10.ths_industry_constituents_service import build_industry_heatmap_snapshot
         try:
-            payload = build_industry_market_payload()
+            snap = build_industry_heatmap_snapshot(top_n=top_n)
         except Exception as exc:
-            logger.warning("tdx industry payload failed: %s", exc)
-            payload = {"kind": "industries", "label": "行业", "items": [], "count": 0,
-                       "source": "eltdx.get_index_codes_all + get_quote (failed)"}
+            logger.warning("ths industry snapshot failed: %s", exc)
+            snap = {"ok": False, "items": [], "totalItems": 0,
+                    "fetchedAt": None, "source": "reference/ths-industry snapshot (failed)"}
         items: list[dict[str, Any]] = []
-        for it in payload.get("items") or []:
-            amount = it.get("amount") or 0.0
-            cp = it.get("changePercent")
+        for it in snap.get("items") or []:
+            amount = it.get("amount") or 0.0           # 亿 (成分股 成交额 求和)
+            mcap = it.get("circulatingMarketCap") or 0.0  # 亿 (成分股 流通市值 求和)
+            cp = it.get("changePercent")                # amount-weighted zdf
+            sector_code = it.get("code")
             items.append({
                 "name": it.get("name"),
-                "sectorCode": it.get("sectorCode") or it.get("fullCode"),
+                "sectorCode": sector_code,
+                "fullCode": sector_code,
                 "kind": "industries",
-                "kindLabel": "行业",
-                "topicId": [it.get("code6")],
+                "kindLabel": "行业 (同花顺)",
+                "topicId": [sector_code],
                 "value": amount,
                 "changePercent": cp,
                 "amount": amount,
-                "stockCount": 0,
+                "circulatingMarketCap": mcap,
+                "stockCount": it.get("stockCount", 0),
                 "risingCount": 0,
                 "fallingCount": 0,
                 "flatCount": 0,
                 "limitUpCount": 0,
-                "latestPrice": it.get("latestPrice"),
-                "preClosePrice": it.get("preClosePrice"),
-                "openPrice": it.get("openPrice"),
-                "highPrice": it.get("highPrice"),
-                "lowPrice": it.get("lowPrice"),
-                "change": it.get("change"),
-                "volume": it.get("volume"),
-                "turnoverRate": it.get("turnoverRate"),
+                "latestPrice": None,
+                "preClosePrice": None,
+                "openPrice": None,
+                "highPrice": None,
+                "lowPrice": None,
+                "change": None,
+                "volume": None,
+                "turnoverRate": None,
+                "amplitude": None,
                 "children": [],
+                "snapshotFetchedAt": it.get("snapshotFetchedAt"),
+                "infoChangePercent": it.get("infoChangePercent"),
             })
         items.sort(key=lambda b: -(b.get("amount") or 0))
         return {
-            "ok": True,
+            "ok": snap.get("ok", False),
             "kind": "industries",
-            "kinds": ["行业"],
+            "kinds": ["行业 (同花顺)"],
             "items": items,
             "totalItems": len(items),
             "itemsTotal": len(items),
             "topN": top_n,
-            "totalStocks": 0,
+            "totalStocks": sum(b.get("stockCount", 0) for b in items),
             "hiddenStocks": 0,
             "hiddenNoQuote": 0,
             "hiddenEmptySectors": 0,
-            "fetchedAt": payload.get("fetchedAt"),
-            "source": payload.get("source") or "tdx_industry_service",
+            "fetchedAt": snap.get("fetchedAt"),
+            "source": snap.get("source") or "reference/ths-industry snapshot",
         }
 
     kinds = list(KIND_TO_CAT.keys()) if kind == "all" else [kind]

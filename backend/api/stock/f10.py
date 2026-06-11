@@ -468,6 +468,42 @@ def f10_governance():
 
 
 # ---------------------------------------------------------------------------
+# 公告 / 新闻 / 路演 / 研报 (eltdx 1.0+)
+# ---------------------------------------------------------------------------
+
+
+@f10_bp.route('/api/stock-chart/f10/announcements')
+def f10_announcements():
+    """个股公告列表 (eltdx CWSearch.tzx_rcache announcements)。"""
+    return _safe_call(lambda: get_fundamentals_service().get_announcements(_symbol_arg()))
+
+
+@f10_bp.route('/api/stock-chart/f10/news')
+def f10_news():
+    """个股新闻列表 (eltdx CWSearch.tzx_rcache news)。"""
+    return _safe_call(lambda: get_fundamentals_service().get_news(_symbol_arg()))
+
+
+@f10_bp.route('/api/stock-chart/f10/roadshows')
+def f10_roadshows():
+    """路演 / 业绩说明会列表 (eltdx CWSearch.tzx_rcache roadshows)。"""
+    return _safe_call(lambda: get_fundamentals_service().get_roadshows(_symbol_arg()))
+
+
+@f10_bp.route('/api/stock-chart/f10/company-news')
+def f10_company_news():
+    """公司研报 / 监管措施 (eltdx CWServ.tdxf10_gg_gszx)。
+
+    ``section`` 默认 ``gsyj`` (公司研究), 其它常用值: ``zqyj`` (证券研究) /
+    ``jgcs`` (监管措施) 等。
+    """
+    section = str(request.args.get('section', 'gsyj')).strip() or 'gsyj'
+    return _safe_call(
+        lambda: get_fundamentals_service().get_company_news(_symbol_arg(), section=section)
+    )
+
+
+# ---------------------------------------------------------------------------
 # 内部 hook：供 market-breadth 路由 merge 数据
 # ---------------------------------------------------------------------------
 

@@ -23,14 +23,22 @@ from backend.services.stock.config_service import get_stock_chart_config
 from .base import FundamentalsAdapter
 from .index_codes import CONCEPT_INDEX_CODES, INDUSTRY_INDEX_CODES
 from .schemas import (
+    AnnouncementItem,
+    Announcements,
     BusinessComposition,
+    CompanyNews,
+    CompanyNewsItem,
     CompanyProfile,
     FinanceDiagnosis,
     FinanceReport,
     Governance,
     LimitUpDownCount,
+    NewsItem,
+    NewsList,
     ProfitForecast,
     RankingDetail,
+    RoadshowItem,
+    Roadshows,
     SectorMarket,
     StockInfo,
     StockScore,
@@ -70,6 +78,16 @@ def _f10_rows(response: Any) -> list[dict[str, Any]]:
     if rows:
         return [_sanitize_jsonable(row) for row in rows]
     return []
+
+
+def _s(row: dict[str, Any], key: str) -> str | None:
+    """安全地把 row[key] 转 str / None (eltdx 表行解析 helper)。"""
+    if not isinstance(row, dict):
+        return None
+    value = row.get(key)
+    if value is None or value == "":
+        return None
+    return str(value)
 
 
 def _threshold_for_code(full_code: str, last_price: float | None, pre_close_price: float | None) -> float:
@@ -887,6 +905,127 @@ class EltdxFundamentalsAdapter(FundamentalsAdapter):
             rows=_f10_rows(response),
             raw=_f10_to_dict(response),
         )
+
+    # -------- 公告 / 新闻 / 路演 / 研报 (eltdx 1.0+) --------
+
+    def get_announcements(self, symbol: str) -> Announcements:
+        """个股公告列表 (CWSearch.tzx_rcache announcements)。
+
+        eltdx 返回的 tables[0] 是已结构化的 dict 行 (列名见 schemas.AnnouncementItem)。
+        """
+        with self._open_client() as client:
+            response = self._resolve_f10(client).announcements(symbol)
+        items = self._parse_table_rows(
+            response,
+            lambda row: AnnouncementItem(
+                issue_date=_s(row, "issue_date"),
+                title=_s(row, "title"),
+                typecode=_s(row, "typecode"),
+                typename=_s(row, "typename"),
+                rec_id=_s(row, "rec_id"),
+                tableid=_s(row, "tableid"),
+                url=_s(row, "url"),
+                redistime=_s(row, "redistime"),
+                source=_s(row, "source"),
+            ),
+        )
+        return Announcements(
+            symbol=str(symbol),
+            items=items,
+            raw=_f10_to_dict(response),
+        )
+
+    def get_news(self, symbol: str) -> NewsList:
+        """个股新闻列表 (CWSearch.tzx_rcache news)。"""
+        with self._open_client() as client:
+            response = self._resolve_f10(client).news(symbol)
+        items = self._parse_table_rows(
+            response,
+            lambda row: NewsItem(
+                issue_date=_s(row, "issue_date"),
+                title=_s(row, "title"),
+                rec_id=_s(row, "rec_id"),
+                tableid=_s(row, "tableid"),
+                redistime=_s(row, "redistime"),
+                source=_s(row, "source"),
+                relatecolumn=_s(row, "relatecolumn"),
+            ),
+        )
+        return NewsList(
+            symbol=str(symbol),
+            items=items,
+            raw=_f10_to_dict(response),
+        )
+
+    def get_roadshows(self, symbol: str) -> Roadshows:
+        """路演 / 业绩说明会列表 (CWSearch.tzx_rcache roadshows)。"""
+        with self._open_client() as client:
+            response = self._resolve_f10(client).roadshows(symbol)
+        items = self._parse_table_rows(
+            response,
+            lambda row: RoadshowItem(
+                title=_s(row, "title"),
+                roadshow_type=_s(row, "roadshow_type"),
+                start_date=_s(row, "start_date"),
+                start_time=_s(row, "start_time"),
+                end_time=_s(row, "end_time"),
+                summary=_s(row, "summary"),
+                url=_s(row, "url"),
+            ),
+        )
+        return Roadshows(
+            symbol=str(symbol),
+            items=items,
+            raw=_f10_to_dict(response),
+        )
+
+    def get_company_news(self, symbol: str, section: str = "gsyj") -> CompanyNews:
+        """公司研报 / 监管措施 (CWServ.tdxf10_gg_gszx, 默认 section='gsyj')。
+
+        eltdx 返回的是 raw T0xx 列, 用 T004 (评级) / T009 (分析师) /
+        T011 (rec_id) / T012 (日期) / T039 (标题) / nflag / ybdz 提取。
+        """
+        with self._open_client() as client:
+            response = self._resolve_f10(client).company_news(symbol, section=section)
+
+        def _map(row: dict[str, Any]) -> CompanyNewsItem:
+            return CompanyNewsItem(
+                rating=_s(row, "T004"),
+                analysts=_s(row, "T009"),
+                rec_id=_s(row, "T011"),
+                issue_date=_s(row, "T012"),
+                title=_s(row, "T039"),
+                nflag=_s(row, "nflag"),
+                doc_hash=_s(row, "ybdz"),
+            )
+
+        items = self._parse_table_rows(response, _map)
+        return CompanyNews(
+            symbol=str(symbol),
+            section=str(section),
+            items=items,
+            raw=_f10_to_dict(response),
+        )
+
+    def _parse_table_rows(self, response: Any, mapper: Any) -> list[Any]:
+        """把 F10Response.tables[*].rows 解析为 dataclass item 列表。
+
+        跳过空 title (避免公告/新闻接口偶尔返回的占位空行)。
+        """
+        out: list[Any] = []
+        if response is None:
+            return out
+        tables = getattr(response, "tables", None) or []
+        for tbl in tables:
+            rows = getattr(tbl, "rows", None) or []
+            for row in rows:
+                item = mapper(row)
+                # 通用兜底: title 字段为空就跳过
+                title = getattr(item, "title", None)
+                if not title:
+                    continue
+                out.append(item)
+        return out
 
     # -------- 健康检查 --------
 

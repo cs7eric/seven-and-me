@@ -403,6 +403,506 @@ export async function fetchStockMeta(params: {
   return data
 }
 
+// ---------------------------------------------------------------------------
+// F10 财务 / 估值 / 主营构成
+// 全部走 backend/api/stock/f10.py (Flask Blueprint, 已在 bootstrap.py 注册)
+// ---------------------------------------------------------------------------
+
+export interface StockValuationRow {
+  date: string
+  peTtm: number | null
+  peBfw: number | null
+  pbMrq: number | null
+  pbBfw: number | null
+  pcfOcfTtm: number | null
+  pcfBfw: number | null
+  psTtm: number | null
+  psBfw: number | null
+  peg: number | null
+  avgMarketCap: number | null
+  aliqMarketCap: number | null
+}
+
+export interface StockValuationResponse {
+  symbol: string
+  reqId: string
+  /** 取 raw.ResultSets[*] 解析后的近 N 期序列 (默认最多 5 期), 第一项是最新 */
+  rows: StockValuationRow[]
+  fetchedAt: string | null
+  source: string
+}
+
+export interface StockFinanceReportRow {
+  /** 报告期 yyyy-mm-dd */
+  rq: string | null
+  /** 原始 T0xx 字段, 名称随 report_type 变化, 解析时按需映射 */
+  fields: Record<string, number | string | null>
+}
+
+export interface StockFinanceReportResponse {
+  symbol: string
+  reportType: "zcfzb" | "lrb" | "xjllb"
+  /** 已解析为 {rq, fields} 形式, 按报告期倒序 */
+  rows: StockFinanceReportRow[]
+  fetchedAt: string | null
+  source: string
+}
+
+export interface StockBusinessCompositionItem {
+  /** 第一列通常是分类口径 ("按产品(项目)" / "按地区" ...) */
+  category: string | null
+  /** 第二列通常是行业/分类编号 */
+  subType: number | string | null
+  /** 名称 (e.g. 茅台酒 / 系列酒 / 国内) */
+  name: string | null
+  /** 主营收入 (元) */
+  revenue: number | null
+  /** 收入占比 (%) */
+  ratio: number | null
+  /** 其它原始列, 名字随接口变化 */
+  extras: Array<number | string | null>
+}
+
+export interface StockBusinessCompositionResponse {
+  symbol: string
+  reportDate: string | null
+  items: StockBusinessCompositionItem[]
+  fetchedAt: string | null
+  source: string
+}
+
+export interface StockProfitForecastItem {
+  year: string
+  /** 净利润预测 (元/万股, 来源字段不同) */
+  netProfit: number | null
+  /** 每股收益预测 (元) */
+  eps: number | null
+  /** 营收预测 (元) */
+  revenue: number | null
+  /** 其它原始列 */
+  extras: Array<number | string | null>
+}
+
+export interface StockProfitForecastResponse {
+  symbol: string
+  items: StockProfitForecastItem[]
+  fetchedAt: string | null
+  source: string
+}
+
+// ---------- 公告 / 新闻 / 路演 / 研报 ----------
+
+export interface StockAnnouncementItem {
+  issueDate: string | null
+  title: string | null
+  typecode: string | null
+  typename: string | null
+  recId: string | null
+  tableid: string | null
+  url: string | null
+  redistime: string | null
+  source: string | null
+}
+
+export interface StockAnnouncementsResponse {
+  symbol: string
+  items: StockAnnouncementItem[]
+  count: number
+  fetchedAt: string | null
+}
+
+export interface StockNewsItem {
+  issueDate: string | null
+  title: string | null
+  recId: string | null
+  tableid: string | null
+  redistime: string | null
+  source: string | null
+  relatecolumn: string | null
+}
+
+export interface StockNewsResponse {
+  symbol: string
+  items: StockNewsItem[]
+  count: number
+  fetchedAt: string | null
+}
+
+export interface StockRoadshowItem {
+  title: string | null
+  roadshowType: string | null
+  startDate: string | null
+  startTime: string | null
+  endTime: string | null
+  summary: string | null
+  url: string | null
+}
+
+export interface StockRoadshowsResponse {
+  symbol: string
+  items: StockRoadshowItem[]
+  count: number
+  fetchedAt: string | null
+}
+
+export interface StockCompanyNewsItem {
+  rating: string | null
+  analysts: string | null
+  recId: string | null
+  issueDate: string | null
+  title: string | null
+  nflag: string | null
+  docHash: string | null
+}
+
+export interface StockCompanyNewsResponse {
+  symbol: string
+  section: string
+  items: StockCompanyNewsItem[]
+  count: number
+  fetchedAt: string | null
+}
+
+const F10_REQ_TIMEOUT_MS = 8000
+
+function withTimeout(ms: number): { signal: AbortSignal } {
+  const ctrl = new AbortController()
+  setTimeout(() => ctrl.abort(), ms)
+  return { signal: ctrl.signal }
+}
+
+/**
+ * 通用 helper: 安全地把 unknown 转 number / string / null, 失败回 null
+ */
+function toNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null
+  if (typeof v === "number" && Number.isFinite(v)) return v
+  if (typeof v === "string") {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function toStr(v: unknown): string | null {
+  if (v === null || v === undefined) return null
+  return String(v)
+}
+
+/**
+ * 从 f10 响应的 raw.ResultSets[*] 里把 Content[] 配 ColName[] 解析为 dict 列表
+ */
+function parseF10ResultSets(raw: unknown): Record<string, Record<string, unknown>>[] {
+  if (!raw || typeof raw !== "object") return []
+  const rs = (raw as { ResultSets?: Array<{ ColName?: string[]; Content?: unknown[][] }> }).ResultSets
+  if (!Array.isArray(rs)) return []
+  return rs.flatMap((t) => {
+    const cols = Array.isArray(t.ColName) ? t.ColName : []
+    const content = Array.isArray(t.Content) ? t.Content : []
+    return content.map((row) => {
+      const out: Record<string, unknown> = {}
+      cols.forEach((col, i) => {
+        out[col] = Array.isArray(row) ? row[i] : null
+      })
+      return out
+    })
+  })
+}
+
+/**
+ * F10 /valuation: PE / PB / PS / PCF / PEG + 总市值 / 流通市值
+ * 拿第一个 ResultSet 的最近几期 (默认 5)
+ */
+export async function fetchStockValuation(
+  symbol: string,
+  options: { reqId?: string; limit?: number } = {},
+): Promise<StockValuationResponse> {
+  const params = new URLSearchParams({ symbol })
+  if (options.reqId) params.set("req_id", options.reqId)
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/valuation?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取估值数据失败")
+
+  const parsed = parseF10ResultSets(data.raw).filter((r) => "DATE" in r)
+  const limit = options.limit ?? 5
+  const rows: StockValuationRow[] = parsed.slice(0, limit).map((r) => ({
+    date: toStr(r.DATE) ?? "",
+    peTtm: toNum(r.PETTM),
+    peBfw: toNum(r.PEBFW),
+    pbMrq: toNum(r.PBMRQ),
+    pbBfw: toNum(r.PBBFW),
+    pcfOcfTtm: toNum(r.PCFOCFTTM),
+    pcfBfw: toNum(r.PCFBFW),
+    psTtm: toNum(r.PSTTM),
+    psBfw: toNum(r.PSBFW),
+    peg: toNum(r.PEG),
+    avgMarketCap: toNum(r.AVGMVM),
+    aliqMarketCap: toNum(r.ALIQMV),
+  }))
+
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    reqId: toStr(data.req_id) ?? "200191",
+    rows,
+    fetchedAt: toStr(data.fetched_at),
+    source: toStr(data.source) ?? "eltdx",
+  }
+}
+
+/**
+ * F10 /finance-report: 资产负债表 (zcfzb) / 利润表 (lrb) / 现金流量表 (xjllb)
+ * 字段名是 T0xx, 直接给前端用, 字段名映射留给上层
+ */
+export async function fetchStockFinanceReport(
+  symbol: string,
+  reportType: "zcfzb" | "lrb" | "xjllb" = "zcfzb",
+): Promise<StockFinanceReportResponse> {
+  const params = new URLSearchParams({ symbol, report_type: reportType })
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/finance-report?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取财务报表失败")
+
+  const parsed = parseF10ResultSets(data.raw).filter((r) => "rq" in r)
+
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    reportType,
+    rows: parsed.map((r) => ({
+      rq: toStr(r.rq),
+      fields: Object.fromEntries(
+        Object.entries(r).map(([k, v]) => [k, v === null || v === undefined ? null : (typeof v === "number" || typeof v === "string" ? v : null)]),
+      ),
+    })),
+    fetchedAt: toStr(data.fetched_at),
+    source: toStr(data.source) ?? "eltdx",
+  }
+}
+
+/**
+ * F10 /business-composition: 主营业务构成 (按产品 / 按地区)
+ * 接口返回 10 列, 但常用的是前 5 列 (口径/分类编号/名称/收入/占比)
+ */
+export async function fetchStockBusinessComposition(
+  symbol: string,
+  options: { reportDate?: string | null; limit?: number } = {},
+): Promise<StockBusinessCompositionResponse> {
+  const params = new URLSearchParams({ symbol })
+  if (options.reportDate) params.set("report_date", options.reportDate)
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/business-composition?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取主营构成失败")
+
+  const parsed = parseF10ResultSets(data.raw)
+  const limit = options.limit ?? 8
+
+  const items: StockBusinessCompositionItem[] = parsed.slice(0, limit).map((row) => {
+    const vals = Object.values(row)
+    return {
+      category: toStr(row.N000),
+      subType: vals[1] === undefined ? null : (typeof vals[1] === "number" || typeof vals[1] === "string" ? vals[1] : null),
+      name: toStr(row.N002),
+      revenue: toNum(row.N003),
+      ratio: toNum(row.N004),
+      extras: vals.slice(5).map((v) => (v === null || v === undefined ? null : (typeof v === "number" || typeof v === "string" ? v : null))),
+    }
+  })
+
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    reportDate: options.reportDate ?? null,
+    items,
+    fetchedAt: toStr(data.fetched_at),
+    source: toStr(data.source) ?? "eltdx",
+  }
+}
+
+/**
+ * F10 /profit-forecast: 业绩预告 / 预测
+ * 接口返回 ResultSets[0] = {nyear, flag}, ResultSets[1] = T 列预测数据
+ * 这里只把 ResultSets[1] 解析出来, T036/T037/T038 视为净利润(年度/季度差异)
+ */
+export async function fetchStockProfitForecast(
+  symbol: string,
+): Promise<StockProfitForecastResponse> {
+  const params = new URLSearchParams({ symbol })
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/profit-forecast?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取业绩预测失败")
+
+  const rs = (data.raw as { ResultSets?: Array<{ ColName?: string[]; Content?: unknown[][] }> } | undefined)?.ResultSets
+  const yearRow = Array.isArray(rs?.[0]?.Content?.[0]) ? rs![0]!.Content![0] as unknown[] : []
+  const yearBase = toStr(yearRow[0]) ?? ""
+  const forecastTable = Array.isArray(rs?.[1]?.Content?.[0]) ? rs![1]!.Content![0] as unknown[] : []
+  const forecastCols = Array.isArray(rs?.[1]?.ColName) ? rs![1]!.ColName! : []
+
+  // 业绩预告通常是 3 列 (当年 / 明年 / 后年), 这里逐列展开为 items
+  // 字段顺序假设: [eps3, eps2, eps1, ?netProfit3, ?netProfit2, ?netProfit1, ?rev3, ?rev2, ?rev1, ...]
+  // 简化: 每列 -> 一个 item
+  const items: StockProfitForecastItem[] = []
+  const colsCount = forecastCols.length
+  for (let i = 0; i < colsCount; i++) {
+    const colName = forecastCols[i]
+    const value = forecastTable[i]
+    const offset = colsCount - 1 - i // 0 = 最新一年
+    const year = yearBase && offset > 0 ? `${Number(yearBase) + offset}` : (yearBase || "")
+    items.push({
+      year,
+      // 净利润预测: T027/T028/T029 一组 (高位数), 这里保守不假设
+      netProfit: null,
+      eps: toNum(value),
+      revenue: null,
+      extras: [colName, value ?? null],
+    })
+  }
+
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    items,
+    fetchedAt: toStr(data.fetched_at),
+    source: toStr(data.source) ?? "eltdx",
+  }
+}
+
+/**
+ * F10 /announcements: 个股公告列表 (按时间倒序)
+ * 后端解析 { issue_date, title, typecode, typename, rec_id, tableid, url, ... }
+ */
+export async function fetchStockAnnouncements(
+  symbol: string,
+): Promise<StockAnnouncementsResponse> {
+  const params = new URLSearchParams({ symbol })
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/announcements?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取公告列表失败")
+  const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : []
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    count: typeof data.count === "number" ? data.count : rawItems.length,
+    fetchedAt: toStr(data.fetched_at),
+    items: rawItems.map((it) => ({
+      issueDate: toStr(it.issue_date),
+      title: toStr(it.title),
+      typecode: toStr(it.typecode),
+      typename: toStr(it.typename),
+      recId: toStr(it.rec_id),
+      tableid: toStr(it.tableid),
+      url: toStr(it.url),
+      redistime: toStr(it.redistime),
+      source: toStr(it.source),
+    })),
+  }
+}
+
+/**
+ * F10 /news: 个股新闻列表
+ */
+export async function fetchStockNews(
+  symbol: string,
+): Promise<StockNewsResponse> {
+  const params = new URLSearchParams({ symbol })
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/news?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取新闻列表失败")
+  const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : []
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    count: typeof data.count === "number" ? data.count : rawItems.length,
+    fetchedAt: toStr(data.fetched_at),
+    items: rawItems.map((it) => ({
+      issueDate: toStr(it.issue_date),
+      title: toStr(it.title),
+      recId: toStr(it.rec_id),
+      tableid: toStr(it.tableid),
+      redistime: toStr(it.redistime),
+      source: toStr(it.source),
+      relatecolumn: toStr(it.relatecolumn),
+    })),
+  }
+}
+
+/**
+ * F10 /roadshows: 路演 / 业绩说明会列表
+ */
+export async function fetchStockRoadshows(
+  symbol: string,
+): Promise<StockRoadshowsResponse> {
+  const params = new URLSearchParams({ symbol })
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/roadshows?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取路演列表失败")
+  const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : []
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    count: typeof data.count === "number" ? data.count : rawItems.length,
+    fetchedAt: toStr(data.fetched_at),
+    items: rawItems.map((it) => ({
+      title: toStr(it.title),
+      roadshowType: toStr(it.roadshow_type),
+      startDate: toStr(it.start_date),
+      startTime: toStr(it.start_time),
+      endTime: toStr(it.end_time),
+      summary: toStr(it.summary),
+      url: toStr(it.url),
+    })),
+  }
+}
+
+/**
+ * F10 /company-news: 公司研报 / 监管措施
+ * section 默认 'gsyj' (公司研究); 其它常用: 'zqyj' (证券研究) / 'jgcs' (监管措施)
+ */
+export async function fetchStockCompanyNews(
+  symbol: string,
+  options: { section?: string } = {},
+): Promise<StockCompanyNewsResponse> {
+  const params = new URLSearchParams({ symbol })
+  const section = options.section ?? "gsyj"
+  params.set("section", section)
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/f10/company-news?${params.toString()}`,
+    withTimeout(F10_REQ_TIMEOUT_MS),
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取公司研报失败")
+  const rawItems = Array.isArray(data.items) ? (data.items as Record<string, unknown>[]) : []
+  return {
+    symbol: toStr(data.symbol) ?? symbol,
+    section,
+    count: typeof data.count === "number" ? data.count : rawItems.length,
+    fetchedAt: toStr(data.fetched_at),
+    items: rawItems.map((it) => ({
+      rating: toStr(it.rating),
+      analysts: toStr(it.analysts),
+      recId: toStr(it.rec_id),
+      issueDate: toStr(it.issue_date),
+      title: toStr(it.title),
+      nflag: toStr(it.nflag),
+      docHash: toStr(it.doc_hash),
+    })),
+  }
+}
+
 export async function fetchMarketBreadth(): Promise<{
   upCount: number | null
   downCount: number | null
@@ -1443,6 +1943,8 @@ export async function fetchIndustryApplicationOverview(
 
 export type HeatmapKind = "industries" | "concepts" | "styles"
 
+const YI_TO_YUAN = 1e8
+
 export async function fetchMarketHeatmap(
   kind: HeatmapKind = "industries",
   top_n = 200
@@ -1453,5 +1955,16 @@ export async function fetchMarketHeatmap(
     const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || "拉取市场热力图失败")
   }
-  return (await res.json()) as MarketHeatmapResponse
+  const raw = (await res.json()) as MarketHeatmapResponse
+  // 统一单位: 后端 sector.amount / sector.circulatingMarketCap 是 **亿**, 转到 **元**
+  // (跟 StockHeatmapItem.amount / circulatingMarketCap 一致, 便于 formatAmount / treemap 面积)
+  if (raw?.items) {
+    raw.items = raw.items.map((sector) => ({
+      ...sector,
+      amount: (sector.amount ?? 0) * YI_TO_YUAN,
+      circulatingMarketCap: (sector.circulatingMarketCap ?? 0) * YI_TO_YUAN,
+      children: [],  // 首屏不展开 children, 清空避免误用
+    }))
+  }
+  return raw
 }

@@ -438,3 +438,155 @@ def _read_disk(code: str) -> dict[str, Any] | None:
     except Exception as exc:
         logger.warning("read %s failed: %s", p, exc)
     return None
+
+
+# ---------------------------------------------------------------------------
+# 从落盘快照聚合 90 行业热力图数据
+#
+# 数据源:
+#   - reference/ths-industry/industry_list.json     90 行业 {code: name}
+#   - reference/ths-industry/constituents/{code}.json  每行业全量成分股 (含 涨跌幅/成交额)
+#
+# 聚合规则:
+#   - sector amount (亿)   = Σ 各股 成交额
+#   - sector changePct (%) = Σ (各股 涨跌幅 × 各股 成交额) / Σ 各股 成交额
+#                            (即按成交额加权; 成交额无法解析 (e.g. "--") 的股不参与)
+#   - sector stockCount    = 落盘 rows 数
+#
+# 完全离线, 不依赖 akshare / 网络, 首屏热力图直接吃这份快照.
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_AMOUNT_RE = _re.compile(r"^\s*([-+]?\d+(?:\.\d+)?)\s*([亿万千]?)\s*$")
+
+
+def _parse_amount_yi(raw: Any) -> float | None:
+    """``"5.60亿"`` / ``"1234万"`` / ``"1.2亿"`` -> 亿为单位的 float."""
+    if raw is None or raw == "" or raw == "--":
+        return None
+    s = str(raw).strip()
+    m = _AMOUNT_RE.match(s)
+    if not m:
+        return None
+    num = float(m.group(1))
+    unit = m.group(2)
+    if unit == "亿":
+        return num
+    if unit == "万":
+        return num / 1e4
+    if unit == "千":
+        return num / 1e7
+    # 无单位 -> 当作元
+    return num / 1e8
+
+
+def _parse_change_pct(raw: Any) -> float | None:
+    if raw is None or raw == "" or raw == "--":
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not _re.match(r"^[-+]?\d+(\.\d+)?$", str(raw).strip()):
+        # 字符串里带 "%" 之类, 兜底剥掉
+        v = float(str(raw).replace("%", "").strip())
+    return v
+
+
+def build_industry_heatmap_snapshot(*, top_n: int | None = None) -> dict[str, Any]:
+    """从磁盘快照聚合 90 行业板块热力图数据.
+
+    返回结构跟 :func:`build_market_heatmap(kind="industries")` 兼容::
+
+        {
+          "ok": True,
+          "items": [<sector>, ...],
+          "totalItems": int,
+          "fetchedAt": "<min fetchedAt>",
+          "source": "reference/ths-industry snapshot",
+        }
+
+    ``top_n`` 按 amount 降序截断; None 表示全部 90 行业.
+    """
+    from backend.services.stock.f10.ths_industry_service import (
+        get_industry_list,
+    )
+
+    listing = get_industry_list()
+    items: list[dict[str, Any]] = []
+    min_fetched_at: str | None = None
+
+    # 如果 industry_info.json (akshare 9 项快照) 存在, 也读它作为对照字段; 不存在跳过.
+    from backend.config.settings import THS_INDUSTRY_INFO_FILE as _INFO_FILE
+    info_by_name: dict[str, dict[str, Any]] = {}
+    if _INFO_FILE.exists():
+        try:
+            blob = json.loads(_INFO_FILE.read_text(encoding="utf-8"))
+            info_by_name = blob.get("byName") or {}
+        except Exception as exc:
+            logger.debug("read industry_info snapshot failed: %s", exc)
+
+    for code, info in listing.items():
+        if not info:
+            continue
+        name = info.get("name") or code
+        path = _constituents_path(code)
+        if not path.exists():
+            logger.debug("snapshot miss: %s not found, skip", path)
+            continue
+        blob = _read_disk(code) or {}
+        rows = blob.get("rows") or []
+        fetched_at = blob.get("fetchedAt")
+        if fetched_at and (min_fetched_at is None or fetched_at < min_fetched_at):
+            min_fetched_at = fetched_at
+
+        # 聚合: amount 加权和 changePct, 跳过 amount/changePct 任一缺失的行
+        sum_amount = 0.0          # 行业总成交额 (亿)
+        sum_weighted_zdf = 0.0    # 成交额加权后的涨跌幅累加
+        sum_circulating_mcap = 0.0  # 行业总流通市值 (亿)
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            amount_yi = _parse_amount_yi(row.get("成交额"))
+            zdf = _parse_change_pct(row.get("涨跌幅(%)"))
+            mcap_yi = _parse_amount_yi(row.get("流通市值"))
+            if amount_yi is None or zdf is None:
+                continue
+            sum_amount += amount_yi
+            sum_weighted_zdf += zdf * amount_yi
+            # 流通市值可以缺失 (--/空), 但不影响主聚合, 单独累加即可
+            if mcap_yi is not None:
+                sum_circulating_mcap += mcap_yi
+
+        sector_change_pct: float | None = (
+            round(sum_weighted_zdf / sum_amount, 4) if sum_amount > 0 else None
+        )
+        # 9 项指数数据 (akshare cache): 优先取同花顺的"涨跌幅"做兜底 (与聚合值互为校验)
+        info_blob = info_by_name.get(name) or {}
+        kvs = info_blob.get("kvs") or {}
+        info_zdf = _parse_change_pct(kvs.get("涨跌幅"))
+
+        items.append({
+            "code": code,
+            "name": name,
+            "amount": round(sum_amount, 4),            # 亿 (来自成分股 成交额 求和)
+            "circulatingMarketCap": round(sum_circulating_mcap, 4),  # 亿 (来自成分股 流通市值 求和)
+            "changePercent": sector_change_pct,
+            "infoChangePercent": info_zdf,           # 来自 ths_industry_service.info (可空)
+            "stockCount": len(rows),
+            "snapshotFetchedAt": fetched_at,
+        })
+
+    # 按成交额降序
+    items.sort(key=lambda b: -(b.get("amount") or 0.0))
+    if top_n is not None and top_n > 0:
+        items = items[:top_n]
+
+    return {
+        "ok": True,
+        "items": items,
+        "totalItems": len(items),
+        "fetchedAt": min_fetched_at,
+        "source": "reference/ths-industry snapshot (industry_list.json + constituents/{code}.json)",
+    }

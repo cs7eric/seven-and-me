@@ -270,8 +270,8 @@ export function IndustryFundFlowTable() {
   }
 
   return (
-    <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-      <CardHeader className="border-b border-slate-100">
+    <Card className="flex h-full min-h-0 flex-col rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <CardHeader className="shrink-0 border-b border-slate-100">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -338,7 +338,7 @@ export function IndustryFundFlowTable() {
         </div>
       </CardHeader>
 
-      <CardContent className="p-0">
+      <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
         {loading && !data ? (
           <div className="space-y-2 p-6">
             {Array.from({ length: 8 }).map((_, i) => (
@@ -346,9 +346,9 @@ export function IndustryFundFlowTable() {
             ))}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="min-h-0 flex-1 overflow-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-xs uppercase text-slate-500">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.06)]">
                 <tr>
                   {COLUMNS.map((col) => {
                     const isSort = col.sortable

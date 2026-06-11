@@ -111,7 +111,7 @@ export interface IndustryApplicationOverviewResponse {
 }
 
 export type HeatmapNodeKind = "industry" | "stock"
-export type HeatmapAreaBy = "amount" | "circulatingMarketCap"
+export type HeatmapAreaBy = "amount" | "volume" | "circulatingMarketCap"
 export type HeatmapColorBy = "changePercent" | "mainNetInflow" | "speed"
 export type HeatmapSortBy = "changePercent" | "amount" | "turnoverRate" | "mainNetInflow" | "speed" | "limitStreak"
 export type HeatmapQuickFilter = "limitUp" | "mainNetInflow" | "amountTop100" | "turnoverTop100" | "limitStreak"

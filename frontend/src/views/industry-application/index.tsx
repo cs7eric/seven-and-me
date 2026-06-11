@@ -553,34 +553,38 @@ export default function IndustryApplicationPage() {
               />
             </TabsContent>
 
-            <div className={activeMainTab === "overview" ? "hidden" : "grid h-full min-h-0 gap-4 xl:grid-cols-[400px_minmax(0,1fr)]"}>
-              <aside className="min-h-0 overflow-y-auto">
-                <div className="space-y-4">
-                  <IndustryTargetCard
-                    targets={filteredTargets}
-                    allTargetCount={targets.length}
-                    searchKeyword={searchKeyword}
-                    setSearchKeyword={setSearchKeyword}
-                    selectedId={selectedId}
-                    setSelectedId={setSelectedId}
-                    expandedId={expandedId}
-                    setExpandedId={setExpandedId}
-                    collapsed={targetCardCollapsed}
-                    setCollapsed={setTargetCardCollapsed}
-                    horizon={horizon}
-                    onHorizonChange={handleHorizonChange}
-                    saving={saving || refreshing}
-                    onUpdate={handleUpdateTarget}
-                    onRemove={handleRemove}
-                    onTrigger={handleTriggerTarget}
-                    onRefreshAll={handleRefreshAll}
-                  />
-                  <IndustryAddCard codes={availableCodes} onAdd={(code) => void handleAddFromCode(code)} />
-                </div>
-              </aside>
+            <div className={activeMainTab === "overview" ? "hidden" : "flex h-full min-h-0 flex-col overflow-hidden"}>
+              {/* Watchlist (IndustryTargetCard) 与 加入新标的 (IndustryAddCard) 暂时隐藏,
+                  组件定义 / props / state / handler 全部保留, 仅不再渲染. */}
+              {false && (
+                <aside className="min-h-0 overflow-y-auto">
+                  <div className="space-y-4">
+                    <IndustryTargetCard
+                      targets={filteredTargets}
+                      allTargetCount={targets.length}
+                      searchKeyword={searchKeyword}
+                      setSearchKeyword={setSearchKeyword}
+                      selectedId={selectedId}
+                      setSelectedId={setSelectedId}
+                      expandedId={expandedId}
+                      setExpandedId={setExpandedId}
+                      collapsed={targetCardCollapsed}
+                      setCollapsed={setTargetCardCollapsed}
+                      horizon={horizon}
+                      onHorizonChange={handleHorizonChange}
+                      saving={saving || refreshing}
+                      onUpdate={handleUpdateTarget}
+                      onRemove={handleRemove}
+                      onTrigger={handleTriggerTarget}
+                      onRefreshAll={handleRefreshAll}
+                    />
+                    <IndustryAddCard codes={availableCodes} onAdd={(code) => void handleAddFromCode(code)} />
+                  </div>
+                </aside>
+              )}
 
-              <div className="min-h-0 min-w-0 overflow-hidden">
-                <TabsContent value="chart" className="m-0 h-full min-h-0 overflow-hidden">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <TabsContent value="chart" className="m-0 flex h-full min-h-0 flex-col overflow-hidden">
                   {displayedTarget ? (
                     <ChartCard
                       collapsed={false}
@@ -644,7 +648,7 @@ export default function IndustryApplicationPage() {
                   )}
                 </TabsContent>
 
-                <TabsContent value="fund-flow" className="m-0 h-full min-h-0 overflow-auto">
+                <TabsContent value="fund-flow" className="m-0 flex h-full min-h-0 flex-col overflow-hidden">
                   <IndustryFundFlowTable />
                 </TabsContent>
               </div>

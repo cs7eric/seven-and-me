@@ -343,6 +343,28 @@ class FundamentalsService:
             return self._adapter.get_governance(symbol, section=section).to_dict()
         return self._execute_with_cache('governance', f'{symbol}-{section}', _produce)
 
+    # -------- 公告 / 新闻 / 路演 / 研报 --------
+
+    def get_announcements(self, symbol: str) -> dict[str, Any]:
+        def _produce() -> dict[str, Any]:
+            return self._adapter.get_announcements(symbol).to_dict()
+        return self._execute_with_cache('announcements', symbol, _produce)
+
+    def get_news(self, symbol: str) -> dict[str, Any]:
+        def _produce() -> dict[str, Any]:
+            return self._adapter.get_news(symbol).to_dict()
+        return self._execute_with_cache('news', symbol, _produce)
+
+    def get_roadshows(self, symbol: str) -> dict[str, Any]:
+        def _produce() -> dict[str, Any]:
+            return self._adapter.get_roadshows(symbol).to_dict()
+        return self._execute_with_cache('roadshows', symbol, _produce)
+
+    def get_company_news(self, symbol: str, section: str = "gsyj") -> dict[str, Any]:
+        def _produce() -> dict[str, Any]:
+            return self._adapter.get_company_news(symbol, section=section).to_dict()
+        return self._execute_with_cache('company_news', f'{symbol}-{section}', _produce)
+
     def ping(self) -> dict[str, Any]:
         try:
             return self._adapter.ping()

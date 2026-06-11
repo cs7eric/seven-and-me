@@ -580,15 +580,98 @@ function buildMainPaneContent(indicators: string[], maLines: number[]) {
   return content
 }
 
+// 各技术指标 (主图 / 副图) 之间的颜色必须彼此完全不重叠:
+// klinecharts v10 内置 `indicator.lines[]` 是全局共享的调色板, lines[0] 默认是 #FF9600 (橙),
+// 所以 MA / BOLL / MACD / EXPMA 等指标的"第一根线"都会落在同一个色。
+// 这里在 createIndicator 之后用 overrideIndicator 给每个指标覆盖自己的配色, 严格保证:
+//   - MA 的 5 根线之间色相 / 亮度差足够大 (远距色相 + 高饱和)
+//   - MA 的任何一根线不与 BOLL / MACD / EXPMA 中任何一根线同色, 也不在任何相邻色阶上
+//   - BOLL / MACD / EXPMA 自己也彼此错开
+// 主调色板选用 Material A 系列 (饱和度最高的几档), 共 12 个色相彼此距离 ≥ 40°:
+/**
+ * MA — 5 色, 主图主角, 全部 100% 饱和度 Material A 系:
+ *   MA5  #FF1744  red-A400         hue  351°
+ *   MA10 #FF9100  orange-A700      hue   34°   (vs MA5 红: 43° 差距)
+ *   MA20 #00E676  green-A400       hue  146°   (vs MA10 橙: 112° 差距)
+ *   MA30 #2979FF  blue-A400        hue  217°   (vs MA20 绿:  71° 差距)
+ *   MA60 #D500F9  purple-A400      hue  284°   (vs MA30 蓝:  67° 差距)
+ *
+ * BOLL — 3 色, 全部跟 MA 不同色相:
+ *   UP   #FFEA00  yellow          hue   56°   (vs MA10 橙: 22° 差, 但亮度差距显著)
+ *   MID  #00B8D4  cyan-A700       hue  187°   (vs MA30 蓝: 30° 差, 走 cyan-cyan 边界清晰)
+ *   DOWN #6200EA  deepPurple-A700 hue  266°   (vs MA60 品红: 18° 差, 但亮度从 A400 → A700 区分)
+ *
+ * MACD — 2 色, 中性 + 暗:
+ *   DIF  #37474F  blueGrey-800    无色相 (中性灰)
+ *   DEA  #C6FF00  lime-A200       hue   72°   (跟 MA20 绿 146° 差 74°, 黄绿 vs 纯绿清晰区分)
+ *
+ * EXPMA / EMA — 2 色, 暗度档位跟 MA 错开:
+ *   EMA12 #33691E lightGreen-900  hue  103°   (vs MA20 绿 A400 146°: 走暗度区分)
+ *   EMA50 #1A237E indigo-900      hue  232°   (vs MA30 蓝 A400 217°: 走暗度区分)
+ */
+
+const MA_LINE_COLORS = [
+  "#FF1744", // MA5
+  "#FF9100", // MA10
+  "#00E676", // MA20
+  "#2979FF", // MA30
+  "#D500F9", // MA60
+] as const
+
+const BOLL_LINE_COLORS = [
+  "#FFEA00", // BOLL UP   (yellow)
+  "#00B8D4", // BOLL MID  (cyan)
+  "#6200EA", // BOLL DOWN (deep purple)
+] as const
+
+const MACD_LINE_COLORS = [
+  "#37474F", // MACD DIF (neutral slate)
+  "#C6FF00", // MACD DEA (bright lime)
+] as const
+
+const EXPMA_LINE_COLORS = [
+  "#33691E", // EMA12 (dark green - vs MA20 bright green)
+  "#1A237E", // EMA50 (dark indigo - vs MA30 bright blue)
+] as const
+
+function applyIndicatorLineColors(
+  chart: Chart,
+  name: string,
+  colors: readonly string[],
+) {
+  if (colors.length === 0) return
+  const lines = colors.map((color) => ({
+    color,
+    size: 1,
+    style: "solid" as const,
+    smooth: false,
+    dashedValue: [2, 2],
+  }))
+  // overrideIndicator({name, styles: {lines}}) 只影响该 name 的指标实例, 不会污染其它指标
+  chart.overrideIndicator({ name, styles: { lines } })
+}
+
 function syncIndicators(chart: Chart, indicators: string[], maLines: number[], hasTurnover: boolean) {
   chart.removeIndicator({})
 
-  buildMainPaneContent(indicators, maLines).forEach((indicator) => {
+  const mainContent = buildMainPaneContent(indicators, maLines)
+  mainContent.forEach((indicator) => {
     chart.createIndicator(indicator, {
       isStack: true,
       pane: { id: MAIN_PANE_ID },
     })
   })
+
+  // 给主图指标各自上色, 每个 name 一次 (按创建顺序)
+  if (maLines.length > 0) {
+    applyIndicatorLineColors(chart, "MA", MA_LINE_COLORS)
+  }
+  if (indicators.includes("EXPMA")) {
+    applyIndicatorLineColors(chart, "EMA", EXPMA_LINE_COLORS)
+  }
+  if (indicators.includes("BOLL")) {
+    applyIndicatorLineColors(chart, "BOLL", BOLL_LINE_COLORS)
+  }
 
   if (hasTurnover && indicators.includes("AMOUNT")) {
     chart.createIndicator("AMOUNT", {
@@ -602,6 +685,7 @@ function syncIndicators(chart: Chart, indicators: string[], maLines: number[], h
       isStack: false,
       pane: { id: MACD_PANE_ID, height: 148, minHeight: 104, dragEnabled: true, order: 2 },
     })
+    applyIndicatorLineColors(chart, "MACD", MACD_LINE_COLORS)
   }
 }
 
@@ -621,6 +705,7 @@ export function ChartPanel({
   selectedBarTimestamps,
   onSelectionChange,
   onAnalyzeSelection,
+  yAxisPosition = "right",
 }: {
   bars: StockKlineBar[]
   annotations: StockAnnotation[]
@@ -637,6 +722,8 @@ export function ChartPanel({
   selectedBarTimestamps?: number[]
   onSelectionChange?: (items: ChartPanelSelectionItem[]) => void
   onAnalyzeSelection?: (item: ChartPanelSelectionItem) => void
+  /** 价格轴位置, 默认右边 */
+  yAxisPosition?: "left" | "right"
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<Chart | null>(null)
@@ -1067,6 +1154,9 @@ export function ChartPanel({
         },
       },
       layout: {
+        basicParams: {
+          yAxisPosition,
+        },
         panes: [
           { type: "candle", options: { id: MAIN_PANE_ID } },
           { type: "xAxis" },
@@ -1094,7 +1184,7 @@ export function ChartPanel({
       dispose(chart)
       chartRef.current = null
     }
-  }, [])
+  }, [yAxisPosition])
 
   useEffect(() => {
     const chart = chartRef.current

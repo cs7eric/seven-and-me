@@ -528,3 +528,201 @@ class ThemeMarket:
             "raw": self.raw,
             "fetched_at": self.fetched_at,
         }
+
+
+# ---------------------------------------------------------------------------
+# 公告 / 新闻 / 研报 / 路演 (CWSearch.tzx_rcache + CWServ.tdxf10_gg_gszx)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AnnouncementItem:
+    """个股公告一条。
+
+    字段含义 (来自 eltdx CWSearch.tzx_rcache announcements):
+      - issue_date: 公告日期 (yyyy-mm-dd hh:mm:ss)
+      - title: 公告标题
+      - typecode: 公告类型编号
+      - typename: 公告类型名 (e.g. 利润分配 / 股东大会 / 用户上传文件)
+      - rec_id: 详情记录 ID, 配合 detail() 查正文
+      - tableid: 表 ID
+      - url: 原文 PDF 链接模板
+      - redistime: 收录时间
+      - source: 来源 (e.g. 上交所 / 深交所)
+    """
+
+    issue_date: str | None = None
+    title: str | None = None
+    typecode: str | None = None
+    typename: str | None = None
+    rec_id: str | None = None
+    tableid: str | None = None
+    url: str | None = None
+    redistime: str | None = None
+    source: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+
+@dataclass
+class Announcements:
+    """公告列表 (按时间倒序)。"""
+
+    symbol: str
+    items: list[AnnouncementItem] = field(default_factory=list)
+    raw: dict[str, Any] | None = None
+    fetched_at: str = field(default_factory=_utcnow_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "items": [item.to_dict() for item in self.items],
+            "count": len(self.items),
+            "raw": self.raw,
+            "fetched_at": self.fetched_at,
+        }
+
+
+@dataclass
+class NewsItem:
+    """个股新闻一条。
+
+    字段含义:
+      - issue_date: 新闻时间
+      - title: 标题
+      - rec_id: 详情 ID, 配合 detail() 查正文
+      - tableid: 表 ID
+      - redistime: 收录时间
+      - source: 来源 (e.g. 财联社 / e公司 / 上证报)
+      - relatecolumn: 相关栏目 ID (可能为 null)
+    """
+
+    issue_date: str | None = None
+    title: str | None = None
+    rec_id: str | None = None
+    tableid: str | None = None
+    redistime: str | None = None
+    source: str | None = None
+    relatecolumn: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+
+@dataclass
+class NewsList:
+    """新闻列表 (按时间倒序)。"""
+
+    symbol: str
+    items: list[NewsItem] = field(default_factory=list)
+    raw: dict[str, Any] | None = None
+    fetched_at: str = field(default_factory=_utcnow_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "items": [item.to_dict() for item in self.items],
+            "count": len(self.items),
+            "raw": self.raw,
+            "fetched_at": self.fetched_at,
+        }
+
+
+@dataclass
+class RoadshowItem:
+    """路演 / 业绩说明会一条。
+
+    字段含义:
+      - title: 标题
+      - roadshow_type: 类型 (业绩说明会 / 投资者接待 / ...)
+      - start_date: 开始日期 (yyyyMMdd)
+      - start_time / end_time: 开始 / 结束时间 (HH:mm)
+      - summary: 简介 (可能 null)
+      - url: 原文链接
+    """
+
+    title: str | None = None
+    roadshow_type: str | None = None
+    start_date: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    summary: str | None = None
+    url: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+
+@dataclass
+class Roadshows:
+    """路演列表 (按日期倒序)。"""
+
+    symbol: str
+    items: list[RoadshowItem] = field(default_factory=list)
+    raw: dict[str, Any] | None = None
+    fetched_at: str = field(default_factory=_utcnow_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "items": [item.to_dict() for item in self.items],
+            "count": len(self.items),
+            "raw": self.raw,
+            "fetched_at": self.fetched_at,
+        }
+
+
+@dataclass
+class CompanyNewsItem:
+    """公司研报 / 监管措施一条 (CWServ.tdxf10_gg_gszx, 字段 T0xx)。
+
+    字段含义:
+      - T004: 评级 (买入 / 增持 / 中性 / ...)
+      - T009: 分析师 (逗号分隔)
+      - T011: 研报记录 ID, 配合 detail() 查正文
+      - T012: 发布日期 (yyyyMMdd)
+      - T039: 研报标题
+      - nflag: 标记 (0=研报, 其它=监管措施)
+      - ybdz: 研报正文 hash (定位 detail 用)
+    """
+
+    rating: str | None = None
+    analysts: str | None = None
+    rec_id: str | None = None
+    issue_date: str | None = None
+    title: str | None = None
+    nflag: str | None = None
+    doc_hash: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none({
+            "rating": self.rating,
+            "analysts": self.analysts,
+            "rec_id": self.rec_id,
+            "issue_date": self.issue_date,
+            "title": self.title,
+            "nflag": self.nflag,
+            "doc_hash": self.doc_hash,
+        })
+
+
+@dataclass
+class CompanyNews:
+    """研报 / 监管措施列表。"""
+
+    symbol: str
+    section: str
+    items: list[CompanyNewsItem] = field(default_factory=list)
+    raw: dict[str, Any] | None = None
+    fetched_at: str = field(default_factory=_utcnow_iso)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "section": self.section,
+            "items": [item.to_dict() for item in self.items],
+            "count": len(self.items),
+            "raw": self.raw,
+            "fetched_at": self.fetched_at,
+        }

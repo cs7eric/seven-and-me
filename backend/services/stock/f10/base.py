@@ -9,14 +9,18 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from .schemas import (
+    Announcements,
     BusinessComposition,
+    CompanyNews,
     CompanyProfile,
     FinanceDiagnosis,
     FinanceReport,
     Governance,
     LimitUpDownCount,
+    NewsList,
     ProfitForecast,
     RankingDetail,
+    Roadshows,
     SectorMarket,
     StockInfo,
     StockScore,
@@ -161,6 +165,20 @@ class FundamentalsAdapter(ABC):
 
     @abstractmethod
     def get_governance(self, symbol: str, section: str = "wgcl") -> Governance: ...
+
+    # -------- 公告 / 新闻 / 路演 / 研报 (eltdx 1.0+) --------
+
+    @abstractmethod
+    def get_announcements(self, symbol: str) -> Announcements: ...
+
+    @abstractmethod
+    def get_news(self, symbol: str) -> NewsList: ...
+
+    @abstractmethod
+    def get_roadshows(self, symbol: str) -> Roadshows: ...
+
+    @abstractmethod
+    def get_company_news(self, symbol: str, section: str = "gsyj") -> CompanyNews: ...
 
     # -------- 健康检查 --------
 
