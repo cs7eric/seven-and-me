@@ -1,0 +1,27 @@
+{
+  "job_name": "ths_industry_constituents_daily",
+  "description": "每个交易日 17:00 (北京时间) 跑 90 行业全量成分股 (hexin-v 破解), 落盘 reference/ths-industry/constituents/{code}.json, API 默认从磁盘读 → 非交易时间 drawer 自动拿到 17:00 那次最新落盘数据",
+  "enabled": true,
+  "schedule": {
+    "run_time": "17:00",
+    "trading_day_only": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "inter_industry_sleep_seconds": 1.5,
+  "inter_industry_sleep_jitter": 0.5,
+  "last_run_at": "2026-06-11T11:29:32.377797",
+  "last_run_date": "2026-06-11",
+  "last_status": "success",
+  "last_industry_count": 90,
+  "last_total_rows": 4658,
+  "last_failed_codes": [],
+  "last_duration_seconds": 463.436,
+  "last_error": null,
+  "total_runs": 1,
+  "total_trading_day_runs": 0,
+  "total_industries_crawled": 90,
+  "total_failures": 0,
+  "total_skipped_non_trading_day": 0,
+  "_saved_at": "2026-06-11T12:30:41.447030"
+}

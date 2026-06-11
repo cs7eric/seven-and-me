@@ -1,7 +1,18 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from flask import Blueprint, jsonify, request
+
+
+# ---------------------------------------------------------------------------
+# 北京时间 (UTC+8) 辅助, 给 ths_industry_constituents_file 用
+# ---------------------------------------------------------------------------
+def _beijing_now() -> datetime:
+    return datetime.utcnow() + timedelta(hours=8)
+
+
+def _beijing_today():
+    return _beijing_now().date()
 
 from backend.adapters.market.eastmoney import fetch_stock_meta, fetch_market_breadth
 from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
@@ -1372,14 +1383,14 @@ def ths_industry_constituents_by_code_cached():
 
 @stock_chart_bp.route('/api/stock-chart/ths-industry/constituents-file')
 def ths_industry_constituents_file():
-    """读磁盘落盘, 不查内存缓存, 不爬网络. 走 join 视图: index 50 只 code + stock-universe 14 列行情.
+    """读磁盘落盘, 不爬网络. 单一来源: reference/ths-industry/constituents/{code}.json.
 
     URL: ?name=半导体  或  ?code=881157
     适用: 资金流 drawer 「打开默认」高频场景, 避免每次都打 q.10jqka 触发 hexin-v
-    数据源:
-      - membership: reference/ths-industry/constituents_index.json (50 只 code)
-      - 行情:      reference/stock-universe/ths_industry/constituents/{code}.json (14 列)
-    返回: 14 列完整行情 (序号/代码/名称/现价/涨跌幅/涨跌/涨速/换手/量比/振幅/成交额/流通股/流通市值/市盈率)
+    数据流:
+      - 交易日 17:00 由 ths_industry_constituents_daily_scheduler 收盘后 hexin-v 重爬落盘
+      - 非交易时间 / 周末 / 节假日: 永远读磁盘 (不会反复爬, drawer 自动拿到 17:00 那次最新落盘)
+    返回: 14 列完整行情 + 元信息 (isTradingDay / tradingHoursMode / snapshotDate / dataSource)
     """
     from backend.services.stock.f10.ths_industry_service import (
         code_to_name,
@@ -1387,6 +1398,11 @@ def ths_industry_constituents_file():
     )
     from backend.services.stock.f10.ths_industry_constituents_service import (
         read_industry_constituents_joined,
+    )
+    from backend.services.stock.trading_calendar import (
+        is_trade_time,
+        is_trading_day,
+        previous_trading_day,
     )
 
     name_or_code = (request.args.get("name") or request.args.get("code") or "").strip()
@@ -1410,9 +1426,28 @@ def ths_industry_constituents_file():
         return jsonify({
             "ok": False,
             "code": code,
-            "error": f"no constituents for {code} (industry not in index)",
+            "error": f"no persisted constituents for {code} "
+                     f"(reference/ths-industry/constituents/{code}.json 不存在, "
+                     f"请等 17:00 收盘后 hexin-v 自动落盘, 或手动调 trigger_ths_industry_constituents_daily)",
             "rows": [],
         }), 404
+
+    # 交易时间窗状态 (用于前端判断 "这是今日实时" 还是 "上一交易日收盘")
+    is_td = is_trading_day()
+    is_open = is_trade_time()
+    if is_td and is_open:
+        trading_hours_mode = "trading"   # 9:30-11:30 / 13:00-15:00 盘内
+    elif is_td:
+        trading_hours_mode = "trading_day_off_hours"  # 交易日但非盘内 (午休 / 收盘后)
+    else:
+        trading_hours_mode = "non_trading_day"  # 周末 / 节假日
+
+    # 数据快照日期 (17:00 后: 今日, 17:00 前: 上一交易日)
+    snapshot_date = (
+        _beijing_today()
+        if (is_td and _beijing_now().hour >= 17)
+        else previous_trading_day()
+    )
 
     return jsonify({
         "ok": True,
@@ -1420,9 +1455,14 @@ def ths_industry_constituents_file():
         "code": code,
         "count": payload.get("count") or 0,
         "matched": payload.get("matched") or 0,
-        "indexFetchedAt": payload.get("indexFetchedAt"),
         "rowsFetchedAt": payload.get("rowsFetchedAt"),
         "rows": payload.get("rows") or [],
+        # 持久化 / 交易时间窗元信息
+        "dataSource": "disk",       # 这个端点永远读磁盘, 不爬网络
+        "isTradingDay": is_td,
+        "isMarketOpen": is_open,
+        "tradingHoursMode": trading_hours_mode,
+        "snapshotDate": snapshot_date.isoformat() if snapshot_date else None,
     })
 
 

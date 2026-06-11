@@ -47,6 +47,62 @@ def _constituents_path(code: str) -> Path:
     return CONSTITUENTS_DIR / f"{code}.json"
 
 
+def _normalize_code6(value: Any) -> str | None:
+    """把股票代码标准化成 6 位字符串, 不足前面补 0.
+
+    q.10jqka / akshare / eastmoney 等数据源的 ``代码`` 字段常常返 number 而不是 string,
+    6 位股票代码 ``003030`` 会被解析成 int 存盘 (丢了前导 0), 读取时再 ``str(...)`` 只
+    拿回 ``"3030"``. 这个 helper 统一 pad 到 6 位, 跟 API 契约 (``代码: 6 位 string``) 对齐.
+
+    容忍的输入:
+      - ``3030`` (int)        -> ``"003030"``
+      - ``"3030"`` (str)      -> ``"003030"``
+      - ``"003030"`` (str)    -> ``"003030"`` (不重复补)
+      - ``"3030.0"`` (str)    -> ``"003030"`` (去小数)
+      - ``600597`` (int)      -> ``"600597"`` (不重复补)
+      - ``None`` / ``""``     -> ``None``
+    非数字内容 (e.g. ``"--"``) 原样返回, 让上游判断.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    # 去掉可能的小数点 (e.g. "3030.0" -> "3030")
+    if "." in s:
+        s = s.split(".", 1)[0]
+    if not s.isdigit():
+        return s
+    return s.zfill(6)
+
+
+def _normalize_row_code(row: dict[str, Any]) -> dict[str, Any]:
+    """对单行做 ``代码`` 字段归一化 (其他字段不动). 用于 fetcher 落盘 / 读盘时统一. """
+    if not isinstance(row, dict):
+        return row
+    raw = row.get("代码")
+    if raw is None or raw == "":
+        return row
+    normalized = _normalize_code6(raw)
+    if normalized is not None and normalized != raw:
+        row["代码"] = normalized
+    return row
+
+
+def _normalize_rows_codes(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """对一组 row 做 ``代码`` 归一化, in-place 返回原 list. 容忍 None / 非 dict."""
+    if not rows:
+        return rows or []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            _normalize_row_code(row)
+            out.append(row)
+        else:
+            out.append(row)
+    return out
+
+
 def _serialize(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
@@ -111,6 +167,8 @@ def refresh_industry_constituents(code: str) -> dict[str, Any]:
         fetch_industry_constituents_all,
     )
     raw = fetch_industry_constituents_all(code)
+    # fetcher 返的 rows[].代码 是 number, 落盘前 pad 到 6 位 string, 跟 API 契约对齐
+    raw["rows"] = _normalize_rows_codes(raw.get("rows"))
     payload = _serialize(raw)
     try:
         write_json_file(_constituents_path(code), payload)
@@ -159,7 +217,9 @@ def read_industry_constituents_from_index(code: str) -> dict[str, Any] | None:
     return {
         "ok": True,
         "code": code,
-        "stocks": [str(s) for s in stocks],
+        "stocks": [
+            s for s in (_normalize_code6(x) for x in stocks) if s is not None
+        ],
         "count": len(stocks),
         "fetchedAt": index.get("fetchedAt"),
         "source": index.get("source"),
@@ -259,9 +319,15 @@ def read_industry_constituents_joined(code: str) -> dict[str, Any] | None:
     for src_row in raw_rows:
         if not isinstance(src_row, dict):
             continue
+        # ``代码`` 字段兼容旧落盘 (fetcher 写的是 number, 丢了前导 0) → 6 位 string
+        code_value = src_row.get("代码")
+        if code_value is None or code_value == "":
+            code_str: str | None = None
+        else:
+            code_str = _normalize_code6(code_value)
         rows.append({
             "序号": src_row.get("序号"),
-            "代码": str(src_row.get("代码")) if src_row.get("代码") is not None else None,
+            "代码": code_str,
             "名称": src_row.get("名称"),
             "现价": src_row.get("现价"),
             "涨跌幅(%)": src_row.get("涨跌幅(%)"),

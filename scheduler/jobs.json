@@ -63,6 +63,16 @@
       "registered_at": "2026-06-08T20:20:00+08:00"
     },
     {
+      "id": "ths_industry_constituents_daily",
+      "name": "同花顺 90 行业成分股 (每个交易日 17:00 收盘后 hexin-v 抓快照)",
+      "description": "每个交易日 17:00 (北京时间, A 股收盘后) 全量重爬 90 行业成分股 (hexin-v 破解), 落盘 reference/ths-industry/constituents/{code}.json; 非交易时间 drawer 自动从磁盘读, 不反复爬网络",
+      "config_file": "ths_industry_constituents_daily_job.json",
+      "service_module": "backend.services.scheduler.ths_industry_constituents_daily_scheduler",
+      "service_class": "ThsIndustryConstituentsDailyScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-10T22:30:00+08:00"
+    },
+    {
       "id": "application_analysis",
       "name": "个股应用分析",
       "description": "对 application-analysis targets 中 enabled 标的按 interval_minutes 节奏生成 AI 分析 + 盘后 15:30 跑 recent30 快照",

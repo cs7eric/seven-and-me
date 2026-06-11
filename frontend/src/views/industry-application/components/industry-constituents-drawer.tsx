@@ -251,6 +251,21 @@ function formatFetchedAt(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+function describeTradingMode(
+  mode: "trading" | "trading_day_off_hours" | "non_trading_day" | undefined,
+): string {
+  switch (mode) {
+    case "trading":
+      return "盘内"
+    case "trading_day_off_hours":
+      return "盘后/午休"
+    case "non_trading_day":
+      return "非交易日"
+    default:
+      return "—"
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 主组件
 // ---------------------------------------------------------------------------
@@ -362,19 +377,23 @@ export function IndustryConstituentsDrawer({
               </DrawerTitle>
               <DrawerDescription className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                 <span>同花顺行业成分股 · 14 列行情</span>
+                {data?.snapshotDate ? (
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "border-slate-200 bg-slate-50 text-[10px] font-normal",
+                      data.tradingHoursMode === "trading" && "border-blue-200 bg-blue-50 text-blue-700",
+                      data.tradingHoursMode === "non_trading_day" && "border-amber-200 bg-amber-50 text-amber-700",
+                    )}
+                  >
+                    快照 {data.snapshotDate} · {describeTradingMode(data.tradingHoursMode)}
+                  </Badge>
+                ) : null}
                 {data?.rowsFetchedAt ? (
                   <>
                     <span>·</span>
                     <span>
-                      行情抓取: <span className="text-slate-700">{formatFetchedAt(data.rowsFetchedAt)}</span>
-                    </span>
-                  </>
-                ) : null}
-                {data?.indexFetchedAt ? (
-                  <>
-                    <span>·</span>
-                    <span>
-                      索引: <span className="text-slate-700">{formatFetchedAt(data.indexFetchedAt)}</span>
+                      抓取: <span className="text-slate-700">{formatFetchedAt(data.rowsFetchedAt)}</span>
                     </span>
                   </>
                 ) : null}

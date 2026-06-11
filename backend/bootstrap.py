@@ -29,6 +29,10 @@ from backend.services.scheduler.ths_industry_constituents_scheduler import (
     is_ths_industry_constituents_scheduler_enabled,
     start_ths_industry_constituents_scheduler,
 )
+from backend.services.scheduler.ths_industry_constituents_daily_scheduler import (
+    is_ths_industry_constituents_daily_scheduler_enabled,
+    start_ths_industry_constituents_daily_scheduler,
+)
 from backend.services.stock.application_analysis_scheduler import (
     is_application_analysis_scheduler_enabled,
     start_application_analysis_scheduler,
@@ -85,3 +89,8 @@ def register_blueprints(app: Flask) -> None:
             start_ths_industry_constituents_scheduler()
         except Exception as exc:
             logger.exception('THS Industry Constituents scheduler start failed: %s', exc)
+    if is_ths_industry_constituents_daily_scheduler_enabled():
+        try:
+            start_ths_industry_constituents_daily_scheduler()
+        except Exception as exc:
+            logger.exception('THS Industry Constituents Daily scheduler start failed: %s', exc)

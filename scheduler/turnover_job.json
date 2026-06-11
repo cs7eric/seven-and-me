@@ -20,15 +20,15 @@
   },
   "timezone_offset_hours": 8,
   "tick_seconds": 30,
-  "last_run_at": "2026-06-10T16:00:15.433126",
-  "last_run_slot": "16:00",
-  "last_run_date": "2026-06-10",
+  "last_run_at": "2026-06-11T11:30:23.498365",
+  "last_run_slot": "11:30",
+  "last_run_date": "2026-06-11",
   "last_status": "success",
   "last_targets_processed": 2,
-  "last_duration_seconds": 3.518,
+  "last_duration_seconds": 3.985,
   "last_error": null,
-  "total_runs": 56,
-  "total_targets_processed": 121,
+  "total_runs": 62,
+  "total_targets_processed": 133,
   "total_failures": 0,
-  "_saved_at": "2026-06-10T22:11:27.971640"
+  "_saved_at": "2026-06-11T12:30:41.419265"
 }

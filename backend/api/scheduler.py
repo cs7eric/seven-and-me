@@ -49,6 +49,12 @@ from backend.services.scheduler.ths_industry_constituents_scheduler import (
     start_ths_industry_constituents_scheduler,
     stop_ths_industry_constituents_scheduler,
 )
+from backend.services.scheduler.ths_industry_constituents_daily_scheduler import (
+    get_ths_industry_constituents_daily_scheduler,
+    get_ths_industry_constituents_daily_scheduler_status,
+    start_ths_industry_constituents_daily_scheduler,
+    stop_ths_industry_constituents_daily_scheduler,
+)
 from backend.services.stock.application_analysis_scheduler import (
     get_application_analysis_scheduler_status,
     scheduler as application_analysis_scheduler,
@@ -60,7 +66,7 @@ from backend.utils.json_io import read_json_file, write_json_file
 scheduler_bp = Blueprint('scheduler_mgmt', __name__)
 
 # 三个内置 job 的 id 集合，用于校验路径。
-_KNOWN_JOB_IDS = {'turnover_refresh', 'auction_ai_analysis', 'application_analysis', 'stock_universe_refresh', 'ths_industry_constituents_weekly'}
+_KNOWN_JOB_IDS = {'turnover_refresh', 'auction_ai_analysis', 'application_analysis', 'stock_universe_refresh', 'ths_industry_constituents_weekly', 'ths_industry_constituents_daily'}
 
 # application_analysis 的 enabled 写入 ``scheduler.json``（状态文件），其余两个走
 # ``scheduler/<id>.json``。这里集中处理。
@@ -118,7 +124,7 @@ def _save_job_config(config_file: str, payload: dict[str, Any]) -> None:
 
 def _supports_enable(job_id: str) -> bool:
     """application_analysis 没有全局 enabled（靠 per-target enabled），所以不暴露。"""
-    return job_id in {'turnover_refresh', 'auction_ai_analysis', 'stock_universe_refresh', 'ths_industry_constituents_weekly'}
+    return job_id in {'turnover_refresh', 'auction_ai_analysis', 'stock_universe_refresh', 'ths_industry_constituents_weekly', 'ths_industry_constituents_daily'}
 
 
 def _get_live_status(job_id: str) -> dict[str, Any]:
@@ -132,6 +138,8 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         return get_stock_universe_scheduler_status()
     if job_id == 'ths_industry_constituents_weekly':
         return get_ths_industry_constituents_scheduler_status()
+    if job_id == 'ths_industry_constituents_daily':
+        return get_ths_industry_constituents_daily_scheduler_status()
     return {}
 
 
@@ -146,6 +154,8 @@ def _start_scheduler(job_id: str) -> None:
         start_stock_universe_scheduler()
     elif job_id == 'ths_industry_constituents_weekly':
         start_ths_industry_constituents_scheduler()
+    elif job_id == 'ths_industry_constituents_daily':
+        start_ths_industry_constituents_daily_scheduler()
 
 
 def _stop_scheduler(job_id: str) -> None:
@@ -159,6 +169,8 @@ def _stop_scheduler(job_id: str) -> None:
         stop_stock_universe_scheduler()
     elif job_id == 'ths_industry_constituents_weekly':
         stop_ths_industry_constituents_scheduler()
+    elif job_id == 'ths_industry_constituents_daily':
+        stop_ths_industry_constituents_daily_scheduler()
 
 
 def _trigger_scheduler(job_id: str) -> dict[str, Any]:
@@ -207,6 +219,11 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
         }
     if job_id == 'ths_industry_constituents_weekly':
         sched = get_ths_industry_constituents_scheduler()
+        if sched is None:
+            return {'ok': False, 'error': 'scheduler not initialized'}
+        return sched.trigger_now()
+    if job_id == 'ths_industry_constituents_daily':
+        sched = get_ths_industry_constituents_daily_scheduler()
         if sched is None:
             return {'ok': False, 'error': 'scheduler not initialized'}
         return sched.trigger_now()

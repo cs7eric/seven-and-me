@@ -1,33 +1,33 @@
 {
   "name": "market_pulse_snapshot",
-  "lastRunAt": "2026-06-10T15:35:00",
+  "lastRunAt": "2026-06-11T11:18:00",
   "lastRunOk": true,
   "lastRunError": null,
-  "lastInsideRefreshAt": "2026-06-10T14:59:00",
+  "lastInsideRefreshAt": "2026-06-11T11:18:00",
   "lastCloseSnapshotAt": "2026-06-10T15:30:00",
-  "totalInside": 130,
+  "totalInside": 148,
   "totalClose": 3,
-  "schedulerStartedAt": "2026-06-10T22:11:27",
+  "schedulerStartedAt": "2026-06-11T12:30:41",
   "lastTopN": [
     {
-      "name": "保险",
-      "changePct": 3.19
+      "name": "电子化学品",
+      "changePct": 3.31
     },
     {
-      "name": "银行",
-      "changePct": 1.91
+      "name": "小金属",
+      "changePct": 3.26
     },
     {
-      "name": "旅游及酒店",
-      "changePct": 1.88
+      "name": "厨卫电器",
+      "changePct": 1.26
     },
     {
-      "name": "证券",
-      "changePct": 1.14
+      "name": "油气开采及服务",
+      "changePct": 0.92
     },
     {
-      "name": "化学制品",
-      "changePct": 0.89
+      "name": "贵金属",
+      "changePct": 0.54
     }
   ],
   "lastConstituentsAt": "2026-06-10T15:35:00",

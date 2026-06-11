@@ -903,6 +903,21 @@ export interface IndustryConstituentsIndexResponse {
   /** 行情文件 (per-industry) 的抓取时间 */
   rowsFetchedAt: string | null
   rows: IndustryConstituentRow[]
+  /** 端点永远从磁盘读 (ths_industry_constituents_daily_scheduler 17:00 收盘后落盘) */
+  dataSource: "disk"
+  /** 今天是不是 A 股交易日 */
+  isTradingDay: boolean
+  /** 当前是不是盘内 (9:30-11:30 / 13:00-15:00) */
+  isMarketOpen: boolean
+  /**
+   * 交易时间窗状态:
+   *   - "trading":                  盘内, 14 列数据是 "今天盘中" (来自上一交易日 17:00 持久化)
+   *   - "trading_day_off_hours":     交易日但非盘内 (午休 / 收盘后), 数据同上
+   *   - "non_trading_day":           非交易日 (周末 / 节假日)
+   */
+  tradingHoursMode: "trading" | "trading_day_off_hours" | "non_trading_day"
+  /** 数据快照日期: 17:00 后 = 今日, 17:00 前 = 上一交易日 */
+  snapshotDate: string | null
   error?: string
 }
 
