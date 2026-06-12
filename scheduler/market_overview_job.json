@@ -1,0 +1,25 @@
+{
+  "name": "market_overview_snapshot",
+  "lastRunAt": "2026-06-12T15:35:00",
+  "lastRunOk": true,
+  "lastRunError": null,
+  "lastInsideRefreshAt": "2026-06-12T14:59:09",
+  "lastCloseSnapshotAt": "2026-06-12T15:35:00",
+  "lastWarmupAt": null,
+  "totalInside": 34,
+  "totalClose": 1,
+  "totalWarmup": 0,
+  "schedulerStartedAt": "2026-06-12T19:00:45",
+  "lastInside": {
+    "tradingDate": "2026-06-12",
+    "totalAmount": 32086.21,
+    "mainNetInflow": 1066444.8,
+    "elapsedMs": 87533
+  },
+  "lastClose": {
+    "tradingDate": "2026-06-12",
+    "totalAmount": 32361.31,
+    "mainNetInflow": 1066444.8,
+    "elapsedMs": 93174
+  }
+}

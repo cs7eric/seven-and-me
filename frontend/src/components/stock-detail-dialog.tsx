@@ -38,6 +38,7 @@ import { cn } from "@/lib/utils"
 import {
   fetchStockKlines,
   fetchStockMeta,
+  fetchStockSectors,
   fetchStockValuation,
   fetchStockBusinessComposition,
   fetchStockFinanceReport,
@@ -51,6 +52,7 @@ import {
   type StockMetaResponse,
   type StockNewsResponse,
   type StockRoadshowsResponse,
+  type StockSectorsResponse,
   type StockValuationResponse,
 } from "@/lib/api"
 import { ChartPanel } from "@/views/stock-chart/components/chart-panel"
@@ -115,6 +117,7 @@ export function StockDetailDialog({
 
   // 右侧 3 个数据卡的状态
   const [meta, setMeta] = useState<StockMetaResponse | null>(null)
+  const [sectors, setSectors] = useState<StockSectorsResponse | null>(null)
   const [valuation, setValuation] = useState<StockValuationResponse | null>(null)
   const [businessComp, setBusinessComp] = useState<StockBusinessCompositionResponse | null>(null)
   const [financeReport, setFinanceReport] = useState<Awaited<ReturnType<typeof fetchStockFinanceReport>> | null>(null)
@@ -174,6 +177,7 @@ export function StockDetailDialog({
     let active = true
     setF10Loading(true)
     setMeta(null)
+    setSectors(null)
     setValuation(null)
     setBusinessComp(null)
     setFinanceReport(null)
@@ -184,6 +188,7 @@ export function StockDetailDialog({
 
     Promise.allSettled([
       fetchStockMeta({ targetType: "stock", symbol: stockCode }),
+      fetchStockSectors(stockCode),
       fetchStockValuation(stockCode, { limit: 5 }),
       fetchStockBusinessComposition(stockCode, { limit: 6 }),
       fetchStockFinanceReport(stockCode, "zcfzb"),
@@ -191,9 +196,10 @@ export function StockDetailDialog({
       fetchStockNews(stockCode),
       fetchStockRoadshows(stockCode),
       fetchStockCompanyNews(stockCode, { section: "gsyj" }),
-    ]).then(([m, v, b, f, a, n, r, cn]) => {
+    ]).then(([m, s, v, b, f, a, n, r, cn]) => {
       if (!active) return
       if (m.status === "fulfilled") setMeta(m.value)
+      if (s.status === "fulfilled") setSectors(s.value)
       if (v.status === "fulfilled") setValuation(v.value)
       if (b.status === "fulfilled") setBusinessComp(b.value)
       if (f.status === "fulfilled") setFinanceReport(f.value)
@@ -216,6 +222,7 @@ export function StockDetailDialog({
       setBars([])
       setBarsLoading(false)
       setMeta(null)
+      setSectors(null)
       setValuation(null)
       setBusinessComp(null)
       setFinanceReport(null)
@@ -427,6 +434,7 @@ export function StockDetailDialog({
                       valuation={latestValuation}
                       loading={f10Loading && !latestBar && !latestValuation}
                     />
+                    <SectorAffiliationCard sectors={sectors} meta={meta} />
                     <section className="rounded-xl border border-slate-100 bg-white p-3">
                       <div className="mb-2 text-xs font-semibold text-slate-700">
                         技术指标快照
@@ -572,13 +580,124 @@ function BasicInfoCard({ latestBar, prevBar, meta, valuation, loading }: BasicIn
             )}
           </span>
         </li>
-        {meta?.industry ? (
-          <li className="flex items-center justify-between text-[11px]">
-            <span className="text-slate-600">所属行业</span>
-            <span className="tabular-nums text-slate-700">{meta.industry}</span>
-          </li>
-        ) : null}
       </ul>
+    </section>
+  )
+}
+
+/**
+ * 板块归属卡 — 独立 card, 跟 "股票基本信息" / "技术指标快照" 同级, 位置在他俩中间.
+ * 所属行业 chip: 蓝色 outline (固定色, 不随涨跌变).
+ * 概念板块 chip: outline 风格, **整 chip 颜色随涨跌变** (红涨 / 绿跌 / 灰平/无).
+ *   - 红涨 (cp > 0):  红边框 + 红字 + 浅红底
+ *   - 绿跌 (cp < 0):  绿边框 + 绿字 + 浅绿底
+ *   - 平/无:            灰边框 + 灰字
+ * fallback: sectors 还没拉到时, 用 meta.industry 兜底 (申万单值).
+ */
+interface SectorAffiliationCardProps {
+  sectors: StockSectorsResponse | null
+  meta: StockMetaResponse | null
+}
+
+function SectorAffiliationCard({ sectors, meta }: SectorAffiliationCardProps) {
+  const industryList = sectors?.industries ?? []
+  const conceptList = sectors?.concepts ?? []
+
+  // 概念 chip 颜色: 整 chip 颜色随涨跌
+  const conceptChipClass = (cp: number | null | undefined) => {
+    if (cp == null) return "border-slate-300 bg-white text-slate-500"
+    if (cp > 0) return "border-red-300 bg-red-50 text-red-600"
+    if (cp < 0) return "border-green-300 bg-green-50 text-green-600"
+    return "border-slate-300 bg-white text-slate-500"
+  }
+  // 概念 chip 内部 % 数字颜色: 更深一档, 跟 chip 边框同色系
+  const conceptPctClass = (cp: number | null | undefined) => {
+    if (cp == null) return "text-slate-400"
+    if (cp > 0) return "text-red-700"
+    if (cp < 0) return "text-green-700"
+    return "text-slate-500"
+  }
+
+  // 没数据就不渲染 (跟 meta.industry 兜底也空, 就完全隐藏)
+  const hasData = industryList.length > 0 || conceptList.length > 0 || meta?.industry
+  if (!hasData) return null
+
+  return (
+    <section className="rounded-xl border border-slate-100 bg-white p-3">
+      <div className="mb-2 flex items-baseline justify-between">
+        <div className="text-xs font-semibold text-slate-700">板块归属</div>
+        <div className="text-[10px] text-slate-400">
+          {industryList.length} 个行业 · {conceptList.length} 个概念
+        </div>
+      </div>
+
+      {/* 所属行业 — 固定蓝色 outline (一个股可能横跨多个同花顺行业) */}
+      {(industryList.length > 0 || meta?.industry) ? (
+        <div className="mb-2">
+          <div className="mb-1 text-[10px] text-slate-500">所属行业</div>
+          <div className="flex flex-wrap gap-1.5">
+            {industryList.length > 0 ? (
+              industryList.map((it, i) => {
+                const cp = it.changePercent
+                const cpStr = cp != null ? `${cp >= 0 ? "+" : ""}${cp.toFixed(2)}%` : "—"
+                return (
+                  <span
+                    key={`ind-${it.topic_id ?? it.name ?? i}`}
+                    className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-white px-2 py-0.5 text-[12px] font-medium text-blue-700"
+                    title={it.topic_id ?? undefined}
+                  >
+                    <span>{it.name}</span>
+                    <span
+                      className={cn(
+                        "tabular-nums text-[11px]",
+                        cp == null
+                          ? "text-slate-400"
+                          : cp > 0
+                            ? "text-red-600"
+                            : cp < 0
+                              ? "text-green-600"
+                              : "text-slate-500",
+                      )}
+                    >
+                      {cpStr}
+                    </span>
+                  </span>
+                )
+              })
+            ) : (
+              <span className="inline-flex items-center rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[12px] font-semibold text-slate-700">
+                {meta?.industry}
+              </span>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* 概念板块 — chip 整体颜色随涨跌 (红涨 / 绿跌 / 灰平) */}
+      {conceptList.length > 0 ? (
+        <div>
+          <div className="mb-1 text-[10px] text-slate-500">概念板块</div>
+          <div className="flex flex-wrap gap-1.5">
+            {conceptList.map((it, i) => {
+              const cp = it.changePercent
+              const cpStr = cp != null ? `${cp >= 0 ? "+" : ""}${cp.toFixed(2)}%` : "—"
+              return (
+                <span
+                  key={`c-${it.topic_id ?? it.name ?? i}`}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[12px] font-medium",
+                    conceptChipClass(cp),
+                  )}
+                  title={it.topic_id ?? undefined}
+                >
+                  <span>{it.name}</span>
+                  <span className={cn("tabular-nums text-[11px]", conceptPctClass(cp))}>{cpStr}</span>
+                </span>
+              )
+            })}
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

@@ -404,6 +404,38 @@ export async function fetchStockMeta(params: {
 }
 
 // ---------------------------------------------------------------------------
+// 个股所属行业 + 概念板块
+// 来源: backend stock_universe sectors 落盘快照 (scheduler 从 eltdx 同步)
+// endpoint: /api/stock-chart/f10/stock-sectors?symbol=xxx
+// ---------------------------------------------------------------------------
+
+export interface StockSectorEntry {
+  name: string | null
+  topic_id: string | null
+  category_raw: number | null
+  /** 当日板块涨跌幅 (%). 从 heatmap 快照按 name 匹配得到; 匹配不上时 null. */
+  changePercent: number | null
+  /** 来源标记: sectors = 落盘快照 / eltdx = live helpers.stock_topics. */
+  source?: "sectors" | "eltdx" | null
+}
+
+export interface StockSectorsResponse {
+  code: string
+  industries: StockSectorEntry[]
+  concepts: StockSectorEntry[]
+  count: number
+  source: string
+}
+
+export async function fetchStockSectors(code: string): Promise<StockSectorsResponse> {
+  const query = new URLSearchParams({ symbol: code })
+  const res = await fetch(`${API_BASE}/api/stock-chart/f10/stock-sectors?${query.toString()}`)
+  const data = (await res.json().catch(() => null)) as StockSectorsResponse | null
+  if (!res.ok || !data) throw new Error("获取股票所属行业/概念失败")
+  return data
+}
+
+// ---------------------------------------------------------------------------
 // F10 财务 / 估值 / 主营构成
 // 全部走 backend/api/stock/f10.py (Flask Blueprint, 已在 bootstrap.py 注册)
 // ---------------------------------------------------------------------------
@@ -967,6 +999,108 @@ export async function fetchMarketBreadthSeries(): Promise<Array<{
     new20LowCount: (item.new20LowCount as number) ?? null,
     date: String(item.date ?? ""),
   }))
+}
+
+// ---------------------------------------------------------------------------
+// 大盘成交额 / 主力净流入 (AKShare 双源, 独立于 K线技术分析的 market_overview)
+// 后端: GET /api/stock-chart/market-overview-akshare
+// 数据源 (双路, scheduler 持久化):
+//   - 盘中: AKShare stock_zh_a_spot_em() + stock_market_fund_flow()
+//   - 盘后: reference/market-overview/latest.json (原子写) + archive/<date>.json
+// 字段单位: totalAmount=亿, totalVolume=万手, mainNetInflow=亿
+// ---------------------------------------------------------------------------
+export interface MarketOverview {
+  tradingDate: string | null
+  fetchedAt: string | null
+  source: "akshare" | "archived" | string
+  isTradeTime?: boolean
+  totalAmount: number | null
+  totalVolume: number | null
+  stockCount: number | null
+  risingCount: number | null
+  fallingCount: number | null
+  flatCount: number | null
+  limitUpCount: number | null
+  limitDownCount: number | null
+  mainNetInflow: number | null
+  superLargeNetInflow: number | null
+  largeNetInflow: number | null
+  mediumNetInflow: number | null
+  smallNetInflow: number | null
+  error?: string
+}
+
+export async function fetchMarketOverviewAkshare(): Promise<MarketOverview> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-akshare`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取大盘成交额/主力净流入失败")
+  return {
+    tradingDate: (data.tradingDate as string) ?? null,
+    fetchedAt: (data.fetchedAt as string) ?? null,
+    source: (data.source as string) ?? "archived",
+    isTradeTime: (data.isTradeTime as boolean) ?? undefined,
+    totalAmount: (data.totalAmount as number) ?? null,
+    totalVolume: (data.totalVolume as number) ?? null,
+    stockCount: (data.stockCount as number) ?? null,
+    risingCount: (data.risingCount as number) ?? null,
+    fallingCount: (data.fallingCount as number) ?? null,
+    flatCount: (data.flatCount as number) ?? null,
+    limitUpCount: (data.limitUpCount as number) ?? null,
+    limitDownCount: (data.limitDownCount as number) ?? null,
+    mainNetInflow: (data.mainNetInflow as number) ?? null,
+    superLargeNetInflow: (data.superLargeNetInflow as number) ?? null,
+    largeNetInflow: (data.largeNetInflow as number) ?? null,
+    mediumNetInflow: (data.mediumNetInflow as number) ?? null,
+    smallNetInflow: (data.smallNetInflow as number) ?? null,
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export async function fetchMarketOverviewAkshareArchive(tradingDate: string): Promise<MarketOverview> {
+  // 接受 YYYY-MM-DD 或 YYYYMMDD
+  const normalized = tradingDate.replace(/-/g, "")
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/market-overview-akshare/archive/${normalized}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error(`获取 ${tradingDate} 大盘归档失败`)
+  return {
+    tradingDate: (data.tradingDate as string) ?? null,
+    fetchedAt: (data.fetchedAt as string) ?? null,
+    source: (data.source as string) ?? "archived",
+    isTradeTime: (data.isTradeTime as boolean) ?? undefined,
+    totalAmount: (data.totalAmount as number) ?? null,
+    totalVolume: (data.totalVolume as number) ?? null,
+    stockCount: (data.stockCount as number) ?? null,
+    risingCount: (data.risingCount as number) ?? null,
+    fallingCount: (data.fallingCount as number) ?? null,
+    flatCount: (data.flatCount as number) ?? null,
+    limitUpCount: (data.limitUpCount as number) ?? null,
+    limitDownCount: (data.limitDownCount as number) ?? null,
+    mainNetInflow: (data.mainNetInflow as number) ?? null,
+    superLargeNetInflow: (data.superLargeNetInflow as number) ?? null,
+    largeNetInflow: (data.largeNetInflow as number) ?? null,
+    mediumNetInflow: (data.mediumNetInflow as number) ?? null,
+    smallNetInflow: (data.smallNetInflow as number) ?? null,
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export async function triggerMarketOverviewAkshareRefresh(): Promise<{
+  ok: boolean
+  snapshot?: MarketOverview
+  error?: string
+}> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-akshare/refresh`, {
+    method: "POST",
+  })
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) return { ok: false, error: "refresh failed" }
+  return {
+    ok: Boolean(data.ok),
+    snapshot: (data.snapshot as MarketOverview | undefined) ?? undefined,
+    error: (data.error as string | undefined) ?? undefined,
+  }
 }
 
 export async function runApplicationAnalysis(params: {

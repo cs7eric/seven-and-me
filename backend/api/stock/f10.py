@@ -129,6 +129,224 @@ def f10_stock_topics():
     return jsonify(stock_topics(symbol).to_dict())
 
 
+@f10_bp.route('/api/stock-chart/f10/stock-sectors')
+def f10_stock_sectors():
+    """个股所属行业 + 概念板块 (合并 sectors 落盘快照 + live eltdx helpers.stock_topics).
+
+    数据源 2 路合并, 去重:
+    1. **sectors 快照** (scheduler 从 eltdx 同步, 落盘到 reference/stock-universe/sectors.json)
+       - industry = category_raw=0
+       - concept  = category_raw=2
+    2. **live eltdx** ``client.helpers.stock_topics(code)``
+       - topic_id 以 "X" 开头 (申万细分)         -> industry
+       - topic_id 不以 "X" 开头但 relation_level 为空 (普通行业 topic) -> industry
+       - relation_level 1~4 (概念 / 题材)         -> concept
+       - relation_level 5 (昨日涨停 / 近N日连板 这种状态标签) -> 丢弃
+
+    返回::
+        {
+          "code": "000048",
+          "industries": [{name, topic_id, source}],
+          "concepts":   [{name, topic_id, source}],
+          "source": "sectors+eltdx_helpers",
+        }
+    """
+    from backend.services.stock.stock_universe_service import list_sectors_by_category
+
+    symbol = _symbol_arg()
+    code = symbol.strip()
+
+    # 1) sectors 快照: 归一化 code -> {sh,sz,bj}{6位}
+    candidates: set[str] = {code}
+    if code.isdigit() and len(code) == 6:
+        candidates.add(f"sh{code}")
+        candidates.add(f"sz{code}")
+        candidates.add(f"bj{code}")
+    for prefix in ("sh", "sz", "bj"):
+        if code.startswith(prefix) and len(code) == 8:
+            candidates.add(code[2:])
+    candidates.discard("")
+
+    industries: list[dict[str, Any]] = []
+    concepts: list[dict[str, Any]] = []
+    seen_ind: set[str] = set()   # 去重 key: name
+    seen_con: set[str] = set()
+
+    for category_raw, bucket, seen in (
+        (0, industries, seen_ind),
+        (2, concepts, seen_con),
+    ):
+        for sec in list_sectors_by_category(category_raw):
+            stock_codes = set(sec.get("stock_codes") or [])
+            if not stock_codes & candidates:
+                continue
+            name = (sec.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            bucket.append({
+                "name": name,
+                "topic_id": sec.get("topic_id"),
+                "category_raw": category_raw,
+                "source": "sectors",
+            })
+
+    # 2) live eltdx helpers.stock_topics: 失败就跳过, 不影响 sectors 快照
+    try:
+        live_topics = get_fundamentals_service().get_stock_topics(code).get("topics") or []
+    except Exception:
+        live_topics = []
+
+    for t in live_topics:
+        name = (t.get("topic_name") or "").strip()
+        if not name:
+            continue
+        relation = t.get("relation_level")
+        topic_id = t.get("topic_id") or ""
+        topic_id_str = str(topic_id)
+        # 行业判定: X 前缀 (申万细分) 或 relation 为空
+        is_industry = topic_id_str.startswith("X") or relation in (None, "")
+        # 概念判定: relation 在 1~4
+        is_concept = isinstance(relation, int) and 1 <= relation <= 4
+        # 状态标签 (昨日涨停/连板) relation=5 -> 丢弃
+        if is_industry:
+            if name in seen_ind:
+                continue
+            seen_ind.add(name)
+            industries.append({
+                "name": name,
+                "topic_id": topic_id_str,
+                "category_raw": 0,
+                "source": "eltdx",
+            })
+        elif is_concept:
+            if name in seen_con:
+                continue
+            seen_con.add(name)
+            concepts.append({
+                "name": name,
+                "topic_id": topic_id_str,
+                "category_raw": 2,
+                "source": "eltdx",
+            })
+        # else: relation=5 状态标签, 跳过
+
+    # 3) 注入当日涨跌幅: 从 heatmap 快照按 name 查 (磁盘读, 快, 不打 eltdx)
+    #    同名 sector 在不同分类系统里可能不完全一致 (申万细分 vs 同花顺 90 行业);
+    #    匹配不上时 changePercent 留空, 前端 fallback 显示 "—".
+    try:
+        from backend.services.stock.market_heatmap_service import build_market_heatmap
+        heatmap_ind = build_market_heatmap(kind="industries", top_n=200).get("items") or []
+        heatmap_con = build_market_heatmap(kind="concepts", top_n=300).get("items") or []
+    except Exception:
+        heatmap_ind, heatmap_con = [], []
+
+    # 用 name 做 lookup key (去除空白 + 去除 "概念" 后缀)
+    def _norm(s: str) -> str:
+        return (s or "").replace(" ", "").replace("概念", "").strip()
+
+    # 同花顺 90 行业 / 申万 32 行业 跟我们 sectors 快照里的"申万细分"**名字不一样**:
+    # sectors 快照里是申万细分 (X530101001 住宅开发 / X200501001 畜禽饲料),
+    # heatmap 里是申万一级 (房地产 / 食品饮料 / 钢铁). 这里**直接映射到 heatmap 名字** (单步),
+    # lookup 时再链式解析 (畜禽饲料 → 饲料 → 农产品加工).
+    INDUSTRY_ALIAS: dict[str, str] = {
+        # 申万细分 / 申万一级 / 同花顺 三套名互转, value 必须是 heatmap 行业 name
+        "住宅开发": "房地产",
+        "房地产开发": "房地产",
+        "畜禽饲料": "农产品加工",
+        "水产饲料": "农产品加工",
+        "饲料": "农产品加工",
+        "其他金属": "小金属",
+        "黄金": "贵金属",
+        "股份制银行": "银行",
+        "国有大型银行": "银行",
+        "汽车整车": "乘用车",
+        # 申万细分 -> 申万一级 兜底
+        "其他电子": "元件",
+        "其他电源设备": "电池",
+        "其他社会服务": "社会服务",
+        "公路铁路运输": "物流",
+        "公交": "物流",
+        "航空运输": "物流",
+        "机场": "物流",
+        "一般零售": "零售",
+        "专业零售": "零售",
+        "贸易": "贸易",
+        "炼化及贸易": "炼化及贸易",
+        "化学纤维": "化学纤维",
+        "化学制品": "化学制品",
+        "农化制品": "农化制品",
+        "互联网电商": "互联网电商",
+        "通信设备": "通信设备",
+        "半导体": "半导体",
+        "光学光电子": "光学光电子",
+    }
+
+    name_to_pct_ind: dict[str, float | None] = {
+        _norm(it.get("name")): it.get("changePercent")
+        for it in heatmap_ind
+        if it.get("name")
+    }
+    name_to_pct_con: dict[str, float | None] = {
+        _norm(it.get("name")): it.get("changePercent")
+        for it in heatmap_con
+        if it.get("name")
+    }
+
+    def _lookup_industry(name: str) -> float | None:
+        if not name:
+            return None
+        key = _norm(name)
+        # 1) 直接命中
+        if key in name_to_pct_ind:
+            return name_to_pct_ind[key]
+        # 2) 别名链式解析 (畜禽饲料 → 饲料 → 农产品加工, 最多 3 跳防环)
+        cur = name
+        for _ in range(3):
+            aliased = INDUSTRY_ALIAS.get(cur) or INDUSTRY_ALIAS.get(_norm(cur))
+            if not aliased or aliased == cur:
+                break
+            ak = _norm(aliased)
+            if ak in name_to_pct_ind:
+                return name_to_pct_ind[ak]
+            cur = aliased
+        # 3) 模糊: 名称互为子串
+        for hname, pct in name_to_pct_ind.items():
+            if not hname:
+                continue
+            if key in hname or hname in key:
+                return pct
+        return None
+
+    def _lookup_concept(name: str) -> float | None:
+        if not name:
+            return None
+        key = _norm(name)
+        if key in name_to_pct_con:
+            return name_to_pct_con[key]
+        for hname, pct in name_to_pct_con.items():
+            if not hname:
+                continue
+            if key in hname or hname in key:
+                return pct
+        return None
+
+    for ind in industries:
+        if ind.get("changePercent") is None:
+            ind["changePercent"] = _lookup_industry(ind.get("name") or "")
+    for con in concepts:
+        if con.get("changePercent") is None:
+            con["changePercent"] = _lookup_concept(con.get("name") or "")
+
+    return jsonify({
+        "code": code,
+        "industries": industries,
+        "concepts": concepts,
+        "count": len(industries) + len(concepts),
+        "source": "sectors+eltdx_helpers+heatmap_zdf",
+    })
+
+
 @f10_bp.route('/api/stock-chart/f10/theme-market')
 def f10_theme_market():
     symbol = _symbol_arg()

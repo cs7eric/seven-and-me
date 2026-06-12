@@ -41,7 +41,7 @@ import {
   type IndustryConstituentsIndexResponse,
   type IndustryConstituentRow,
 } from "@/lib/api"
-import { StockDetailDialog } from "./stock-detail-dialog"
+import { StockDetailDialog } from "@/components/stock-detail-dialog"
 
 export interface IndustryConstituentsDrawerProps {
   /**

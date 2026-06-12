@@ -32,6 +32,7 @@ import { notification } from "@/components/ui/notification"
 import { cn } from "@/lib/utils"
 import { fetchIndustryConstituentsByCode } from "@/lib/api"
 import type { IndustryConstituentRow } from "@/lib/api"
+import { StockDetailDialog } from "@/components/stock-detail-dialog"
 
 import type {
   HeatmapAreaBy,
@@ -616,6 +617,14 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
   const [quickFilter, setQuickFilter] = useState<HeatmapQuickFilter | "all">("all")
   const [keyword, setKeyword] = useState("")
 
+  // 个股详情 dialog (热力图点击个股弹出)
+  const [stockDialogOpen, setStockDialogOpen] = useState(false)
+  const [stockDialogInfo, setStockDialogInfo] = useState<{
+    code: string
+    name: string
+    industryName: string | null
+  } | null>(null)
+
   const sectors = useMemo(() => data?.items || [], [data])
   const filtered = useMemo(
     () => buildFilteredData(sectors, keyword, quickFilter, sortBy),
@@ -797,21 +806,29 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
     // 重复放进去会触发双重 setOption, 同样会打断 hover tooltip.
   }, [treemapData, viewMode])
 
-  // 点击行业 -> 钻入
+  // 点击行业 -> 钻入; 点击个股 -> 弹详情 dialog
   useEffect(() => {
     const chart = instanceRef.current
     if (!chart) return
     const handler = (params: any) => {
-      // 首屏 (viewMode=market): 点击 sector cell 钻入成分股
-      if (viewMode === "market") {
-        const meta = resolveClickMeta(params, filtered)
-        if (meta?.kind === "industry" && meta.sector) {
-          setSelectedSector(meta.sector.sectorCode)
-          setViewMode("sector")
-        }
+      const meta = resolveClickMeta(params, filtered)
+      if (!meta) return
+      // 个股 cell: 弹出详情 dialog (跟成分股 drawer 一致)
+      if (meta.kind === "stock" && meta.stock) {
+        const s = meta.stock
+        setStockDialogInfo({
+          code: s.code,
+          name: s.name,
+          industryName: meta.sector?.name ?? null,
+        })
+        setStockDialogOpen(true)
         return
       }
-      // 钻入视图 (viewMode=sector): 板块当 parent, 个股 cell 直接点 (无钻入行为)
+      // 首屏 (viewMode=market): 点击 sector cell 钻入成分股
+      if (viewMode === "market" && meta.kind === "industry" && meta.sector) {
+        setSelectedSector(meta.sector.sectorCode)
+        setViewMode("sector")
+      }
     }
     chart.on("click", handler)
     return () => {
@@ -911,6 +928,15 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
           </div>
         </div>
       </CardContent>
+
+      {/* 个股详情 dialog: 点击个股 cell (首屏或钻入) 弹出, 复用公共 StockDetailDialog */}
+      <StockDetailDialog
+        open={stockDialogOpen}
+        onOpenChange={setStockDialogOpen}
+        stockCode={stockDialogInfo?.code ?? null}
+        stockName={stockDialogInfo?.name ?? null}
+        industryName={stockDialogInfo?.industryName ?? null}
+      />
     </Card>
   )
 }

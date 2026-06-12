@@ -1,39 +1,39 @@
 {
   "name": "market_pulse_snapshot",
-  "lastRunAt": "2026-06-11T15:35:00",
+  "lastRunAt": "2026-06-12T15:35:00",
   "lastRunOk": true,
   "lastRunError": null,
-  "lastInsideRefreshAt": "2026-06-11T15:00:25",
-  "lastCloseSnapshotAt": "2026-06-11T15:30:00",
-  "totalInside": 163,
-  "totalClose": 4,
-  "schedulerStartedAt": "2026-06-12T00:36:46",
+  "lastInsideRefreshAt": "2026-06-12T14:57:34",
+  "lastCloseSnapshotAt": "2026-06-12T15:30:00",
+  "totalInside": 201,
+  "totalClose": 5,
+  "schedulerStartedAt": "2026-06-12T19:00:45",
   "lastTopN": [
     {
-      "name": "小金属",
-      "changePct": 4.6
+      "name": "工业金属",
+      "changePct": 5.28
     },
     {
-      "name": "电子化学品",
-      "changePct": 3.85
+      "name": "贵金属",
+      "changePct": 4.93
     },
     {
-      "name": "半导体",
-      "changePct": 1.82
+      "name": "机场航运",
+      "changePct": 4.59
     },
     {
-      "name": "厨卫电器",
-      "changePct": 1.61
+      "name": "军工装备",
+      "changePct": 4.44
     },
     {
-      "name": "能源金属",
-      "changePct": 1.56
+      "name": "证券",
+      "changePct": 3.88
     }
   ],
-  "lastConstituentsAt": "2026-06-11T15:35:00",
+  "lastConstituentsAt": "2026-06-12T15:35:00",
   "lastConstituentsOk": true,
   "lastConstituentsError": null,
-  "lastConstituentsElapseMs": 441880,
+  "lastConstituentsElapseMs": 477897,
   "lastConstituentsIndustriesOk": 90,
   "lastConstituentsIndustriesTotal": 90
 }

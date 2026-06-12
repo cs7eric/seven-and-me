@@ -552,6 +552,54 @@ def stock_chart_market_overview():
         return jsonify({'error': str(exc)}), 502
 
 
+# ============================================================================
+# 大盘成交额 / 主力净流入 (AKShare 双源, 独立于上面 K线技术分析的 market_overview)
+# 路径前缀用 /market-overview-akshare/ 避免跟上面的 /market-overview/ 冲突.
+# 数据由 backend/services/stock/market_overview_akshare_service.py + scheduler 维护.
+# ============================================================================
+@stock_chart_bp.route('/api/stock-chart/market-overview-akshare')
+def stock_chart_market_overview_akshare():
+    """读 latest akshare snapshot (成交额 / 主力净流入 / 涨跌家数)."""
+    from backend.services.stock.market_overview_akshare_service import get_latest_snapshot
+    try:
+        return jsonify(get_latest_snapshot())
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@stock_chart_bp.route('/api/stock-chart/market-overview-akshare/refresh', methods=['POST'])
+def stock_chart_market_overview_akshare_refresh():
+    """手动触发一次 AKShare 拉取 + 落盘 (调试 / 立刻拉最新用)."""
+    from backend.services.scheduler.market_overview_scheduler import (
+        run_market_overview_snapshot_now,
+    )
+    try:
+        snap = run_market_overview_snapshot_now(force=True)
+        if snap is None:
+            return jsonify({"ok": False, "error": "akshare unavailable or empty"}), 502
+        return jsonify({"ok": True, "snapshot": snap})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@stock_chart_bp.route('/api/stock-chart/market-overview-akshare/scheduler/status')
+def stock_chart_market_overview_akshare_scheduler_status():
+    from backend.services.scheduler.market_overview_scheduler import (
+        get_market_overview_scheduler_status,
+    )
+    return jsonify(get_market_overview_scheduler_status())
+
+
+@stock_chart_bp.route('/api/stock-chart/market-overview-akshare/archive/<string:trading_date>')
+def stock_chart_market_overview_akshare_archive(trading_date: str):
+    """按交易日 (YYYY-MM-DD 或 YYYYMMDD) 读历史 snapshot."""
+    from backend.services.stock.market_overview_akshare_service import get_archived_snapshot
+    snap = get_archived_snapshot(trading_date)
+    if snap is None:
+        return jsonify({"ok": False, "error": f"archive {trading_date} not found"}), 404
+    return jsonify(snap)
+
+
 # =============================================================================
 # 行业 / 概念 应用面分析（独立于 application-analysis）
 # 数据源：eltdx bars.get(kind="index")
