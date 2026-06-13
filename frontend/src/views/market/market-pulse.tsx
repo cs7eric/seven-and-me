@@ -102,7 +102,7 @@ function moneyTone(v: number | null | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// 子组件: FlowMiniCard
+// 类型: 资金流条目 (label + 当前值 + 较昨日 diff)
 // ---------------------------------------------------------------------------
 type FlowValue = {
   label: string
@@ -110,27 +110,38 @@ type FlowValue = {
   diff: number | null
 }
 
+// ---------------------------------------------------------------------------
+// 子组件: FlowMiniCard (单个资金分类: label + 主数 + 较昨 diff)
+// ---------------------------------------------------------------------------
 function FlowMiniCard({ item }: { item: FlowValue }) {
   const tone = moneyTone(item.value)
   const diffTone = moneyTone(item.diff)
+  const arrow = item.diff == null ? "" : item.diff > 0 ? "↑" : item.diff < 0 ? "↓" : "·"
 
   return (
-    <div className={`rounded-2xl border ${tone.border} ${tone.bg} px-3 py-3`}>
+    <div className={`relative overflow-hidden rounded-xl border ${tone.border} ${tone.bg} px-3 py-2.5`}>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-xs font-medium text-slate-500">{item.label}</div>
-        <div className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${diffTone.soft}`}>
-          较昨日 {_formatYi(item.diff)}
-        </div>
+        <div className="text-[11px] font-medium text-slate-500">{item.label}</div>
+        {item.diff != null && (
+          <div className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${diffTone.soft}`}>
+            <span>{arrow}</span>
+            <span>{item.diff >= 0 ? "+" : ""}{item.diff.toFixed(2)}亿</span>
+          </div>
+        )}
       </div>
-      <div className={`mt-2 text-xl font-bold tracking-tight ${tone.text}`}>
-        {_formatYi(item.value)}
+      <div className={`mt-1 text-lg font-bold tabular-nums ${tone.text}`}>
+        {item.value != null
+          ? `${item.value >= 0 ? "+" : ""}${item.value.toFixed(2)}`
+          : "—"}
+        <span className="ml-0.5 text-[11px] font-medium text-slate-400">亿</span>
       </div>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// 子组件: FlowStructureBar
+// 子组件: FlowStructureBar (纯可视化: 横向色块条 + 下方 4 色点图例)
+// 数字本身已在 FlowMiniCard 显示, 这里只负责 "占比 + 流向方向" 可视化
 // ---------------------------------------------------------------------------
 function FlowStructureBar({ items }: { items: FlowValue[] }) {
   const valid = items.filter((x) => x.value != null && Number.isFinite(x.value))
@@ -138,14 +149,14 @@ function FlowStructureBar({ items }: { items: FlowValue[] }) {
   if (totalAbs <= 0) return null
 
   return (
-    <div className="rounded-2xl border border-slate-100 bg-white px-3 py-3">
-      <div className="mb-2 flex items-center justify-between">
+    <div className="rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50/50 to-white px-3 py-2.5">
+      <div className="flex items-center justify-between">
         <div className="text-xs font-semibold text-slate-700">资金结构</div>
-        <div className="text-[11px] text-slate-400">按绝对值占比</div>
+        <div className="text-[10px] text-slate-400">按绝对值占比</div>
       </div>
 
       {/* 色块条 */}
-      <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100">
+      <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-slate-100">
         {valid.map((item) => {
           const pct = Math.abs(item.value || 0) / totalAbs
           const tone = moneyTone(item.value)
@@ -154,26 +165,24 @@ function FlowStructureBar({ items }: { items: FlowValue[] }) {
               key={item.label}
               className={tone.bar}
               style={{ width: `${pct * 100}%` }}
-              title={`${item.label} ${_formatPct(pct * 100)}`}
+              title={`${item.label} ${_formatYi(item.value)} · 占比 ${_formatPct(pct * 100)}`}
             />
           )
         })}
       </div>
 
-      {/* 4 个百分比标签 */}
-      <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+      {/* 4 色点图例 (只显示 label + 占比, 不重复金额) */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
         {valid.map((item) => {
           const pct = Math.abs(item.value || 0) / totalAbs
           const tone = moneyTone(item.value)
           return (
-            <div key={item.label} className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className={`h-2 w-2 rounded-full ${tone.bar}`} />
-                <span className="text-[11px] text-slate-500">{item.label}</span>
-              </div>
-              <div className={`mt-0.5 text-xs font-semibold ${tone.text}`}>
+            <div key={item.label} className="flex items-center gap-1 text-[11px]">
+              <span className={`h-1.5 w-1.5 rounded-full ${tone.bar}`} />
+              <span className="text-slate-500">{item.label}</span>
+              <span className="font-semibold tabular-nums text-slate-700">
                 {_formatPct(pct * 100)}
-              </div>
+              </span>
             </div>
           )
         })}
@@ -198,47 +207,69 @@ type MoneyFlowData = {
 
 export function MoneyFlowCard({ data }: { data: MoneyFlowData }) {
   const mainTone = moneyTone(data.main)
-  const mainDiffTone = moneyTone(data.mainDiff)
-
   const items = [data.superLarge, data.large, data.medium, data.small]
 
+  // 内联 diff: 较 06/11 +X.XX亿 ↑ / ↓
+  const mainDiffText =
+    data.mainDiff != null
+      ? `较 ${data.prevDate || "昨日"} ${
+          data.mainDiff >= 0 ? "+" : ""
+        }${data.mainDiff.toFixed(2)}亿 ${data.mainDiff > 0 ? "↑" : data.mainDiff < 0 ? "↓" : ""}`
+      : null
+  const mainDiffTone = moneyTone(data.mainDiff)
+
+  // hero 渐变背景: 流入浅红 / 流出浅绿 / null slate
+  const heroBg =
+    data.main == null
+      ? "bg-slate-50"
+      : data.main > 0
+        ? "bg-gradient-to-br from-red-50 via-red-50/60 to-white"
+        : data.main < 0
+          ? "bg-gradient-to-br from-emerald-50 via-emerald-50/60 to-white"
+          : "bg-slate-50"
+
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       {/* 头部 */}
-      <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="mb-3 flex items-start justify-between gap-3">
         <div>
           <div className="text-base font-semibold text-slate-900">资金流向</div>
-          <div className="mt-1 text-xs text-slate-500">东方财富 · 主力 = 超大单 + 大单</div>
+          <div className="mt-0.5 text-[11px] text-slate-500">
+            东方财富 · 主力 = 超大单 + 大单
+          </div>
         </div>
         <div className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500">
           {data.date}
         </div>
       </div>
 
-      {/* hero */}
-      <div className={`rounded-3xl border ${mainTone.border} ${mainTone.bg} p-4`}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-xs font-medium text-slate-500">今日主力净流入</div>
-            <div className={`mt-2 text-4xl font-bold tracking-tight ${mainTone.text}`}>
-              {_formatYi(data.main)}
+      {/* hero: 主力净流入 + 内联 diff (5xl 大字 + 渐变背景) */}
+      <div
+        className={`relative overflow-hidden rounded-2xl border ${mainTone.border} ${heroBg} px-4 py-3.5`}
+      >
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="text-xs font-medium text-slate-500">今日主力净流入</div>
+          {mainDiffText && (
+            <div className={`text-[11px] font-medium tabular-nums ${mainDiffTone.text}`}>
+              {mainDiffText}
             </div>
-            <div className="mt-2 text-xs text-slate-500">超大单 + 大单合计</div>
-          </div>
-          <div className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${mainDiffTone.soft}`}>
-            较 {data.prevDate} {_formatYi(data.mainDiff)}
-          </div>
+          )}
+        </div>
+        <div
+          className={`mt-1 text-4xl font-bold tracking-tight tabular-nums ${mainTone.text}`}
+        >
+          {_formatYi(data.main)}
         </div>
       </div>
 
-      {/* 2x2 分项卡片 */}
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {/* 2x2 分类: 超大单 / 大单 / 中单 / 小单 (每个保留 diff) */}
+      <div className="mt-3 grid grid-cols-2 gap-2">
         {items.map((item) => (
           <FlowMiniCard key={item.label} item={item} />
         ))}
       </div>
 
-      {/* 资金结构条 */}
+      {/* 资金结构条 (纯可视化) */}
       <div className="mt-3">
         <FlowStructureBar items={items} />
       </div>
@@ -518,51 +549,80 @@ export default function MarketPulsePage() {
           </div>
         )}
 
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-          {/* 1. 市场概况: 全A成交额 + 涨跌家数 (eltdx, 独立持久化) */}
-          <Card className="border-border/30">
+        <div className="grid gap-3 md:grid-cols-2">
+          {/* 1. 大盘成交额: hero (5xl + 渐变) + 2x2 涨跌家数 (eltdx, 独立持久化) */}
+          <Card className="flex h-full flex-col border-border/30">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between text-sm font-medium text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5">
                   <Waves className="size-3.5" />
-                  市场概况
+                  大盘成交额
                 </span>
                 <span className="text-[10px] font-normal text-muted-foreground">
-                  {overviewCounts?.stockCount != null ? `${overviewCounts.stockCount} 只` : overview?.stockCount != null ? `${overview.stockCount} 只` : ""}
+                  {overviewCounts?.stockCount != null
+                    ? `${overviewCounts.stockCount} 只`
+                    : overview?.stockCount != null
+                      ? `${overview.stockCount} 只`
+                      : ""}
                 </span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-0">
-              {/* 全A成交额 hero */}
-              <div className="text-2xl font-semibold tabular-nums text-foreground">
-                {overviewCounts?.totalAmount != null
-                  ? formatYi(overviewCounts.totalAmount)
-                  : overview?.totalAmount != null
-                    ? formatYi(overview.totalAmount)
-                    : "—"}
+            <CardContent className="flex flex-1 flex-col pt-0">
+              {/* hero: 5xl 大字 + 渐变背景, 跟右卡片 hero 视觉对齐 */}
+              <div className="rounded-2xl border border-slate-100 bg-gradient-to-br from-slate-50 via-slate-50/40 to-white px-4 py-3.5">
+                <div className="text-xs font-medium text-slate-500">
+                  全 A 成交额
+                </div>
+                <div className="mt-1 text-4xl font-bold tracking-tight tabular-nums text-slate-900">
+                  {overviewCounts?.totalAmount != null
+                    ? formatYi(overviewCounts.totalAmount)
+                    : overview?.totalAmount != null
+                      ? formatYi(overview.totalAmount)
+                      : "—"}
+                </div>
               </div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                成交额 · 全A
+
+              {/* 2x2 stats: 涨 / 跌 / 涨停 / 跌停 */}
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {/* 涨 */}
+                <div className="rounded-xl border border-red-100 bg-red-50/50 px-3 py-2.5">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
+                    <ArrowUpRight className="size-3" />
+                    <span>上涨</span>
+                  </div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
+                    {formatCount(overviewCounts?.risingCount ?? overview?.risingCount)}
+                  </div>
+                </div>
+                {/* 跌 */}
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2.5">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                    <ArrowDownRight className="size-3" />
+                    <span>下跌</span>
+                  </div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {formatCount(overviewCounts?.fallingCount ?? overview?.fallingCount)}
+                  </div>
+                </div>
+                {/* 涨停 */}
+                <div className="rounded-xl border border-red-100 bg-white px-3 py-2.5">
+                  <div className="text-[11px] font-medium text-slate-500">涨停</div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
+                    {formatCount(overviewCounts?.limitUpCount ?? overview?.limitUpCount)}
+                  </div>
+                </div>
+                {/* 跌停 */}
+                <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2.5">
+                  <div className="text-[11px] font-medium text-slate-500">跌停</div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                    {formatCount(overviewCounts?.limitDownCount ?? overview?.limitDownCount)}
+                  </div>
+                </div>
               </div>
-              <div className="mt-2 flex items-baseline gap-1.5">
-                <span className="inline-flex items-center gap-0.5 text-lg font-semibold tabular-nums text-red-600 dark:text-red-400">
-                  <ArrowUpRight className="size-3.5" />
-                  {formatCount(overviewCounts?.risingCount ?? overview?.risingCount)}
-                </span>
-                <span className="text-xs text-muted-foreground">/</span>
-                <span className="inline-flex items-center gap-0.5 text-lg font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  <ArrowDownRight className="size-3.5" />
-                  {formatCount(overviewCounts?.fallingCount ?? overview?.fallingCount)}
-                </span>
-              </div>
-              <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
-                <span>平 {formatCount(overviewCounts?.flatCount ?? overview?.flatCount)}</span>
-                <span className="text-red-500">
-                  涨停 {formatCount(overviewCounts?.limitUpCount ?? overview?.limitUpCount)}
-                </span>
-                <span className="text-emerald-500">
-                  跌停 {formatCount(overviewCounts?.limitDownCount ?? overview?.limitDownCount)}
-                </span>
+
+              {/* 平盘 footnote (compact 一行) */}
+              <div className="mt-2 text-[10px] text-slate-400">
+                平盘 {formatCount(overviewCounts?.flatCount ?? overview?.flatCount)} 只
               </div>
             </CardContent>
           </Card>
