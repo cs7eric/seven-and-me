@@ -1004,10 +1004,64 @@ export async function fetchMarketBreadthSeries(): Promise<Array<{
 // ---------------------------------------------------------------------------
 // 大盘成交额 / 主力净流入 (AKShare 双源, 独立于 K线技术分析的 market_overview)
 // 后端: GET /api/stock-chart/market-overview-akshare
-// 数据源 (双路, scheduler 持久化):
-//   - 盘中: AKShare stock_zh_a_spot_em() + stock_market_fund_flow()
-//   - 盘后: reference/market-overview/latest.json (原子写) + archive/<date>.json
+// 持久化: reference/market-overview/fund-flow/latest.json (独立)
+// 数据源:
+//   - 盘中: AKShare stock_market_fund_flow()
+//   - 盘后: reference/market-overview/fund-flow/latest.json
 // 字段单位: totalAmount=亿, totalVolume=万手, mainNetInflow=亿
+// ---------------------------------------------------------------------------
+// 市场概况 (eltdx): 全A成交额 / 涨跌家数
+// 后端: GET /api/stock-chart/market-overview-eltdx
+// 持久化: reference/market-overview/market-overview/latest.json (独立, 不跟 fund-flow 混用)
+// 数据源: eltdx 通达信协议 (TCP 直连, 不走 HTTP)
+// ---------------------------------------------------------------------------
+export interface MarketOverviewEltdx {
+  tradingDate: string | null
+  fetchedAt: string | null
+  totalAmount: number | null
+  totalVolume: number | null
+  risingCount: number | null
+  fallingCount: number | null
+  flatCount: number | null
+  limitUpCount: number | null
+  limitDownCount: number | null
+  stockCount: number | null
+}
+
+export async function fetchMarketOverviewEltdx(): Promise<MarketOverviewEltdx> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-eltdx`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取全A成交额/涨跌家数失败")
+  return {
+    tradingDate: (data.tradingDate as string) ?? null,
+    fetchedAt: (data.fetchedAt as string) ?? null,
+    totalAmount: (data.totalAmount as number) ?? null,
+    totalVolume: (data.totalVolume as number) ?? null,
+    risingCount: (data.risingCount as number) ?? null,
+    fallingCount: (data.fallingCount as number) ?? null,
+    flatCount: (data.flatCount as number) ?? null,
+    limitUpCount: (data.limitUpCount as number) ?? null,
+    limitDownCount: (data.limitDownCount as number) ?? null,
+    stockCount: (data.stockCount as number) ?? null,
+  }
+}
+
+export async function triggerMarketOverviewEltdxRefresh(): Promise<{
+  ok: boolean
+  snapshot?: MarketOverviewEltdx
+  error?: string
+}> {
+  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-eltdx/refresh`, {
+    method: "POST",
+  })
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) return { ok: false, error: "refresh failed" }
+  return {
+    ok: Boolean(data.ok),
+    snapshot: (data.snapshot as MarketOverviewEltdx | undefined) ?? undefined,
+    error: (data.error as string | undefined) ?? undefined,
+  }
+}
 // ---------------------------------------------------------------------------
 export interface MarketOverview {
   tradingDate: string | null
@@ -1027,6 +1081,23 @@ export interface MarketOverview {
   largeNetInflow: number | null
   mediumNetInflow: number | null
   smallNetInflow: number | null
+  /** 净比 (%), AKShare 自带 "-净占比" 字段, 本身就是 % */
+  mainNetInflowRatio: number | null
+  superLargeNetInflowRatio: number | null
+  largeNetInflowRatio: number | null
+  mediumNetInflowRatio: number | null
+  smallNetInflowRatio: number | null
+  /** 上一交易日资金流数据 (capture 时从 archive 读, 供前端算 vs-昨日差额) */
+  prevDayFlow: {
+    mainNetInflow: number | null
+    superLargeNetInflow: number | null
+    largeNetInflow: number | null
+    mediumNetInflow: number | null
+    smallNetInflow: number | null
+    totalAmount: number | null
+  } | null
+  /** 上一交易日日期 YYYY-MM-DD */
+  prevDayTradingDate: string | null
   error?: string
 }
 
@@ -1052,6 +1123,13 @@ export async function fetchMarketOverviewAkshare(): Promise<MarketOverview> {
     largeNetInflow: (data.largeNetInflow as number) ?? null,
     mediumNetInflow: (data.mediumNetInflow as number) ?? null,
     smallNetInflow: (data.smallNetInflow as number) ?? null,
+    mainNetInflowRatio: (data.mainNetInflowRatio as number) ?? null,
+    superLargeNetInflowRatio: (data.superLargeNetInflowRatio as number) ?? null,
+    largeNetInflowRatio: (data.largeNetInflowRatio as number) ?? null,
+    mediumNetInflowRatio: (data.mediumNetInflowRatio as number) ?? null,
+    smallNetInflowRatio: (data.smallNetInflowRatio as number) ?? null,
+    prevDayFlow: (data.prevDayFlow as Record<string, unknown> | null) ?? null,
+    prevDayTradingDate: (data.prevDayTradingDate as string | null) ?? null,
     error: (data.error as string) ?? undefined,
   }
 }
@@ -1082,6 +1160,13 @@ export async function fetchMarketOverviewAkshareArchive(tradingDate: string): Pr
     largeNetInflow: (data.largeNetInflow as number) ?? null,
     mediumNetInflow: (data.mediumNetInflow as number) ?? null,
     smallNetInflow: (data.smallNetInflow as number) ?? null,
+    mainNetInflowRatio: (data.mainNetInflowRatio as number) ?? null,
+    superLargeNetInflowRatio: (data.superLargeNetInflowRatio as number) ?? null,
+    largeNetInflowRatio: (data.largeNetInflowRatio as number) ?? null,
+    mediumNetInflowRatio: (data.mediumNetInflowRatio as number) ?? null,
+    smallNetInflowRatio: (data.smallNetInflowRatio as number) ?? null,
+    prevDayFlow: (data.prevDayFlow as Record<string, unknown> | null) ?? null,
+    prevDayTradingDate: (data.prevDayTradingDate as string | null) ?? null,
     error: (data.error as string) ?? undefined,
   }
 }
@@ -1312,6 +1397,62 @@ export async function fetchStyleSectors(): Promise<StyleSectorListResponse> {
   const res = await fetch(url)
   const data = (await res.json().catch(() => null)) as StyleSectorListResponse | null
   if (!res.ok || !data) throw new Error("获取风格板块失败")
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// 单个风格板块的成分股 + 轻量行情
+// 后端: GET /api/stock-chart/style-sectors/<name>/constituents
+// 行情来源: 腾讯 qt.gtimg.cn 批量快照 (30s 进程内缓存)
+// ---------------------------------------------------------------------------
+export interface StyleSectorConstituent {
+  /** 6 位 code, 已去除 sz/sh/bj 前缀 */
+  code: string
+  /** 原始带前缀 code (sz000048), 调试用, 平时前端不用 */
+  raw_code?: string
+  name: string
+  last_price: number | null
+  pre_close_price: number | null
+  open: number | null
+  high: number | null
+  low: number | null
+  change_pct: number | null
+  change_amount: number | null
+  /** 振幅 % = (high - low) / pre_close * 100 */
+  amplitude: number | null
+  /** 成交额 (元, tencent field[37]) */
+  turnover_amount: number | null
+  /** 换手率 % = volume(手) / (流通股/100) * 100 */
+  turnover_rate: number | null
+  /** 成交量 (手) */
+  volume: number | null
+  /** 流通市值 (元) */
+  circulating_market_cap: number | null
+  /** 流通股 (股) = 流通市值 / 现价 */
+  circulating_shares: number | null
+  valid: boolean
+}
+
+export interface StyleSectorConstituentsResponse {
+  ok: boolean
+  name: string
+  codes: string[]
+  constituents: StyleSectorConstituent[]
+  sample_size: number
+  valid_size: number | null
+  change_pct: number | null
+  fetched_at: string
+  error?: string
+}
+
+export async function fetchStyleSectorConstituents(
+  name: string,
+): Promise<StyleSectorConstituentsResponse> {
+  // 走 encodeURIComponent 处理中文
+  const url = `${API_BASE}/api/stock-chart/style-sectors/${encodeURIComponent(name)}/constituents`
+  const res = await fetch(url)
+  const data = (await res.json().catch(() => null)) as StyleSectorConstituentsResponse | null
+  if (!res.ok || !data) throw new Error(`获取 ${name} 成分股失败`)
   return data
 }
 
@@ -1842,6 +1983,18 @@ export const disableSchedulerJob = (jobId: string) => postSchedulerAction(jobId,
 export const triggerSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "trigger")
 export const startSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "start")
 export const stopSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "stop")
+
+/** 从 jobs.json 注册表里删除一个 job (后端同时停掉运行中的线程) */
+export async function deleteSchedulerJob(jobId: string): Promise<SchedulerJobActionResponse> {
+  const res = await fetch(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  })
+  const data = (await res.json().catch(() => null)) as SchedulerJobActionResponse | null
+  if (!res.ok || !data) {
+    throw new Error(data?.error || `删除 job ${jobId} 失败`)
+  }
+  return data
+}
 
 // ---------------------------------------------------------------------------
 // Self-Selected（/stock-overview/self-selected 页面用）

@@ -16,6 +16,7 @@ start / stop 五个动作。
 """
 from __future__ import annotations
 
+import logging
 import threading
 import traceback
 from datetime import datetime
@@ -61,12 +62,28 @@ from backend.services.stock.application_analysis_scheduler import (
     start_application_analysis_scheduler,
     stop_application_analysis_scheduler,
 )
+from backend.services.scheduler.market_overview_scheduler import (
+    get_market_overview_scheduler_status,
+    run_market_overview_snapshot_now,
+    start_market_overview_scheduler,
+    stop_market_overview_scheduler,
+)
+from backend.services.stock.market_overview_eltdx_service import capture_overview
 from backend.utils.json_io import read_json_file, write_json_file
 
 scheduler_bp = Blueprint('scheduler_mgmt', __name__)
 
+logger = logging.getLogger(__name__)
+
 # 三个内置 job 的 id 集合，用于校验路径。
-_KNOWN_JOB_IDS = {'turnover_refresh', 'auction_ai_analysis', 'application_analysis', 'stock_universe_refresh', 'ths_industry_constituents_weekly', 'ths_industry_constituents_daily'}
+_KNOWN_JOB_IDS = {
+    'turnover_refresh', 'auction_ai_analysis', 'application_analysis',
+    'stock_universe_refresh', 'ths_industry_constituents_weekly', 'ths_industry_constituents_daily',
+    # market_overview (eastmoney fund flow): 由 market_overview_scheduler 管理
+    'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
+    # eltdx overview (全A成交额/涨跌家数): 由同一个 market_overview_scheduler 管理
+    'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+}
 
 # application_analysis 的 enabled 写入 ``scheduler.json``（状态文件），其余两个走
 # ``scheduler/<id>.json``。这里集中处理。
@@ -140,6 +157,12 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         return get_ths_industry_constituents_scheduler_status()
     if job_id == 'ths_industry_constituents_daily':
         return get_ths_industry_constituents_daily_scheduler_status()
+    # market_overview / eltdx overview: 共用 market_overview_scheduler 的状态
+    if job_id in {
+        'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
+        'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+    }:
+        return get_market_overview_scheduler_status()
     return {}
 
 
@@ -156,6 +179,13 @@ def _start_scheduler(job_id: str) -> None:
         start_ths_industry_constituents_scheduler()
     elif job_id == 'ths_industry_constituents_daily':
         start_ths_industry_constituents_daily_scheduler()
+    elif job_id in {
+        'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
+        'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+    }:
+        # market_overview scheduler 是一个整体, 启动/停止作用于所有 6 个 job
+        # (start_market_overview_scheduler 是幂等的, 多次调用安全)
+        start_market_overview_scheduler()
 
 
 def _stop_scheduler(job_id: str) -> None:
@@ -171,6 +201,12 @@ def _stop_scheduler(job_id: str) -> None:
         stop_ths_industry_constituents_scheduler()
     elif job_id == 'ths_industry_constituents_daily':
         stop_ths_industry_constituents_daily_scheduler()
+    elif job_id in {
+        'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
+        'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+    }:
+        # 整体停掉 market_overview_scheduler (会暂停 APScheduler)
+        stop_market_overview_scheduler()
 
 
 def _trigger_scheduler(job_id: str) -> dict[str, Any]:
@@ -227,6 +263,28 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
         if sched is None:
             return {'ok': False, 'error': 'scheduler not initialized'}
         return sched.trigger_now()
+    # market_overview_*  (fund-flow, eastmoney 数据源)
+    if job_id in {'market_overview_inside', 'market_overview_close', 'market_overview_warmup'}:
+        snap = run_market_overview_snapshot_now(force=True)
+        if snap is None:
+            return {'ok': False, 'error': 'fund-flow fetch failed (eastmoney unreachable?)'}
+        return {
+            'ok': True,
+            'items': [snap],
+            'count': 1,
+            'failed_count': 0,
+        }
+    # eltdx_overview_*  (全A成交额/涨跌家数, eltdx 数据源)
+    if job_id in {'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup'}:
+        snap = capture_overview(force=True)
+        if snap is None:
+            return {'ok': False, 'error': 'eltdx fetch failed (TCP/TDX gateway unreachable?)'}
+        return {
+            'ok': True,
+            'items': [snap],
+            'count': 1,
+            'failed_count': 0,
+        }
     return {'ok': False, 'error': f'unknown job_id {job_id}'}
 
 
@@ -441,3 +499,32 @@ def stop_job(job_id: str):
     except Exception as exc:
         traceback.print_exc()
         return jsonify({'ok': False, 'error': str(exc)}), 500
+
+
+@scheduler_bp.route('/api/scheduler/jobs/<job_id>', methods=['DELETE'])
+def delete_job(job_id: str):
+    """从 jobs.json 注册表里删除一个 job (同时停掉运行中的调度器线程).
+
+    前端 /settings/scheduler 页面 "删除" 按钮用.
+    """
+    # 1) 先尝试停掉运行中的调度器 (不抛错, 失败也不影响删除注册表)
+    try:
+        _stop_scheduler(job_id)
+    except Exception as exc:
+        traceback.print_exc()
+        logger.warning("delete_job: stop scheduler for %s failed: %s", job_id, exc)
+
+    # 2) 从 jobs.json 移除该 job
+    p = _jobs_registry_path()
+    data = _load_jobs_registry()
+    before_count = len(data.get("jobs", []))
+    data["jobs"] = [j for j in data.get("jobs", []) if j.get("id") != job_id]
+    after_count = len(data["jobs"])
+
+    if before_count == after_count:
+        return jsonify({'ok': False, 'error': f'job {job_id} not found in registry'}), 404
+
+    p.parent.mkdir(parents=True, exist_ok=True)
+    write_json_file(p, data)
+    logger.info("delete_job: removed %s from jobs.json (count: %d -> %d)", job_id, before_count, after_count)
+    return jsonify({'ok': True, 'job_id': job_id, 'removed': before_count - after_count})

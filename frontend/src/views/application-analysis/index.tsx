@@ -687,7 +687,7 @@ export default function ApplicationAnalysisPage() {
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis" fullBleed>
       <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-4 sm:p-6">
-        <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[486px_minmax(0,1fr)]">
           {/* 左侧：信息辅助区 */}
           <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
             <TargetCard

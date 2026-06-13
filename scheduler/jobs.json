@@ -81,6 +81,48 @@
       "service_class": "ApplicationAnalysisScheduler",
       "enabled": true,
       "registered_at": "2026-06-08T20:20:00+08:00"
+    },
+    {
+      "id": "market_overview_inside",
+      "name": "market_overview_inside_refresh (5min 交易时间内)",
+      "module": "backend.services.scheduler.market_overview_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-13T14:10:00"
+    },
+    {
+      "id": "market_overview_close",
+      "name": "market_overview_close_snapshot (15:35)",
+      "module": "backend.services.scheduler.market_overview_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-13T14:10:00"
+    },
+    {
+      "id": "market_overview_warmup",
+      "name": "market_overview_warmup (09:00 开盘前)",
+      "module": "backend.services.scheduler.market_overview_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-13T14:10:00"
+    },
+    {
+      "id": "eltdx_overview_close",
+      "name": "eltdx_overview_close (15:35)",
+      "module": "backend.services.scheduler.market_overview_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-13T14:10:00"
+    },
+    {
+      "id": "eltdx_overview_warmup",
+      "name": "eltdx_overview_warmup (09:00 开盘前)",
+      "module": "backend.services.scheduler.market_overview_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-13T14:10:00"
+    },
+    {
+      "id": "eltdx_overview_inside",
+      "name": "eltdx_overview_inside (5min 交易时间内)",
+      "module": "backend.services.scheduler.market_overview_scheduler",
+      "nextRunTime": null,
+      "updatedAt": "2026-06-13T14:26:00"
     }
   ]
 }

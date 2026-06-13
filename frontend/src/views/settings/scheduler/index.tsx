@@ -1,8 +1,10 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   CirclePause,
   Clock,
   FileCode2,
@@ -14,6 +16,7 @@ import {
   RefreshCw,
   Settings2,
   TimerReset,
+  Trash2,
   Zap,
 } from "lucide-react"
 
@@ -24,9 +27,20 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { notification } from "@/components/ui/notification"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import DogLoader from "@/components/loader/dog-loader"
 import {
   type SchedulerJobItem,
+  deleteSchedulerJob,
   disableSchedulerJob,
   enableSchedulerJob,
   fetchSchedulerJobs,
@@ -35,7 +49,7 @@ import {
   triggerSchedulerJob,
 } from "@/lib/api"
 
-type ActionKey = "enable" | "disable" | "start" | "stop" | "trigger"
+type ActionKey = "enable" | "disable" | "start" | "stop" | "trigger" | "delete"
 type ActionState = Record<string, ActionKey | null>
 
 const REFRESH_INTERVAL_MS = 5_000
@@ -84,6 +98,8 @@ interface JobCardProps {
 }
 
 function JobCard({ job, pending, onAction }: JobCardProps) {
+  // 默认折叠 (collapsed=true), 用户点 chevron 展开看完整详情
+  const [expanded, setExpanded] = useState(false)
   const live = job.live || {}
   const config = job.config || {}
   const isRunning = Boolean(pickValue<boolean>(live, "running"))
@@ -103,19 +119,33 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
 
   return (
     <Card>
-      <CardHeader>
+      {/* 折叠态: 显示基本信息 + 调度按钮 (start/stop + trigger) + 展开 chevron */}
+      <CardHeader
+        className="cursor-pointer select-none"
+        onClick={() => setExpanded((v) => !v)}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="space-y-1">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Settings2 className="size-4 text-muted-foreground" />
-              {job.name}
-              <span className="font-mono text-xs text-muted-foreground">({job.id})</span>
-            </CardTitle>
-            {job.description ? (
-              <CardDescription>{job.description}</CardDescription>
-            ) : null}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {expanded ? (
+              <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            )}
+            <div className="min-w-0 flex-1 space-y-1">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Settings2 className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">{job.name}</span>
+                <span className="font-mono text-xs text-muted-foreground">({job.id})</span>
+              </CardTitle>
+              {!expanded && job.description ? (
+                <CardDescription className="line-clamp-1">{job.description}</CardDescription>
+              ) : null}
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div
+            className="flex flex-wrap items-center gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
             <Badge variant={isRunning ? "default" : "secondary"}>
               {isRunning ? "运行中" : "已停止"}
             </Badge>
@@ -124,227 +154,302 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 {job.config_enabled ? "已启用" : "已禁用"}
               </Badge>
             ) : null}
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
-            icon={<Activity className="size-3.5" />}
-            label="tick 次数"
-            value={tickCount ?? "—"}
-          />
-          <Stat
-            icon={<ListChecks className="size-3.5" />}
-            label="run 次数"
-            value={runsCount ?? totalRuns ?? "—"}
-          />
-          <Stat
-            icon={<Clock className="size-3.5" />}
-            label="启动时间"
-            value={formatDateTime(startedAt)}
-          />
-          <Stat
-            icon={<TimerReset className="size-3.5" />}
-            label="最后耗时"
-            value={formatSeconds(lastDuration ?? null)}
-          />
-        </div>
 
-        <Separator />
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1.5 text-sm">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              上次运行
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">时间：</span>
-              <span>{formatDateTime(lastRunAt)}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">状态：</span>
-              {lastStatus ? (
-                <Badge variant={statusBadgeVariant(lastStatus)}>{lastStatus}</Badge>
-              ) : (
-                <span>—</span>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">处理标的：</span>
-              <span>{lastTargets ?? "—"} 个</span>
-            </div>
-            {lastError ? (
-              <div className="flex items-start gap-2 text-destructive">
-                <AlertTriangle className="mt-0.5 size-3.5" />
-                <span className="text-xs leading-5">{lastError}</span>
-              </div>
-            ) : null}
-          </div>
-
-          <div className="space-y-1.5 text-sm">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              注册信息
-            </div>
-            <div className="flex items-center gap-2">
-              <FileCode2 className="size-3.5 text-muted-foreground" />
-              <span className="text-muted-foreground">config：</span>
-              <span className="break-all font-mono text-xs">{job.config_file || "—"}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">service：</span>
-              <span className="break-all font-mono text-xs">
-                {job.service_class || "—"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">module：</span>
-              <span className="break-all font-mono text-xs">
-                {job.service_module || "—"}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">注册时间：</span>
-              <span>{formatDateTime(job.registered_at)}</span>
-            </div>
-          </div>
-        </div>
-
-        {inflight && Object.keys(inflight).length > 0 ? (
-          <>
-            <Separator />
-            <div className="space-y-1.5 text-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                正在执行
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(inflight).map(([targetId, startedAtValue]) => (
-                  <Badge key={targetId} variant="secondary">
-                    {targetId} · {formatDateTime(startedAtValue)}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-          </>
-        ) : null}
-
-        {lastRun && Object.keys(lastRun).length > 0 ? (
-          <>
-            <Separator />
-            <div className="space-y-1.5 text-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                最近 per-target run
-              </div>
-              <div className="space-y-1">
-                {Object.entries(lastRun)
-                  .slice(0, 4)
-                  .map(([targetId, info]) => {
-                    const infoRecord = info as Record<string, unknown> | undefined
-                    const status = pickValue<string>(infoRecord, "status") || "—"
-                    return (
-                      <div
-                        key={targetId}
-                        className="flex items-center justify-between gap-3 text-xs"
-                      >
-                        <span className="font-mono">{targetId}</span>
-                        <span className="flex items-center gap-2 text-muted-foreground">
-                          <Badge variant={statusBadgeVariant(status)} className="px-1.5 py-0">
-                            {status}
-                          </Badge>
-                          <span>{formatDateTime(pickValue<string>(infoRecord, "finished_at"))}</span>
-                        </span>
-                      </div>
-                    )
-                  })}
-                {Object.keys(lastRun).length > 4 ? (
-                  <div className="text-xs text-muted-foreground">
-                    ……还有 {Object.keys(lastRun).length - 4} 个 target
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </>
-        ) : null}
-
-        <Separator />
-
-        <div className="flex flex-wrap items-center gap-2">
-          {job.supports_enable ? (
-            job.config_enabled ? (
+            {/* 调度按钮: 折叠态可见, 包含 start/stop + trigger */}
+            {isRunning ? (
               <Button
                 size="sm"
-                variant="outline"
+                variant="destructive"
                 className="rounded-xl"
-                disabled={isActionPending("disable")}
-                onClick={() => onAction(job.id, "disable")}
+                disabled={isActionPending("stop")}
+                onClick={() => onAction(job.id, "stop")}
               >
-                <PowerOff className="size-3.5" />
-                {isActionPending("disable") ? "禁用中…" : "禁用"}
+                <CirclePause className="size-3.5" />
+                {isActionPending("stop") ? "停止中…" : "停止调度"}
               </Button>
             ) : (
               <Button
                 size="sm"
                 variant="default"
                 className="rounded-xl"
-                disabled={isActionPending("enable")}
-                onClick={() => onAction(job.id, "enable")}
+                disabled={isActionPending("start")}
+                onClick={() => onAction(job.id, "start")}
               >
-                <Power className="size-3.5" />
-                {isActionPending("enable") ? "启用中…" : "启用"}
+                <Play className="size-3.5" />
+                {isActionPending("start") ? "启动中…" : "启动调度"}
               </Button>
-            )
-          ) : null}
+            )}
 
-          {isRunning ? (
             <Button
               size="sm"
+              variant="secondary"
+              className="rounded-xl"
+              disabled={isActionPending("trigger")}
+              onClick={() => onAction(job.id, "trigger")}
+            >
+              <Zap className="size-3.5" />
+              {isActionPending("trigger") ? "触发中…" : "立即触发"}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+
+      {/* 展开态: 显示完整详情 + 启用/禁用 + 删除 */}
+      {expanded ? (
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Stat
+              icon={<Activity className="size-3.5" />}
+              label="tick 次数"
+              value={tickCount ?? "—"}
+            />
+            <Stat
+              icon={<ListChecks className="size-3.5" />}
+              label="run 次数"
+              value={runsCount ?? totalRuns ?? "—"}
+            />
+            <Stat
+              icon={<Clock className="size-3.5" />}
+              label="启动时间"
+              value={formatDateTime(startedAt)}
+            />
+            <Stat
+              icon={<TimerReset className="size-3.5" />}
+              label="最后耗时"
+              value={formatSeconds(lastDuration ?? null)}
+            />
+          </div>
+
+          <Separator />
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 text-sm">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                上次运行
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">时间：</span>
+                <span>{formatDateTime(lastRunAt)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">状态：</span>
+                {lastStatus ? (
+                  <Badge variant={statusBadgeVariant(lastStatus)}>{lastStatus}</Badge>
+                ) : (
+                  <span>—</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">处理标的：</span>
+                <span>{lastTargets ?? "—"} 个</span>
+              </div>
+              {lastError ? (
+                <div className="flex items-start gap-2 text-destructive">
+                  <AlertTriangle className="mt-0.5 size-3.5" />
+                  <span className="text-xs leading-5">{lastError}</span>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-1.5 text-sm">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                注册信息
+              </div>
+              <div className="flex items-center gap-2">
+                <FileCode2 className="size-3.5 text-muted-foreground" />
+                <span className="text-muted-foreground">config：</span>
+                <span className="break-all font-mono text-xs">{job.config_file || "—"}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">service：</span>
+                <span className="break-all font-mono text-xs">
+                  {job.service_class || "—"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">module：</span>
+                <span className="break-all font-mono text-xs">
+                  {job.service_module || "—"}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">注册时间：</span>
+                <span>{formatDateTime(job.registered_at)}</span>
+              </div>
+            </div>
+          </div>
+
+          {inflight && Object.keys(inflight).length > 0 ? (
+            <>
+              <Separator />
+              <div className="space-y-1.5 text-sm">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  正在执行
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(inflight).map(([targetId, startedAtValue]) => (
+                    <Badge key={targetId} variant="secondary">
+                      {targetId} · {formatDateTime(startedAtValue)}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {lastRun && Object.keys(lastRun).length > 0 ? (
+            <>
+              <Separator />
+              <div className="space-y-1.5 text-sm">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  最近 per-target run
+                </div>
+                <div className="space-y-1">
+                  {Object.entries(lastRun)
+                    .slice(0, 4)
+                    .map(([targetId, info]) => {
+                      const infoRecord = info as Record<string, unknown> | undefined
+                      const status = pickValue<string>(infoRecord, "status") || "—"
+                      return (
+                        <div
+                          key={targetId}
+                          className="flex items-center justify-between gap-3 text-xs"
+                        >
+                          <span className="font-mono">{targetId}</span>
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            <Badge variant={statusBadgeVariant(status)} className="px-1.5 py-0">
+                              {status}
+                            </Badge>
+                            <span>{formatDateTime(pickValue<string>(infoRecord, "finished_at"))}</span>
+                          </span>
+                        </div>
+                      )
+                    })}
+                  {Object.keys(lastRun).length > 4 ? (
+                    <div className="text-xs text-muted-foreground">
+                      ……还有 {Object.keys(lastRun).length - 4} 个 target
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          <Separator />
+
+          <div className="flex flex-wrap items-center gap-2">
+            {job.supports_enable ? (
+              job.config_enabled ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl"
+                  disabled={isActionPending("disable")}
+                  onClick={() => onAction(job.id, "disable")}
+                >
+                  <PowerOff className="size-3.5" />
+                  {isActionPending("disable") ? "禁用中…" : "禁用"}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="rounded-xl"
+                  disabled={isActionPending("enable")}
+                  onClick={() => onAction(job.id, "enable")}
+                >
+                  <Power className="size-3.5" />
+                  {isActionPending("enable") ? "启用中…" : "启用"}
+                </Button>
+              )
+            ) : null}
+
+            {job.config_enabled && !isRunning ? (
+              <span className="inline-flex items-center gap-1 text-xs text-amber-600">
+                <AlertTriangle className="size-3" />
+                配置启用但线程未运行（重启 Flask 或点 "启动调度"）
+              </span>
+            ) : null}
+            {job.config_enabled === false && isRunning ? (
+              <span className="inline-flex items-center gap-1 text-xs text-amber-600">
+                <AlertTriangle className="size-3" />
+                线程运行中但配置已禁用（下次 start 会读取新配置）
+              </span>
+            ) : null}
+
+            {/* 删除按钮 + 确认对话框 (仅在展开时显示) */}
+            <DeleteJobButton
+              jobId={job.id}
+              jobName={job.name}
+              pending={isActionPending("delete")}
+              onConfirm={() => onAction(job.id, "delete")}
+            />
+          </div>
+        </CardContent>
+      ) : null}
+    </Card>
+  )
+}
+
+/** 删除按钮: 点击弹出确认对话框, 确认后调用 onConfirm */
+function DeleteJobButton({
+  jobId,
+  jobName,
+  pending,
+  onConfirm,
+}: {
+  jobId: string
+  jobName: string
+  pending: boolean
+  onConfirm: () => void
+}) {
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto rounded-xl text-destructive hover:bg-destructive/10 hover:text-destructive"
+          disabled={pending}
+        >
+          <Trash2 className="size-3.5" />
+          {pending ? "删除中…" : "删除"}
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>删除调度任务</DialogTitle>
+          <DialogDescription>
+            确认要删除 <span className="font-mono font-semibold">{jobId}</span> 吗？
+          </DialogDescription>
+        </DialogHeader>
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm leading-6 text-foreground">
+          <div className="font-medium">{jobName}</div>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+            <li>会从 <code className="rounded bg-muted px-1">scheduler/jobs.json</code> 注册表里移除</li>
+            <li>后端会停掉该 job 的调度器线程（如果正在运行）</li>
+            <li>下次重启 Flask 不会自动重新注册</li>
+            <li className="text-destructive">删除后如需恢复，需手动重新注册到 jobs.json</li>
+          </ul>
+        </div>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline" className="rounded-xl">取消</Button>
+          </DialogClose>
+          <DialogClose asChild>
+            <Button
               variant="destructive"
               className="rounded-xl"
-              disabled={isActionPending("stop")}
-              onClick={() => onAction(job.id, "stop")}
+              disabled={pending}
+              onClick={onConfirm}
             >
-              <CirclePause className="size-3.5" />
-              {isActionPending("stop") ? "停止中…" : "停止调度"}
+              <Trash2 className="size-3.5" />
+              确认删除
             </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="default"
-              className="rounded-xl"
-              disabled={isActionPending("start")}
-              onClick={() => onAction(job.id, "start")}
-            >
-              <Play className="size-3.5" />
-              {isActionPending("start") ? "启动中…" : "启动调度"}
-            </Button>
-          )}
-
-          <Button
-            size="sm"
-            variant="secondary"
-            className="rounded-xl"
-            disabled={isActionPending("trigger")}
-            onClick={() => onAction(job.id, "trigger")}
-          >
-            <Zap className="size-3.5" />
-            {isActionPending("trigger") ? "触发中…" : "立即触发一次"}
-          </Button>
-
-          {job.config_enabled && !isRunning ? (
-            <span className="inline-flex items-center gap-1 text-xs text-amber-600">
-              <AlertTriangle className="size-3" />
-              配置启用但线程未运行（重启 Flask 或点 "启动调度"）
-            </span>
-          ) : null}
-          {job.config_enabled === false && isRunning ? (
-            <span className="inline-flex items-center gap-1 text-xs text-amber-600">
-              <AlertTriangle className="size-3" />
-              线程运行中但配置已禁用（下次 start 会读取新配置）
-            </span>
-          ) : null}
-        </div>
-      </CardContent>
-    </Card>
+          </DialogClose>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -432,11 +537,18 @@ export default function SchedulerSettingsPage() {
           case "trigger":
             res = await triggerSchedulerJob(jobId)
             break
+          case "delete":
+            res = await deleteSchedulerJob(jobId)
+            break
         }
         if (res && res.ok === false) {
+          // trigger 的 error 嵌套在 result.error 里, 其他 action 在 res.error
+          const nestedError =
+            (res.result && (res.result as { error?: string }).error) || undefined
+          const errorMsg = res.error || nestedError || "请查看后端日志"
           notification.danger({
             title: "操作失败",
-            description: res.error || "请查看后端日志",
+            description: errorMsg,
           })
           return
         }
@@ -470,6 +582,14 @@ export default function SchedulerSettingsPage() {
             }
             break
           }
+          case "delete":
+            notification.success({
+              title: "已删除",
+              description: `job ${jobId} 已从 jobs.json 中移除（后端会停掉线程）`,
+            })
+            // 立即从本地列表移除, 不等 refresh
+            setJobs((prev) => prev.filter((j) => j.id !== jobId))
+            break
         }
       } catch (err) {
         notification.danger({

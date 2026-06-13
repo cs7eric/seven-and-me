@@ -38,6 +38,10 @@ from backend.services.stock.market_overview_akshare_service import (
     get_latest_snapshot,
     get_archived_snapshot,
 )
+from backend.services.stock.market_overview_eltdx_service import (
+    capture_overview,
+    get_latest_overview,
+)
 from backend.services.stock.trading_calendar import is_trade_time, is_trading_day
 from backend.utils.json_io import read_json_file
 
@@ -233,6 +237,61 @@ def _job_warmup() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Eltdx 市场概况 job 函数 (独立于 fund-flow, 不互相影响)
+# ---------------------------------------------------------------------------
+def _job_eltdx_inside() -> None:
+    """eltdx 市场概况: 盘内 5 分钟一次."""
+    now = _beijing_now()
+    if not is_trade_time(now):
+        return
+    if not is_trading_day(now.date()):
+        return
+    try:
+        snap = capture_overview(force=False)
+        if snap:
+            logger.info(
+                "eltdx overview inside ok: totalAmount=%.2f亿, rising=%d, elapsed=%.1fs",
+                snap.get("totalAmount") or 0,
+                snap.get("risingCount") or 0,
+                time.time() - time.time(),
+            )
+    except Exception as exc:
+        logger.warning("eltdx overview inside failed: %s", exc)
+
+
+def _job_eltdx_close() -> None:
+    """eltdx 市场概况: 15:35 收盘后强制拉一次."""
+    now = _beijing_now()
+    if not is_trading_day(now.date()):
+        return
+    try:
+        snap = capture_overview(force=True)
+        if snap:
+            logger.info(
+                "eltdx overview close ok: totalAmount=%.2f亿",
+                snap.get("totalAmount") or 0,
+            )
+    except Exception as exc:
+        logger.warning("eltdx overview close failed: %s", exc)
+
+
+def _job_eltdx_warmup() -> None:
+    """eltdx 市场概况: 09:00 开盘前 warmup."""
+    now = _beijing_now()
+    if not is_trading_day(now.date()):
+        return
+    try:
+        snap = capture_overview(force=True)
+        if snap:
+            logger.info(
+                "eltdx overview warmup ok: totalAmount=%.2f亿",
+                snap.get("totalAmount") or 0,
+            )
+    except Exception as exc:
+        logger.warning("eltdx overview warmup failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
 # 启动 / 停止 / 状态
 # ---------------------------------------------------------------------------
 def start_market_overview_scheduler() -> None:
@@ -272,6 +331,34 @@ def start_market_overview_scheduler() -> None:
             coalesce=True,
         )
 
+        # 4) eltdx 市场概况: 盘内 5 分钟一次
+        sched.add_job(
+            _job_eltdx_inside,
+            "interval",
+            seconds=INSIDE_REFRESH_SECONDS,
+            id="eltdx_overview_inside",
+            max_instances=1,
+            coalesce=True,
+        )
+
+        # 5) eltdx 市场概况: 15:35 收盘后强制拉一次
+        sched.add_job(
+            _job_eltdx_close,
+            CronTrigger.from_crontab(CLOSE_SNAPSHOT_CRON),
+            id="eltdx_overview_close",
+            max_instances=1,
+            coalesce=True,
+        )
+
+        # 6) eltdx 市场概况: 09:00 开盘前 warmup
+        sched.add_job(
+            _job_eltdx_warmup,
+            CronTrigger.from_crontab(WARMUP_CRON),
+            id="eltdx_overview_warmup",
+            max_instances=1,
+            coalesce=True,
+        )
+
         sched.start()
         _scheduler = sched
 
@@ -282,9 +369,19 @@ def start_market_overview_scheduler() -> None:
         _register_job("market_overview_inside", "market_overview_inside_refresh (5min, 交易时间内)", None)
         _register_job("market_overview_close", "market_overview_close_snapshot (15:35)", None)
         _register_job("market_overview_warmup", "market_overview_warmup (09:00, 开盘前)", None)
+        _register_job("eltdx_overview_inside", "eltdx_overview_inside (5min, 交易时间内)", None)
+        _register_job("eltdx_overview_close", "eltdx_overview_close (15:35)", None)
+        _register_job("eltdx_overview_warmup", "eltdx_overview_warmup (09:00, 开盘前)", None)
         logger.info(
-            "market_overview_scheduler started: inside=5min, warm=09:00, close=15:35"
+            "market_overview_scheduler started: inside=5min, warm=09:00, close=15:35 "
+            "(fund-flow + eltdx overview)"
         )
+
+    # 更新状态文件: running=true (供前端 JobCard 显示)
+    status = _load_job_status()
+    status["running"] = True
+    status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
+    _save_job_status(status)
 
 
 def stop_market_overview_scheduler() -> None:
@@ -295,9 +392,24 @@ def stop_market_overview_scheduler() -> None:
             _scheduler = None
             logger.info("market_overview_scheduler stopped")
 
+    # 更新状态文件: running=false
+    status = _load_job_status()
+    status["running"] = False
+    status["stoppedAt"] = _beijing_now().isoformat(timespec="seconds")
+    status["lastRunAt"] = status.get("stoppedAt")
+    _save_job_status(status)
+
 
 def get_market_overview_scheduler_status() -> dict[str, Any]:
-    return _load_job_status()
+    """返回 status, 但补上 running 字段 (从 _scheduler 实例推算).
+
+    注意: status 文件里也保存了 running, 但可能跟 _scheduler 实例不同步
+    (比如 start 后 status 写了 running=true, 之后从未停过).
+    所以这里以 _scheduler 实例为准, status 文件仅作持久化展示.
+    """
+    status = _load_job_status()
+    status["running"] = _scheduler is not None
+    return status
 
 
 def run_market_overview_snapshot_now(force: bool = False) -> dict[str, Any] | None:

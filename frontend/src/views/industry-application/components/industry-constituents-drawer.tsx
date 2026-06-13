@@ -54,6 +54,16 @@ export interface IndustryConstituentsDrawerProps {
   industryName: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
+  /**
+   * 外部传入数据 (跟 ``IndustryConstituentsIndexResponse`` 14 列同形).
+   * **如果传了这个 prop, 组件不再走内部 fetch, 完全用外部 data 渲染.**
+   * 不传 = 保持原行为, 用 ``industryCode`` 内部拉数据 (向后兼容).
+   *
+   * 用途: 让非 THS 行业 (e.g. 风格板块 / 自定义板块) 也能复用同一个 drawer UI.
+   * 调用方负责拿到 ``IndustryConstituentsIndexResponse`` 形状的 data, 缺失列填 null.
+   */
+  data?: IndustryConstituentsIndexResponse | null
+  loading?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -274,9 +284,16 @@ export function IndustryConstituentsDrawer({
   industryName,
   open,
   onOpenChange,
+  data: externalData,
+  loading: externalLoading,
 }: IndustryConstituentsDrawerProps) {
-  const [data, setData] = useState<IndustryConstituentsIndexResponse | null>(null)
-  const [loading, setLoading] = useState(false)
+  // 内部 state (老路径用)
+  const [internalData, setInternalData] = useState<IndustryConstituentsIndexResponse | null>(null)
+  const [internalLoading, setInternalLoading] = useState(false)
+  // 选择 external vs internal: 传了 externalData prop 就用外部, 跳过 fetch
+  const useExternal = externalData !== undefined
+  const data = useExternal ? externalData : internalData
+  const loading = useExternal ? Boolean(externalLoading) : internalLoading
   const [sortKey, setSortKey] = useState<ConstituentSortKey>("涨跌幅(%)")
   const [sortDir, setSortDir] = useState<SortDir>("desc")
   // 点击某只成分股 -> 弹出个股详情 dialog
@@ -287,13 +304,15 @@ export function IndustryConstituentsDrawer({
   const [stockDialogOpen, setStockDialogOpen] = useState(false)
 
   const load = useCallback(async (code: string) => {
-    setLoading(true)
+    // 外部传入 data 的模式下完全跳过内部 fetch
+    if (useExternal) return
+    setInternalLoading(true)
     try {
       const payload = await fetchIndustryConstituentsFromIndexByCode(code)
       if (!payload.ok) {
         throw new Error(payload.error || "加载失败")
       }
-      setData(payload)
+      setInternalData(payload)
     } catch (err) {
       const code = (err as Error & { code?: string }).code
       if (code !== "NOT_CACHED") {
@@ -303,18 +322,19 @@ export function IndustryConstituentsDrawer({
         })
       }
     } finally {
-      setLoading(false)
+      setInternalLoading(false)
     }
-  }, [])
+  }, [useExternal])
 
   // 行业 code 变化 / drawer 重新打开时重拉
   useEffect(() => {
+    if (useExternal) return  // 外部 data 模式: 完全不触发内部 load
     if (!open || !industryCode) {
-      setData(null)
+      setInternalData(null)
       return
     }
     void load(industryCode)
-  }, [open, industryCode, load])
+  }, [open, industryCode, load, useExternal])
 
   const sortedRows = useMemo(() => {
     const rows = (data?.rows ?? []) as IndustryConstituentRow[]
@@ -351,7 +371,7 @@ export function IndustryConstituentsDrawer({
 
   return (
     <Drawer open={open} onOpenChange={onOpenChange} direction="right">
-      <DrawerContent className="left-auto right-0 top-0 mt-0 h-screen w-full max-w-6xl rounded-none border-l data-[vaul-drawer-direction=right]:sm:max-w-6xl">
+      <DrawerContent className="left-auto right-0 top-0 mt-0 h-screen w-full max-w-6xl rounded-none !border-l-0 data-[vaul-drawer-direction=right]:sm:max-w-6xl">
         <DrawerHeader className="border-b border-slate-100">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">

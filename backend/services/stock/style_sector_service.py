@@ -17,7 +17,7 @@ from typing import Any
 
 from backend.adapters.market.tencent import fetch_tencent_snapshots
 from backend.services.stock.stock_universe_service import list_sectors_by_category
-from infra.style_sector import compute_sector_change_pct
+from infra.style_sector import compute_sector_change_pct  # noqa: F401  # 保留兼容老 import; 实际不再用 (等权平均替代)
 
 logger = logging.getLogger(__name__)
 
@@ -71,9 +71,15 @@ def _fetch_quotes(codes: list[str]) -> dict[str, dict[str, Any]]:
 def _compute_one(
     name: str, codes: list[str], quotes: dict[str, dict[str, Any]]
 ) -> dict[str, Any]:
-    """单个 style 的计算结果 (百分数, 流通市值加权)."""
-    last_caps: list[float] = []
-    prev_caps: list[float] = []
+    """单个 style 的计算结果 (百分数, **等权平均**: 成分股当日涨跌幅的算术平均).
+
+    公式: R = (stock1_change_pct + stock2_change_pct + ... + stockN_change_pct) / N
+    (跟项目内 "昨日涨停板块涨跌幅 = 昨日涨停股票今日涨跌幅的平均值" 口径一致)
+
+    优选直接用 tencent snapshot 自带的 change_pct (field[32]); 缺失时回退
+    ``(last - pre_close) / pre_close * 100``.
+    """
+    pcts: list[float] = []
     for code in codes:
         q = quotes.get(code)
         if not q:
@@ -81,19 +87,26 @@ def _compute_one(
         try:
             last = float(q.get("last_price") or 0)
             pre_close = float(q.get("pre_close_price") or 0)
-            cap = float(q.get("circulating_market_cap") or 0)
         except (TypeError, ValueError):
             continue
-        if last <= 0 or pre_close <= 0 or cap <= 0:
+        # 优先 snapshot 自带 change_pct, 缺失时现价算
+        pct_raw = q.get("change_pct")
+        pct: float | None = None
+        if pct_raw is not None and pct_raw != "":
+            try:
+                pct = float(pct_raw)
+            except (TypeError, ValueError):
+                pct = None
+        if pct is None and last > 0 and pre_close > 0:
+            pct = (last - pre_close) / pre_close * 100.0
+        if pct is None:
             continue
-        # 现时市值 = 现价 × 流通股本 (流通市值), 昨日市值 = 昨收 × 流通股本 = pre_close/last × cap
-        last_caps.append(cap)
-        prev_caps.append(pre_close * cap / last)
-    pct = compute_sector_change_pct(last_caps, prev_caps)
+        pcts.append(pct)
+    avg = (sum(pcts) / len(pcts)) if pcts else None
     return {
         "name": name,
-        "change_pct": round(pct, 4) if pct is not None else None,
-        "valid_size": len(last_caps),
+        "change_pct": round(avg, 4) if avg is not None else None,
+        "valid_size": len(pcts),
         "sample_size": len(codes),
     }
 

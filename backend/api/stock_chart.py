@@ -601,6 +601,35 @@ def stock_chart_market_overview_akshare_archive(trading_date: str):
 
 
 # =============================================================================
+# 市场概况 (eltdx): 全A成交额 / 涨跌家数
+# 路径: /market-overview-eltdx/ (独立于 /market-overview-akshare/ fund-flow)
+# 数据由 backend/services/stock/market_overview_eltdx_service.py 维护.
+# 独立持久化: reference/market-overview/market-overview/latest.json
+# =============================================================================
+@stock_chart_bp.route('/api/stock-chart/market-overview-eltdx')
+def stock_chart_market_overview_eltdx():
+    """读 eltdx overview latest (全A成交额 / 涨跌家数)."""
+    from backend.services.stock.market_overview_eltdx_service import get_latest_overview
+    try:
+        return jsonify(get_latest_overview())
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@stock_chart_bp.route('/api/stock-chart/market-overview-eltdx/refresh', methods=['POST'])
+def stock_chart_market_overview_eltdx_refresh():
+    """手动触发 eltdx overview 拉取 + 落盘."""
+    from backend.services.stock.market_overview_eltdx_service import capture_overview
+    try:
+        snap = capture_overview(force=True)
+        if snap is None:
+            return jsonify({"ok": False, "error": "eltdx unavailable"}), 502
+        return jsonify({"ok": True, "snapshot": snap})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+# =============================================================================
 # 行业 / 概念 应用面分析（独立于 application-analysis）
 # 数据源：eltdx bars.get(kind="index")
 # 持久化：reference/industry-application/  (独立)
@@ -1554,3 +1583,157 @@ def style_sector_one(name: str):
     if result is None:
         return jsonify({"ok": False, "error": f"unknown style: {name}"}), 404
     return jsonify({"ok": True, "item": result})
+
+
+@stock_chart_bp.route('/api/stock-chart/style-sectors/<string:name>/constituents', methods=['GET'])
+def style_sector_constituents(name: str):
+    """单个 style 板块的成分股 codes + 轻量实时行情 (腾讯快照, 30s 缓存).
+
+    用途: Market Pulse 风格板块热力图点击 cell -> 弹 drawer 展示成分股 list.
+
+    返回::
+        {
+          "ok": true,
+          "name": "百元股",
+          "codes": ["600519", "300750", ...],
+          "constituents": [
+            {
+              "code": "600519",
+              "name": "贵州茅台",
+              "last_price": 1234.56,
+              "pre_close_price": 1230.00,
+              "change_pct": 0.37,
+              "change_amount": 4.56,
+              "circulating_market_cap": 1550000000000,
+              "turnover_rate": 0.12,
+              "valid": true
+            },
+            ...
+          ],
+          "fetched_at": "2026-06-12T15:35:00"
+        }
+
+    行情缺失的 code: 仍然出现在 ``codes`` 里, 但 ``constituents`` 里 ``valid=false`` (前端可灰色显示).
+    """
+    from backend.services.stock.style_sector_service import (
+        STYLE_SECTOR_NAMES,
+        get_style_sector,
+    )
+    from backend.adapters.market.tencent import fetch_tencent_snapshots
+    from backend.services.stock.stock_universe_service import list_sectors_by_category
+    from backend.services.stock.style_sector_service import STYLES_CATEGORY_RAW
+
+    if name not in STYLE_SECTOR_NAMES:
+        return jsonify({"ok": False, "error": f"unknown style: {name}"}), 404
+
+    # 1) codes (从 sectors_styles_4.json 拿)
+    try:
+        item = get_style_sector(name) or {}
+    except Exception:
+        item = {}
+
+    codes: list[str] = []
+    for s in list_sectors_by_category(STYLES_CATEGORY_RAW):
+        if s.get("name") == name:
+            codes = list(s.get("stock_codes") or [])
+            break
+
+    # 2) 实时行情 (腾讯 qt.gtimg.cn 批量快照, 30s 缓存)
+    #    snapshot 里直接带 name, 不用额外查
+    quotes: dict[str, dict] = {}
+    if codes:
+        try:
+            quotes = fetch_tencent_snapshots(codes) or {}
+        except Exception:
+            quotes = {}
+
+    # 3) 拼 constituents list
+    #    **code 去除 sz/sh/bj 前缀** (前端显示 6 位 code, 跟其他页面一致)
+    #    **实时计算** 振幅 / 成交额 / 流通股 / 换手率 (tencent 字段对不上, 自己算)
+    constituents: list[dict] = []
+    for raw in codes:
+        q = quotes.get(raw) or {}
+        # 去前缀: sz000048 -> 000048
+        bare = raw[2:] if raw[:2] in ("sh", "sz", "bj") else raw
+        last = q.get("last_price")
+        pre = q.get("pre_close_price")
+        # 涨跌额 / 涨跌幅: 优先用 quote 自带, 否则现价算
+        chg_amt = q.get("change_amount")
+        chg_pct = q.get("change_pct")
+        try:
+            if chg_amt is None and last not in (None, 0, "0", "") and pre not in (None, 0, "0", ""):
+                chg_amt = round(float(last) - float(pre), 4)
+            if chg_pct is None and chg_amt is not None and pre not in (None, 0, "0", ""):
+                chg_pct = round(float(chg_amt) / float(pre) * 100, 4)
+        except (TypeError, ValueError):
+            pass
+        # 派生字段
+        amplitude: float | None = None
+        turnover_amount: float | None = None
+        circulating_shares: float | None = None
+        turnover_rate: float | None = None
+        try:
+            high = q.get("high")
+            low = q.get("low")
+            if high and low and pre:
+                amplitude = round((float(high) - float(low)) / float(pre) * 100, 2)
+        except (TypeError, ValueError):
+            pass
+        try:
+            # turnover 字段是 **成交额 (元)** (tencent field[37], 注释 "# 元")
+            turnover_amount = q.get("turnover")
+            if turnover_amount is not None:
+                turnover_amount = float(turnover_amount)
+        except (TypeError, ValueError):
+            turnover_amount = None
+        try:
+            # 流通股 = 流通市值 / 现价 (现价 > 0 时)
+            cap = q.get("circulating_market_cap")
+            if cap and last:
+                circulating_shares = float(cap) / float(last)
+        except (TypeError, ValueError):
+            circulating_shares = None
+        # 换手率 = 成交量(手) / 流通股(手) = volume(手) / (流通股 / 100)
+        try:
+            volume = q.get("volume")  # 单位: 手
+            if volume is not None and circulating_shares:
+                # circulating_shares 是股数, 转成手数 (/100)
+                turnover_rate = round(float(volume) / (float(circulating_shares) / 100) * 100, 2)
+        except (TypeError, ValueError):
+            turnover_rate = None
+
+        constituents.append({
+            "code": bare,                        # 去 sz/sh/bj 前缀
+            "raw_code": raw,                     # 保留原始带前缀 code, 调试用
+            "name": q.get("name") or bare,       # tencent snapshot 自带 name
+            "last_price": last,
+            "pre_close_price": pre,
+            "open": q.get("open"),
+            "high": q.get("high"),
+            "low": q.get("low"),
+            "change_pct": chg_pct,
+            "change_amount": chg_amt,
+            "amplitude": amplitude,              # 振幅 % = (high - low) / pre_close * 100
+            "turnover_amount": turnover_amount,  # 成交额 (元) — 跟 IndustryConstituentRow "成交额" 字段对齐
+            "turnover_rate": turnover_rate,      # 换手率 % — 算出来的 (volume / 流通股)
+            "volume": q.get("volume"),          # 成交手数
+            "circulating_market_cap": q.get("circulating_market_cap"),
+            "circulating_shares": circulating_shares,  # 流通股(股)
+            "valid": last is not None and pre not in (None, 0, "0", ""),
+        })
+
+    from datetime import datetime, timedelta
+    # codes 也去前缀, 跟 constituents 里的 code 对齐 (前端 StockDetailDialog 期望 6 位 code)
+    bare_codes = [
+        (c[2:] if c[:2] in ("sh", "sz", "bj") else c) for c in codes
+    ]
+    return jsonify({
+        "ok": True,
+        "name": name,
+        "codes": bare_codes,
+        "constituents": constituents,
+        "sample_size": item.get("sample_size") or len(codes),
+        "valid_size": item.get("valid_size"),
+        "change_pct": item.get("change_pct"),
+        "fetched_at": (datetime.utcnow() + timedelta(hours=8)).isoformat(timespec="seconds"),
+    })
