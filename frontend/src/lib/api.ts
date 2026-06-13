@@ -1171,6 +1171,75 @@ export async function fetchMarketOverviewAkshareArchive(tradingDate: string): Pr
   }
 }
 
+// ---------------------------------------------------------------------------
+// 市场脉搏历史序列 (Market Pulse 趋势图用)
+// 后端: GET /api/stock-chart/market-overview-akshare/history?range=60d
+// 数据源: reference/market-overview/archive/*.json (日级别 archive)
+// 单位: 资金流 / 成交额 = "亿"; 涨跌家数 = 整数
+// ---------------------------------------------------------------------------
+export type PulseRange = "20d" | "60d" | "120d" | "1y"
+
+export interface MarketHistoryPoint {
+  /** YYYY-MM-DD */
+  date: string
+  /** 全 A 成交额 (亿) */
+  totalAmount: number | null
+  totalVolume: number | null
+  risingCount: number | null
+  fallingCount: number | null
+  flatCount: number | null
+  limitUpCount: number | null
+  limitDownCount: number | null
+  /** 主力净流入 (亿) */
+  mainNetInflow: number | null
+  superLargeNetInflow: number | null
+  largeNetInflow: number | null
+  mediumNetInflow: number | null
+  smallNetInflow: number | null
+  source: string
+}
+
+export interface MarketHistoryResponse {
+  ok: boolean
+  range: string
+  source: string
+  count: number
+  items: MarketHistoryPoint[]
+  error?: string
+}
+
+export async function fetchMarketPulseHistory(range: PulseRange = "60d"): Promise<MarketHistoryResponse> {
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/market-overview-akshare/history?range=${encodeURIComponent(range)}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) throw new Error("获取 Market Pulse 历史序列失败")
+  const rawItems = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    range: (data.range as string) ?? range,
+    source: (data.source as string) ?? "eastmoney",
+    count: typeof data.count === "number" ? data.count : rawItems.length,
+    items: rawItems.map((it) => ({
+      date: String(it.date ?? ""),
+      totalAmount: (it.totalAmount as number) ?? null,
+      totalVolume: (it.totalVolume as number) ?? null,
+      risingCount: (it.risingCount as number) ?? null,
+      fallingCount: (it.fallingCount as number) ?? null,
+      flatCount: (it.flatCount as number) ?? null,
+      limitUpCount: (it.limitUpCount as number) ?? null,
+      limitDownCount: (it.limitDownCount as number) ?? null,
+      mainNetInflow: (it.mainNetInflow as number) ?? null,
+      superLargeNetInflow: (it.superLargeNetInflow as number) ?? null,
+      largeNetInflow: (it.largeNetInflow as number) ?? null,
+      mediumNetInflow: (it.mediumNetInflow as number) ?? null,
+      smallNetInflow: (it.smallNetInflow as number) ?? null,
+      source: String(it.source ?? "eastmoney"),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
 export async function triggerMarketOverviewAkshareRefresh(): Promise<{
   ok: boolean
   snapshot?: MarketOverview

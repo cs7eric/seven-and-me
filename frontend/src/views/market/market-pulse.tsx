@@ -4,8 +4,9 @@ import { Activity, ArrowDownRight, ArrowUpRight, Flame, Loader2, RefreshCw, Tren
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { fetchStyleSectors, fetchMarketOverviewAkshare, fetchMarketOverviewEltdx, fetchStyleSectorConstituents, triggerMarketOverviewEltdxRefresh, type StyleSectorItem, type MarketOverview, type MarketOverviewEltdx, type IndustryConstituentsIndexResponse, type StyleSectorConstituent } from "@/lib/api"
+import { fetchStyleSectors, fetchMarketOverviewAkshare, fetchMarketOverviewEltdx, fetchStyleSectorConstituents, triggerMarketOverviewEltdxRefresh, type StyleSectorItem, type MarketOverview, type MarketOverviewEltdx, type MarketHistoryPoint, type IndustryConstituentsIndexResponse, type StyleSectorConstituent } from "@/lib/api"
 import { StyleSectorsHeatmap } from "./components/style-sectors-heatmap"
+import { MarketPulsePanel } from "./components/market-pulse-panel"
 import { IndustryConstituentsDrawer } from "@/views/industry-application/components/industry-constituents-drawer"
 
 const PLACEHOLDER_CARDS = [
@@ -323,6 +324,9 @@ export default function MarketPulsePage() {
   const [constituentsData, setConstituentsData] = useState<IndustryConstituentsIndexResponse | null>(null)
   const [constituentsLoading, setConstituentsLoading] = useState(false)
 
+  // 历史趋势图 hover 联动: 非 null 时顶部两个快照卡显示该日数据
+  const [hoverPoint, setHoverPoint] = useState<MarketHistoryPoint | null>(null)
+
   const load = async () => {
     setLoading(true)
     setError(null)
@@ -549,8 +553,73 @@ export default function MarketPulsePage() {
           </div>
         )}
 
+        {/* === 统一显示数据: hover 历史日 → 用 hoverPoint; 否则用今日 overview/overviewCounts === */}
+        {(() => {
+          const display = hoverPoint
+            ? {
+                source: "history" as const,
+                tradingDate: hoverPoint.date,
+                prevDayTradingDate: null as string | null,
+                prevDayFlow: null as Record<string, unknown> | null,
+                totalAmount: hoverPoint.totalAmount,
+                stockCount: null as number | null,
+                risingCount: hoverPoint.risingCount,
+                fallingCount: hoverPoint.fallingCount,
+                flatCount: hoverPoint.flatCount,
+                limitUpCount: hoverPoint.limitUpCount,
+                limitDownCount: hoverPoint.limitDownCount,
+                mainNetInflow: hoverPoint.mainNetInflow,
+                superLargeNetInflow: hoverPoint.superLargeNetInflow,
+                largeNetInflow: hoverPoint.largeNetInflow,
+                mediumNetInflow: hoverPoint.mediumNetInflow,
+                smallNetInflow: hoverPoint.smallNetInflow,
+              }
+            : {
+                source: "today" as const,
+                tradingDate: overview?.tradingDate ?? null,
+                prevDayTradingDate: overview?.prevDayTradingDate ?? null,
+                prevDayFlow: (overview?.prevDayFlow as Record<string, unknown> | null) ?? null,
+                totalAmount: overviewCounts?.totalAmount ?? overview?.totalAmount ?? null,
+                stockCount: overviewCounts?.stockCount ?? overview?.stockCount ?? null,
+                risingCount: overviewCounts?.risingCount ?? overview?.risingCount ?? null,
+                fallingCount: overviewCounts?.fallingCount ?? overview?.fallingCount ?? null,
+                flatCount: overviewCounts?.flatCount ?? overview?.flatCount ?? null,
+                limitUpCount: overviewCounts?.limitUpCount ?? overview?.limitUpCount ?? null,
+                limitDownCount:
+                  overviewCounts?.limitDownCount ?? overview?.limitDownCount ?? null,
+                mainNetInflow: overview?.mainNetInflow ?? null,
+                superLargeNetInflow: overview?.superLargeNetInflow ?? null,
+                largeNetInflow: overview?.largeNetInflow ?? null,
+                mediumNetInflow: overview?.mediumNetInflow ?? null,
+                smallNetInflow: overview?.smallNetInflow ?? null,
+              }
+
+          // 大盘成交额 较昨日差额
+          //  (history 视图 prevDayFlow=null, 自然 amountDiff=null → 不渲染)
+          const prevDayAmount =
+            (display.prevDayFlow as { totalAmount?: number | null } | null)?.totalAmount ?? null
+          const amountDiff =
+            display.totalAmount != null && prevDayAmount != null
+              ? display.totalAmount - prevDayAmount
+              : null
+
+          return (
+        <div className="space-y-3">
+          {display.source === "history" && display.tradingDate && (
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
+              <span>已选中 {display.tradingDate} 历史快照</span>
+              <button
+                type="button"
+                className="ml-1 text-amber-700 underline-offset-2 hover:underline"
+                onClick={() => setHoverPoint(null)}
+              >
+                返回今日
+              </button>
+            </div>
+          )}
+
         <div className="grid gap-3 md:grid-cols-2">
-          {/* 1. 大盘成交额: hero (5xl + 渐变) + 2x2 涨跌家数 (eltdx, 独立持久化) */}
+          {/* 1. 大盘成交额: hero (5xl + 渐变) + 2x2 涨跌家数 */}
           <Card className="flex h-full flex-col border-border/30">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center justify-between text-sm font-medium text-muted-foreground">
@@ -559,11 +628,7 @@ export default function MarketPulsePage() {
                   大盘成交额
                 </span>
                 <span className="text-[10px] font-normal text-muted-foreground">
-                  {overviewCounts?.stockCount != null
-                    ? `${overviewCounts.stockCount} 只`
-                    : overview?.stockCount != null
-                      ? `${overview.stockCount} 只`
-                      : ""}
+                  {display.stockCount != null ? `${display.stockCount} 只` : ""}
                 </span>
               </CardTitle>
             </CardHeader>
@@ -574,12 +639,30 @@ export default function MarketPulsePage() {
                   全 A 成交额
                 </div>
                 <div className="mt-1 text-4xl font-bold tracking-tight tabular-nums text-slate-900">
-                  {overviewCounts?.totalAmount != null
-                    ? formatYi(overviewCounts.totalAmount)
-                    : overview?.totalAmount != null
-                      ? formatYi(overview.totalAmount)
-                      : "—"}
+                  {display.totalAmount != null ? formatYi(display.totalAmount) : "—"}
                 </div>
+                {/* 较昨日差额: 涨红跌绿, A股惯例 */}
+                {amountDiff != null ? (
+                  <div className="mt-1 inline-flex items-baseline gap-1 text-xs tabular-nums">
+                    <span className="text-slate-400">较昨日</span>
+                    {amountDiff > 0 ? (
+                      <ArrowUpRight className="size-3 text-red-500" />
+                    ) : amountDiff < 0 ? (
+                      <ArrowDownRight className="size-3 text-emerald-500" />
+                    ) : null}
+                    <span
+                      className={
+                        amountDiff > 0
+                          ? "font-semibold text-red-600"
+                          : amountDiff < 0
+                            ? "font-semibold text-emerald-600"
+                            : "text-slate-500"
+                      }
+                    >
+                      {formatYi(amountDiff)}
+                    </span>
+                  </div>
+                ) : null}
               </div>
 
               {/* 2x2 stats: 涨 / 跌 / 涨停 / 跌停 */}
@@ -591,7 +674,7 @@ export default function MarketPulsePage() {
                     <span>上涨</span>
                   </div>
                   <div className="mt-1 text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
-                    {formatCount(overviewCounts?.risingCount ?? overview?.risingCount)}
+                    {formatCount(display.risingCount)}
                   </div>
                 </div>
                 {/* 跌 */}
@@ -601,37 +684,45 @@ export default function MarketPulsePage() {
                     <span>下跌</span>
                   </div>
                   <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {formatCount(overviewCounts?.fallingCount ?? overview?.fallingCount)}
+                    {formatCount(display.fallingCount)}
                   </div>
                 </div>
                 {/* 涨停 */}
                 <div className="rounded-xl border border-red-100 bg-white px-3 py-2.5">
                   <div className="text-[11px] font-medium text-slate-500">涨停</div>
                   <div className="mt-1 text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
-                    {formatCount(overviewCounts?.limitUpCount ?? overview?.limitUpCount)}
+                    {formatCount(display.limitUpCount)}
                   </div>
                 </div>
                 {/* 跌停 */}
                 <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2.5">
                   <div className="text-[11px] font-medium text-slate-500">跌停</div>
                   <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {formatCount(overviewCounts?.limitDownCount ?? overview?.limitDownCount)}
+                    {formatCount(display.limitDownCount)}
                   </div>
                 </div>
               </div>
 
               {/* 平盘 footnote (compact 一行) */}
               <div className="mt-2 text-[10px] text-slate-400">
-                平盘 {formatCount(overviewCounts?.flatCount ?? overview?.flatCount)} 只
+                平盘 {formatCount(display.flatCount)} 只
               </div>
             </CardContent>
           </Card>
 
-          {/* 2. 资金流向 (按 spec 重写: 主结论 + 两组辅助信息) */}
+          {/* 2. 资金流向 */}
           {(() => {
-            const tradingDate = overview?.tradingDate ?? null
-            const prevTradingDate = overview?.prevDayTradingDate ?? null
-            const prevFlow = overview?.prevDayFlow
+            const tradingDate = display.tradingDate
+            const prevTradingDate = display.prevDayTradingDate
+            const prevFlow = display.prevDayFlow as
+              | {
+                  mainNetInflow: number | null
+                  superLargeNetInflow: number | null
+                  largeNetInflow: number | null
+                  mediumNetInflow: number | null
+                  smallNetInflow: number | null
+                }
+              | null
 
             // 格式化日期 badge: "06月12日"
             const dateBadge = (() => {
@@ -651,13 +742,13 @@ export default function MarketPulsePage() {
             const diff = (cur: number | null, prev: number | null): number | null =>
               cur != null && prev != null ? cur - prev : null
 
-            const main = overview?.mainNetInflow ?? null
+            const main = display.mainNetInflow
             const mainDiff = diff(main, prevFlow?.mainNetInflow ?? null)
 
-            const superLarge = overview?.superLargeNetInflow ?? null
-            const large = overview?.largeNetInflow ?? null
-            const medium = overview?.mediumNetInflow ?? null
-            const small = overview?.smallNetInflow ?? null
+            const superLarge = display.superLargeNetInflow
+            const large = display.largeNetInflow
+            const medium = display.mediumNetInflow
+            const small = display.smallNetInflow
 
             const moneyFlowData: MoneyFlowData = {
               date: dateBadge,
@@ -689,6 +780,18 @@ export default function MarketPulsePage() {
             return <MoneyFlowCard data={moneyFlowData} />
           })()}
         </div>
+        </div>
+          )
+        })()}
+
+        {/* === 市场脉搏 · 历史趋势图 (4 视图复合图 + 洞察小指标) === */}
+        <MarketPulsePanel
+          defaultView="flow"
+          onPointHover={(_idx, point) => {
+            // hover 历史点 → 顶部快照卡切换; mouseout → 自动回今日
+            setHoverPoint(point ?? null)
+          }}
+        />
       </div>
 
       {/* === 后续接入模块的占位 === */}

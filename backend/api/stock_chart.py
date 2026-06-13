@@ -600,6 +600,42 @@ def stock_chart_market_overview_akshare_archive(trading_date: str):
     return jsonify(snap)
 
 
+@stock_chart_bp.route('/api/stock-chart/market-overview-akshare/history')
+def stock_chart_market_overview_akshare_history():
+    """最近 N 个交易日的历史序列 (Market Pulse 趋势图用).
+
+    URL: GET /api/stock-chart/market-overview-akshare/history?range=60d
+    range 接受: 20d / 60d / 120d / 1y (默认 60d, 上限 365d)
+
+    返回:
+      {
+        "ok": true,
+        "range": "60d",
+        "source": "eastmoney",
+        "count": 60,
+        "items": [
+          {"date": "2025-12-11", "totalAmount": null, "risingCount": null,
+           "mainNetInflow": -857.75, "superLargeNetInflow": -510.11, ...},
+          ...
+        ]
+      }
+    """
+    range_param = (request.args.get("range") or "60d").strip().lower()
+    days_map = {"20d": 20, "60d": 60, "120d": 120, "1y": 260}
+    days = days_map.get(range_param, 60)
+    days = max(1, min(days, 365))  # 安全上限
+
+    from backend.services.stock.market_overview_akshare_service import get_history_points
+    items = get_history_points(days=days)
+    return jsonify({
+        "ok": True,
+        "range": range_param,
+        "source": "eastmoney",
+        "count": len(items),
+        "items": items,
+    })
+
+
 # =============================================================================
 # 市场概况 (eltdx): 全A成交额 / 涨跌家数
 # 路径: /market-overview-eltdx/ (独立于 /market-overview-akshare/ fund-flow)

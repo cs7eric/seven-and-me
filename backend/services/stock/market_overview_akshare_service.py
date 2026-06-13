@@ -430,3 +430,64 @@ def list_archived_dates(limit: int = 60) -> list[str]:
         reverse=True,
     )
     return [p.stem for p in files[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# 历史序列 (Market Pulse 历史趋势图用)
+# ---------------------------------------------------------------------------
+# 历史点只暴露前端需要的字段, 不把 prevDayFlow/ratios 等冗余字段透出去.
+# 数值字段一律 nullable, archive 里早于 2026-05 的快照 totalAmount/risingCount
+# 等 spot_em 字段可能是 null (旧版 capture_snapshot 不爬 spot_em), 前端按 null 渲染 "—".
+_HISTORY_FIELDS = [
+    "totalAmount",
+    "totalVolume",
+    "risingCount",
+    "fallingCount",
+    "flatCount",
+    "limitUpCount",
+    "limitDownCount",
+    "mainNetInflow",
+    "superLargeNetInflow",
+    "largeNetInflow",
+    "mediumNetInflow",
+    "smallNetInflow",
+]
+
+
+def get_history_points(days: int = 60) -> list[dict[str, Any]]:
+    """读最近 N 个交易日的 archive, 返回扁平历史点列表 (按日期升序).
+
+    字段单位保持跟现有 archive / snapshot 一致:
+      - 资金流相关字段 (mainNetInflow 等): 单位 "亿"
+      - 成交额 (totalAmount): 单位 "亿"
+      - 涨跌家数: 整数
+
+    返回示例:
+      [
+        {"date": "2025-12-11", "totalAmount": None, "mainNetInflow": -857.75, ...},
+        {"date": "2025-12-12", "totalAmount": None, "mainNetInflow": -86.5, ...},
+        ...
+      ]
+    """
+    if not MARKET_OVERVIEW_ARCHIVE_DIR.exists():
+        return []
+    # archive 文件名 YYYYMMDD, 排序后取最近 N 天 (文件名大的 = 新的)
+    files = sorted(
+        MARKET_OVERVIEW_ARCHIVE_DIR.glob("*.json"),
+        key=lambda p: p.name,
+        reverse=True,
+    )[: max(1, days)]
+    points: list[dict[str, Any]] = []
+    for f in reversed(files):  # 翻转成升序
+        data = read_json_file(f, None)
+        if not isinstance(data, dict):
+            continue
+        yyyymmdd = f.stem
+        date_str = f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
+        point: dict[str, Any] = {"date": date_str}
+        for field in _HISTORY_FIELDS:
+            v = data.get(field)
+            point[field] = v if v is not None else None
+        point["source"] = "eastmoney"
+        points.append(point)
+    return points
