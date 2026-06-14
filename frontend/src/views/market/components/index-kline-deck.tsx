@@ -187,7 +187,7 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
         )}
 
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => {
             // 强制刷新: 清掉这个 date 的 cache
@@ -202,7 +202,7 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
           ) : (
             <RefreshCw className="size-3.5" />
           )}
-          <span className="ml-1">刷新</span>
+          <span className="ml-1">Refresh</span>
         </Button>
       </div>
 

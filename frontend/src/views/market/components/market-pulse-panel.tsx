@@ -113,7 +113,7 @@ export function MarketPulsePanel({
   const hasData = items.length > 0
 
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div>
       {/* 头部 */}
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -164,7 +164,7 @@ export function MarketPulsePanel({
           ))}
         </div>
         <Button
-          variant="outline"
+          variant="secondary"
           size="sm"
           onClick={() => load(range)}
           disabled={loading}
@@ -174,7 +174,7 @@ export function MarketPulsePanel({
           ) : (
             <RefreshCw className="size-3.5" />
           )}
-          <span className="ml-1">刷新</span>
+          <span className="ml-1">Refresh</span>
         </Button>
       </div>
 
@@ -208,6 +208,6 @@ export function MarketPulsePanel({
 
       {/* 底部洞察小指标 */}
       {hasData && <PulseStats data={items} />}
-    </section>
+    </div>
   )
 }

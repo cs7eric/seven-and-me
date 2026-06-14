@@ -3,11 +3,13 @@ import { Activity, ArrowDownRight, ArrowUpRight, Flame, Loader2, RefreshCw, Tren
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Button } from "@/components/ui/button"
-import { fetchStyleSectors, fetchMarketOverviewAkshare, fetchMarketOverviewEltdx, fetchStyleSectorConstituents, triggerMarketOverviewEltdxRefresh, type StyleSectorItem, type MarketOverview, type MarketOverviewEltdx, type MarketHistoryPoint, type IndustryConstituentsIndexResponse, type StyleSectorConstituent } from "@/lib/api"
+import { notification } from "@/components/ui/notification"
+import { fetchStyleSectors, fetchMarketOverviewAkshare, fetchMarketOverviewEltdx, fetchStyleSectorConstituents, fetchMarketHeatmap, triggerMarketOverviewEltdxRefresh, type StyleSectorItem, type MarketOverview, type MarketOverviewEltdx, type MarketHistoryPoint, type IndustryConstituentsIndexResponse, type StyleSectorConstituent, type MarketHeatmapResponse } from "@/lib/api"
 import { StyleSectorsHeatmap } from "./components/style-sectors-heatmap"
 import { MarketPulsePanel } from "./components/market-pulse-panel"
 import { IndexKlineDeck } from "./components/index-kline-deck"
 import { IndustryConstituentsDrawer } from "@/views/industry-application/components/industry-constituents-drawer"
+import { IndustryHeatmap } from "./components/industry-heatmap"
 
 const PLACEHOLDER_CARDS = [
   {
@@ -186,6 +188,12 @@ export default function MarketPulsePage() {
   const [constituentsData, setConstituentsData] = useState<IndustryConstituentsIndexResponse | null>(null)
   const [constituentsLoading, setConstituentsLoading] = useState(false)
 
+  // 行业板块热力图
+  const [heatmapData, setHeatmapData] = useState<MarketHeatmapResponse | null>(null)
+  const [heatmapLoading, setHeatmapLoading] = useState(false)
+  const [heatmapAutoRefresh, setHeatmapAutoRefresh] = useState(false)
+  const [heatmapKind, setHeatmapKind] = useState<"industries" | "concepts">("industries")
+
   // 历史趋势图 联动:
   //   hoveredPoint  → 鼠标 hover 某根柱子 (瞬时预览, 不持久化, 不影响 K 线)
   //   selectedPoint → 鼠标 click 某根柱子 (持久化, 钉住, 顶部 K 线 + 快照卡 全部跟随)
@@ -323,9 +331,25 @@ export default function MarketPulsePage() {
     }
   }
 
+  const loadHeatmap = async (kind: "industries" | "concepts" = heatmapKind) => {
+    setHeatmapLoading(true)
+    try {
+      const data = await fetchMarketHeatmap(kind)
+      setHeatmapData(data)
+    } catch (err) {
+      notification.danger({
+        title: "热力图加载失败",
+        description: err instanceof Error ? err.message : "未知错误",
+      })
+    } finally {
+      setHeatmapLoading(false)
+    }
+  }
+
   useEffect(() => {
     void load()
     void loadOverview()
+    void loadHeatmap()
     // 交易时间 5min 一次轮询; 非交易时间 30min 一次 (scheduler 也没在跑, 读 archive)
     const id = window.setInterval(
       () => {
@@ -336,6 +360,11 @@ export default function MarketPulsePage() {
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveIsTradeTime])
+
+  useEffect(() => {
+    void loadHeatmap(heatmapKind)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatmapKind])
 
   const sorted = useMemo(
     () => [...items].sort((a, b) => (b.change_pct ?? -Infinity) - (a.change_pct ?? -Infinity)),
@@ -379,7 +408,7 @@ export default function MarketPulsePage() {
             </p>
           </div>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={loadOverview}
             disabled={overviewLoading}
@@ -390,7 +419,7 @@ export default function MarketPulsePage() {
             ) : (
               <RefreshCw className="size-3.5" />
             )}
-            <span className="ml-1">刷新</span>
+            <span className="ml-1">Refresh</span>
           </Button>
         </div>
 
@@ -638,13 +667,13 @@ export default function MarketPulsePage() {
               {fetchedAt ? ` · ${fetchedAt} 拉取` : ""}
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+          <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
             {loading ? (
               <Loader2 className="size-3.5 animate-spin" />
             ) : (
               <RefreshCw className="size-3.5" />
             )}
-            <span className="ml-1">刷新</span>
+            <span className="ml-1">Refresh</span>
           </Button>
         </div>
 
@@ -673,6 +702,19 @@ export default function MarketPulsePage() {
               />
             </div>
         )}
+      </div>
+
+      {/* === 行业板块热力图 (同花顺式 ECharts Treemap) === */}
+      <div className="h-[420px]">
+        <IndustryHeatmap
+          data={heatmapData}
+          loading={heatmapLoading}
+          onRefresh={() => void loadHeatmap(heatmapKind)}
+          autoRefresh={heatmapAutoRefresh}
+          onAutoRefreshChange={setHeatmapAutoRefresh}
+          kind={heatmapKind}
+          onKindChange={setHeatmapKind}
+        />
       </div>
 
       {/* === 后续接入模块的占位 === */}
