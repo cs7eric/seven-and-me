@@ -10,6 +10,7 @@ import { MarketPulsePanel } from "./components/market-pulse-panel"
 import { IndexKlineDeck } from "./components/index-kline-deck"
 import { IndustryConstituentsDrawer } from "@/views/industry-application/components/industry-constituents-drawer"
 import { IndustryHeatmap } from "./components/industry-heatmap"
+import { LimitEmotionPanel } from "./components/limit-emotion-panel"
 
 const PLACEHOLDER_CARDS = [
   {
@@ -716,6 +717,10 @@ export default function MarketPulsePage() {
           onKindChange={setHeatmapKind}
         />
       </div>
+
+      {/* === 涨跌停情绪 (limitEmotion) · 涨停/跌停/触板/炸板/连板梯队 ===
+          扩展模块, 挂在行业热力图下方, 不修改既有代码. */}
+      <LimitEmotionPanel />
 
       {/* === 后续接入模块的占位 === */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

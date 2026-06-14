@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta
 from typing import Any
 
+import logging
+
 from flask import Blueprint, jsonify, request
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +52,12 @@ from backend.services.stock.application_analysis_store import load_targets, resu
 from backend.services.stock.market_overview_service import build_market_overview
 from backend.services.stock.search_service import search_stock_chart
 from backend.services.stock.market_heatmap_service import build_market_heatmap
+from backend.services.stock.limit_emotion_service import (
+    build_limit_emotion as _build_limit_emotion_service,
+    get_limit_emotion as _get_limit_emotion_service,
+    snapshot_today_daily as _snapshot_today_daily_service,
+    save_config as _save_limit_emotion_config,
+)
 from backend.services.stock.workspace_service import (
     create_stock_annotation,
     get_stock_workspace,
@@ -2041,3 +2051,87 @@ def style_sector_constituents(name: str):
         "change_pct": item.get("change_pct"),
         "fetched_at": (datetime.utcnow() + timedelta(hours=8)).isoformat(timespec="seconds"),
     })
+
+
+# ---------------------------------------------------------------------------
+# 涨跌停情绪 (limitEmotion) 路由
+#
+# 三个端点:
+#   GET  /api/stock-chart/market-pulse/limit-emotion
+#     - 读盘优先, stale 才重算. 给前端 use.
+#   POST /api/stock-chart/market-pulse/limit-emotion/refresh
+#     - 强制重算 + 落盘 latest + snapshot.
+#   POST /api/stock-chart/market-pulse/limit-emotion/daily-snapshot
+#     - 收盘后落盘 daily/<date>.json (供次日连板用).
+#   GET  /api/stock-chart/market-pulse/limit-emotion/config
+#   PUT  /api/stock-chart/market-pulse/limit-emotion/config
+# ---------------------------------------------------------------------------
+@stock_chart_bp.route('/api/stock-chart/market-pulse/limit-emotion')
+def market_pulse_limit_emotion():
+    """返回 limitEmotion 最新结果.
+
+    不存在 / 过旧 → 同步重算一次 (staleMinutes 配置控制).
+    """
+    try:
+        payload = _get_limit_emotion_service()
+    except Exception as exc:
+        logger.exception("limitEmotion failed: %s", exc)
+        return jsonify({
+            "ok": False,
+            "error": f"limitEmotion failed: {exc}",
+            "tradeDate": None,
+            "updateTime": None,
+            "marketStatus": "unknown",
+            "dataStatus": "empty",
+        }), 200
+    return jsonify({"ok": True, **payload})
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/limit-emotion/refresh', methods=['POST'])
+def market_pulse_limit_emotion_refresh():
+    """强制重算 + 落盘."""
+    try:
+        payload = _build_limit_emotion_service(force=True)
+    except Exception as exc:
+        logger.exception("limitEmotion refresh failed: %s", exc)
+        return jsonify({"ok": False, "error": f"refresh failed: {exc}"}), 200
+    return jsonify({"ok": True, **payload})
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/limit-emotion/daily-snapshot', methods=['POST'])
+def market_pulse_limit_emotion_daily_snapshot():
+    """收盘落盘 daily/<date>.json (供次日连板).
+
+    非交易日直接返回 ok=False + error 解释, 不写盘.
+    """
+    try:
+        out = _snapshot_today_daily_service(force=True)
+    except Exception as exc:
+        logger.exception("limitEmotion daily-snapshot failed: %s", exc)
+        return jsonify({"ok": False, "error": f"daily snapshot failed: {exc}"}), 200
+    if not out:
+        return jsonify({
+            "ok": False,
+            "error": "non-trading day or no quotes available; daily file not written",
+        }), 200
+    return jsonify({
+        "ok": True,
+        "tradeDate": out.get("tradeDate"),
+        "stockCount": out.get("stockCount"),
+        "path": f"reference/market-limit/daily/{out.get('tradeDate')}.json",
+    })
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/limit-emotion/config', methods=['GET'])
+def market_pulse_limit_emotion_config_get():
+    from backend.services.stock.limit_emotion_service import _load_config  # noqa: SLF001
+    return jsonify({"ok": True, "config": _load_config()})
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/limit-emotion/config', methods=['PUT'])
+def market_pulse_limit_emotion_config_put():
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"ok": False, "error": "body must be a JSON object"}), 400
+    merged = _save_limit_emotion_config(body)
+    return jsonify({"ok": True, "config": merged})

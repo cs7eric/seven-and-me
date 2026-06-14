@@ -29,6 +29,7 @@ from backend.config.settings import (
 )
 from backend.services.stock.market_pulse_service import snapshot_today_rotation
 from backend.services.stock.f10.ths_industry_constituents_service import get_all_industry_constituents as get_all_constituents
+from backend.services.stock.limit_emotion_service import snapshot_today_daily as snapshot_today_limit_emotion_daily
 from backend.services.stock.trading_calendar import is_trade_time, is_trading_day
 from backend.utils.json_io import read_json_file, write_json_file
 
@@ -168,6 +169,19 @@ def _job_close_snapshot() -> None:
         status["lastRunError"] = str(exc)[:300]
         _save_job_status(status)
         logger.warning("market_pulse close-snapshot failed: %s\n%s", exc, traceback.format_exc())
+
+    # 涨跌停 daily 落盘: 供次日/非交易日连板读盘. 失败只 warn, 不影响 close snapshot 状态.
+    try:
+        daily_out = snapshot_today_limit_emotion_daily(force=False)
+        if daily_out:
+            status["lastLimitEmotionDailyAt"] = now.isoformat(timespec="seconds")
+            _save_job_status(status)
+            logger.info(
+                "limitEmotion daily snapshot ok: %d stocks at %s",
+                daily_out.get("stockCount"), daily_out.get("tradeDate"),
+            )
+    except Exception as exc:
+        logger.warning("limitEmotion daily snapshot failed: %s\n%s", exc, traceback.format_exc())
 
 
 def _job_constituents_refresh() -> None:

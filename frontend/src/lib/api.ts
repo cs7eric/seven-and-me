@@ -1631,6 +1631,144 @@ export async function fetchMarketPulseRotationTrend(
   return data
 }
 
+// ---------------------------------------------------------------------------
+// 涨跌停情绪 (limitEmotion) 类型与请求
+//
+// 4 块语义: 涨停 / 跌停 / 炸板率 / 连板体系.
+// 后端路径: /api/stock-chart/market-pulse/limit-emotion
+// ---------------------------------------------------------------------------
+export type LimitEmotionStreakSentimentLevel =
+  | "ice"
+  | "weak"
+  | "normal"
+  | "active"
+  | "hot"
+
+export type LimitEmotionMarketStatus =
+  | "pre_open"
+  | "trading"
+  | "closed"
+  | "unknown"
+
+export type LimitEmotionDataStatus =
+  | "normal"
+  | "partial"
+  | "stale"
+  | "empty"
+
+export type LimitEmotionBreakBoardStatus = "ready" | "unavailable"
+
+export interface LimitEmotionLeader {
+  code: string
+  name: string
+  streak: number
+}
+
+export interface LimitEmotionDistributionRow {
+  streak: number
+  count: number
+  stocks: LimitEmotionStock[]
+}
+
+export interface LimitEmotionPromotionLevel {
+  from: number
+  to: number
+  yesterdayCount: number
+  todayPromotedCount: number
+  rate: number | null
+}
+
+export interface LimitEmotionPromotion {
+  overallRate: number | null
+  levels: LimitEmotionPromotionLevel[]
+}
+
+export interface LimitEmotionBrokenStock {
+  code: string
+  name: string
+  previousStreak: number
+  changePct: number | null
+}
+
+export interface LimitEmotionBroken {
+  count: number
+  highStreakBrokenCount: number
+  stocks: LimitEmotionBrokenStock[]
+}
+
+export interface LimitEmotionStreak {
+  maxHeight: number | null
+  label: "连板高度"
+  leaders: LimitEmotionLeader[]
+  distribution: LimitEmotionDistributionRow[]
+  promotion: LimitEmotionPromotion
+  broken: LimitEmotionBroken
+  sentiment: {
+    level: LimitEmotionStreakSentimentLevel
+    text: string
+  }
+}
+
+export interface LimitEmotionStock {
+  code: string
+  name: string
+  changePct?: number | null
+  industry?: string | null
+  concepts?: string[]
+  limitUpPrice?: number | null
+  limitDownPrice?: number | null
+}
+
+export interface LimitEmotionPayload {
+  limitUp: {
+    count: number | null
+    label: "涨停"
+    stocks?: LimitEmotionStock[]
+  }
+  limitDown: {
+    count: number | null
+    label: "跌停"
+    stocks?: LimitEmotionStock[]
+  }
+  breakBoard: {
+    touchedCount: number | null
+    brokenCount: number | null
+    rate: number | null
+    status: LimitEmotionBreakBoardStatus
+    label: "炸板率"
+    brokenStocks?: LimitEmotionStock[]
+  }
+  streak: LimitEmotionStreak
+  tradeDate: string | null
+  updateTime: string | null
+  marketStatus: LimitEmotionMarketStatus | null
+  dataStatus: LimitEmotionDataStatus
+  ok?: boolean
+  _meta?: Record<string, unknown>
+}
+
+export async function fetchMarketPulseLimitEmotion(): Promise<LimitEmotionPayload> {
+  const url = `${API_BASE}/api/stock-chart/market-pulse/limit-emotion`
+  const res = await fetch(url, { cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as
+    | (LimitEmotionPayload & { ok: boolean; error?: string })
+    | null
+  if (!res.ok || !data) {
+    throw new Error(data?.error || "获取涨跌停情绪失败")
+  }
+  return data
+}
+
+export async function refreshMarketPulseLimitEmotion(): Promise<LimitEmotionPayload> {
+  const url = `${API_BASE}/api/stock-chart/market-pulse/limit-emotion/refresh`
+  const res = await fetch(url, { method: "POST" })
+  const data = (await res.json().catch(() => null)) as
+    | (LimitEmotionPayload & { ok: boolean; error?: string })
+    | null
+  if (!res.ok || !data) throw new Error(data?.error || "刷新涨跌停情绪失败")
+  return data
+}
+
 export async function fetchIndustryDetail(
   name: string,
   topN = 30

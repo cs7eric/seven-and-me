@@ -57,6 +57,19 @@ STOCK_TURNOVER_DIR = REFERENCE_FOLDER / 'stock' / 'turnover'
 STOCK_UNIVERSE_DIR = REFERENCE_FOLDER / 'stock-universe'
 STOCK_UNIVERSE_INDEX_FILE = STOCK_UNIVERSE_DIR / 'index.json'
 
+# ---- 涨跌停情绪 (limitEmotion) 持久化 ----
+# 不进数据库, 统一走本地 JSON. 目录布局:
+#   reference/market-pulse/latest.json
+#   reference/market-pulse/snapshots/<trade_date>/<HHMMSS>.json
+#   reference/market-limit/daily/<trade_date>.json
+#   reference/market-limit/config.json
+MARKET_PULSE_LIMIT_FOLDER = REFERENCE_FOLDER / 'market-pulse'
+MARKET_PULSE_LIMIT_LATEST_FILE = MARKET_PULSE_LIMIT_FOLDER / 'latest.json'
+MARKET_PULSE_LIMIT_SNAPSHOTS_DIR = MARKET_PULSE_LIMIT_FOLDER / 'snapshots'
+MARKET_LIMIT_FOLDER = REFERENCE_FOLDER / 'market-limit'
+MARKET_LIMIT_DAILY_DIR = MARKET_LIMIT_FOLDER / 'daily'
+MARKET_LIMIT_CONFIG_FILE = MARKET_LIMIT_FOLDER / 'config.json'
+
 # ---- 同花顺全行业主力资金（hexin-v 破解）落盘目录 ----
 # 由 backend/services/stock/f10/ths_fund_flow_service.py 维护, 含:
 #   1) latest.json         : 全量最新一份, 给前端直接读
@@ -153,5 +166,9 @@ def ensure_app_directories() -> None:
     THS_INDUSTRY_CONSTITUENTS_DIR.mkdir(parents=True, exist_ok=True)
     SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
     SELF_SELECTED_FOLDER.mkdir(parents=True, exist_ok=True)
+    MARKET_PULSE_LIMIT_FOLDER.mkdir(parents=True, exist_ok=True)
+    MARKET_PULSE_LIMIT_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    MARKET_LIMIT_FOLDER.mkdir(parents=True, exist_ok=True)
+    MARKET_LIMIT_DAILY_DIR.mkdir(parents=True, exist_ok=True)
     UPLOAD_FOLDER.mkdir(exist_ok=True)
     OUTPUT_FOLDER.mkdir(exist_ok=True)
