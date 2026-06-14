@@ -515,7 +515,10 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
     [filtered, selectedSector],
   )
 
-  const [drillDownCache, setDrillDownCache] = useState<Record<string, StockHeatmapItem[]>>({})
+  // cache: key = sectorCode, value = { stocks: StockHeatmapItem[], originalChildren: StockHeatmapItem[] }
+  // originalChildren 保存该 sector 被钻入前的原始 children（无 drill-down 时为空数组）
+  // 这样切换回 market 视图时，filtered 中的 sector children 能被恢复，不会被 drill-down stocks 污染
+  const [drillDownCache, setDrillDownCache] = useState<Record<string, { stocks: StockHeatmapItem[]; originalChildren: StockHeatmapItem[] }>>({})
   const [drillDownLoading, setDrillDownLoading] = useState(false)
   const drillDownKey = selectedSector ?? ""
 
@@ -527,13 +530,19 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
       const items = rows
         .filter((row): row is IndustryConstituentRow => !!row && !!row["代码"])
         .map((row) => constituentRowToStockItem(row, sector))
-      setDrillDownCache((prev) => ({ ...prev, [code]: items }))
+      setDrillDownCache((prev) => ({
+        ...prev,
+        [code]: { stocks: items, originalChildren: [...sector.children] },
+      }))
     } catch (err) {
       notification.danger({
         title: `加载 ${sector.name} 成分股失败`,
         description: err instanceof Error ? err.message : "未知错误",
       })
-      setDrillDownCache((prev) => ({ ...prev, [code]: [] }))
+      setDrillDownCache((prev) => ({
+        ...prev,
+        [code]: { stocks: [], originalChildren: [...sector.children] },
+      }))
     } finally {
       setDrillDownLoading(false)
     }
@@ -546,9 +555,10 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
     if (drillDownCache[code]) return
     void loadDrillDown(code, activeSector)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, activeSector?.sectorCode])
+  }, [viewMode, activeSector?.sectorCode, drillDownCache])
 
-  const drillDownStocks = drillDownCache[drillDownKey] ?? null
+  const drillDownEntry = drillDownCache[drillDownKey] ?? null
+  const drillDownStocks = drillDownEntry?.stocks ?? null
 
   const treemapData = useMemo(() => {
     if (viewMode === "sector" && activeSector) {
@@ -559,9 +569,18 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
       }
       return buildTreemap([wrapped], areaBy, colorBy, "stock")
     }
-    return buildTreemap(filtered, areaBy, colorBy, "sector")
-  }, [filtered, activeSector, viewMode, areaBy, colorBy, drillDownStocks])
+    // 返回 market 视图: 需要恢复原始 children，避免被 drill-down stocks 污染
+    const marketSectors = filtered.map((sector) => {
+      const entry = drillDownCache[sector.sectorCode]
+      if (entry) {
+        return { ...sector, children: entry.originalChildren }
+      }
+      return sector
+    })
+    return buildTreemap(marketSectors, areaBy, colorBy, "sector")
+  }, [filtered, activeSector, viewMode, areaBy, colorBy, drillDownStocks, drillDownCache])
 
+  // 初始化 ECharts 实例
   useEffect(() => {
     if (!chartRef.current) return
     const chart = echarts.init(chartRef.current, undefined, { renderer: "canvas" })
@@ -661,7 +680,7 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
           data: treemapData,
         },
       ],
-    })
+    }, { notMerge: true })
   }, [treemapData, viewMode, filtered])
 
   useEffect(() => {
