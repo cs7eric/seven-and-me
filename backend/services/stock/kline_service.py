@@ -393,7 +393,7 @@ def build_intraday_snapshot(
 
     for date_key in timeshare_trade_dates:
         try:
-            daily_points = fetch_stock_history_timeshare_from_eltdx(symbol, date_key)
+            daily_points = fetch_stock_history_timeshare_from_eltdx(symbol, date_key, target_type=target_type)
             if daily_points:
                 if not timeshare_source:
                     timeshare_source = 'eltdx'

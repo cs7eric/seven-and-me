@@ -8,8 +8,10 @@
  *   - flow      资金潮汐  (红绿渐变面积 + 主线 + 4 虚线 + 0 轴 + 极值点)  ← 默认
  *   - structure 资金结构  (100% 堆叠面积, 按绝对值占比)
  *
- * hover 联动: onPointHover 回调当前 hover 的 date / point data,
- * 父组件 MarketPulsePanel 接到后驱动顶部两个快照卡临时显示该日数据.
+ * 选中联动: 父组件传 selectedIndex 进来, chart dispatchAction highlight + showTip
+ * 持久化标记选中柱; click 触发 onPointClick 给父组件 toggle.
+ * **hover 不再联动** — ECharts 原生 axis trigger 仍会出 tooltip, 但只作视觉反馈,
+ * 不会触发外部状态变更 / 顶部 K 线切换.
  *
  * 单位约定 (跟现有 archive / snapshot 一致):
  *   - totalAmount / mainNetInflow / ... : 单位 "亿"
@@ -48,10 +50,14 @@ export type PulseView = "turnover" | "breadth" | "flow" | "structure"
 interface Props {
   data: MarketHistoryPoint[]
   view: PulseView
-  /** hover 联动: 当前 hover 的 point (data 数组下标), null = 未 hover */
-  hoverIndex: number | null
-  /** hover 变化时回调 (用于驱动顶部快照卡联动) */
-  onPointHover?: (idx: number | null, point: MarketHistoryPoint | null) => void
+  /** 父组件选中的柱子 (data 数组下标); null = 没有任何选中 */
+  selectedIndex: number | null
+  /** 父组件 hover 的柱子 (data 数组下标); null = 没有 hover */
+  hoveredIndex: number | null
+  /** 点击某一天 (用于 toggle 选中) */
+  onPointClick?: (idx: number, point: MarketHistoryPoint) => void
+  /** 鼠标 hover 某一天 (瞬时, 用于切换 overview 卡片) */
+  onPointHover?: (point: MarketHistoryPoint | null) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -559,7 +565,7 @@ function buildStructureOption(data: MarketHistoryPoint[], dates: string[]) {
 // ---------------------------------------------------------------------------
 // 主组件
 // ---------------------------------------------------------------------------
-export function MarketPulseEChart({ data, view, hoverIndex, onPointHover }: Props) {
+export function MarketPulseEChart({ data, view, selectedIndex, hoveredIndex, onPointClick, onPointHover }: Props) {
   const ref = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
 
@@ -594,46 +600,128 @@ export function MarketPulseEChart({ data, view, hoverIndex, onPointHover }: Prop
     chart.setOption(option, true)
   }, [data, dates, view])
 
-  // hover 联动: 高亮当前 hover 索引 (markPoint / markLine)
+  // 选中联动: 持久化高亮 + 钉住 tooltip
+  //  - selectedIndex != null → 该柱子 dispatchAction highlight + showTip
+  //  - selectedIndex == null → 全部 downplay, 隐藏 tip
+  // 多个 series 时按 seriesIndex 0..3 各 dispatch 一次, 确保所有视图都标到.
+  // **依赖 view**: setOption(option, true) 重建 series 会丢掉已有 highlight,
+  // 用户先选中再切视图时必须重新 dispatch.
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
-    chart.dispatchAction({
-      type: hoverIndex == null ? "downplay" : "highlight",
-      seriesIndex: 2, // 主线 (flow / breadth 通用)
-      dataIndex: hoverIndex ?? 0,
-    })
-    chart.dispatchAction({
-      type: "showTip",
-      seriesIndex: 2,
-      dataIndex: hoverIndex ?? 0,
-    })
-  }, [hoverIndex])
+    for (let s = 0; s < 4; s++) {
+      chart.dispatchAction({
+        type: selectedIndex == null ? "downplay" : "highlight",
+        seriesIndex: s,
+        dataIndex: selectedIndex ?? 0,
+      })
+    }
+    if (selectedIndex == null) {
+      chart.dispatchAction({ type: "hideTip" })
+    } else {
+      chart.dispatchAction({
+        type: "showTip",
+        seriesIndex: 0,
+        dataIndex: selectedIndex,
+      })
+    }
+  }, [selectedIndex, view])
 
-  // 鼠标事件: 触发 hover 联动
+  // hover 联动: 鼠标在某柱子上 → onPointHover(point)
+  // 父组件把 hoveredPoint 喂给 overview 卡片做瞬时切换.
+  // 不在 chart 内部 dispatch showTip / highlight, 避免和 selectedIndex 选中态打架;
+  // 父组件决定是否高亮(目前 panel 层 selectedIndex 优先, 不再额外高亮 hover).
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart || !onPointHover) return
-    const onUpdate = (e: { dataIndex?: number }) => {
+    if (!chart) return
+
+    const onMouseOver = (e: { dataIndex?: number; componentType?: string }) => {
+      // 只对 series 系列 (柱子 / 折线) 响应, 忽略 axisPointer / legend 等
+      if (e.componentType && e.componentType !== "series") return
       const i = e.dataIndex
-      if (typeof i === "number" && i >= 0 && i < data.length) {
-        onPointHover(i, data[i])
-      }
+      if (typeof i !== "number" || i < 0 || i >= data.length) return
+      onPointHoverRef.current?.(data[i])
     }
-    const onOut = () => onPointHover(null, null)
-    chart.on("updateAxisPointer", onUpdate)
-    const zr = chart.getZr()
-    if (zr) zr.on("mouseout", onOut)
+
+    const onGlobalOut = () => {
+      // 鼠标移出 chart → 清掉 hover 预览, 让 overview 卡片回退到 selectedPoint / 今日
+      onPointHoverRef.current?.(null)
+    }
+
+    chart.on("mouseover", onMouseOver)
+    chart.getZr().on("globalout", onGlobalOut)
     return () => {
-      // 走 ref 而不是 closure: init 卸载时可能先把 chart.dispose() 掉,
-      // 此时 closure 里的 chart.getZr() 已返回 null, .off() 会炸.
       const c = chartRef.current
       if (!c) return
-      try { c.off("updateAxisPointer", onUpdate) } catch { /* 已 dispose, 忽略 */ }
-      const z = c.getZr()
-      if (z) { try { z.off("mouseout", onOut) } catch { /* 忽略 */ } }
+      try { c.off("mouseover", onMouseOver) } catch { /* ignore */ }
+      try { c.getZr().off("globalout", onGlobalOut) } catch { /* ignore */ }
     }
-  }, [data, onPointHover])
+  }, [data])
+
+  // click → onPointClick (toggle 逻辑由父组件决定)
+  // 用 ref 持有 callback 避免 polling / re-render 期间 effect 反复重绑
+  const onPointClickRef = useRef(onPointClick)
+  useEffect(() => {
+    onPointClickRef.current = onPointClick
+  })
+
+  // hover callback 也用 ref, 避免 effect 反复重绑 (mouseover 绑定不依赖 callback 引用)
+  const onPointHoverRef = useRef(onPointHover)
+  useEffect(() => {
+    onPointHoverRef.current = onPointHover
+  })
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+
+    // ECharts 自带 chart.on("click") 在 line/area (flow) 视图上,
+    // 因为 axisPointer 拦截 / 折线粗细等问题, 点不到线时 e.dataIndex 经常是 undefined,
+    // 表现就是"点不中". 这里用 zrender 原生 click + convertFromPixel 兜底:
+    //   - 监听 zrender click, 拿到 offsetX
+    //   - 调用 chart.convertFromPixel({ xAxisIndex: 0 }, offsetX) 拿到 category value
+    //   - 在 dates 数组里查最近的下标
+    // 这样在折线 / 面积 / 柱子 任意位置点击都能命中最近的那天, 用户体验统一.
+    const onZrClick = (zrEvent: { offsetX?: number; offsetY?: number; event?: MouseEvent }) => {
+      const cb = onPointClickRef.current
+      if (!cb) return
+      if (typeof zrEvent.offsetX !== "number" || typeof zrEvent.offsetY !== "number") return
+
+      // 1. 把像素 X 坐标转换成 xAxis 类别 (MM/DD)
+      let category: string | number | null = null
+      try {
+        // ECharts 5: convertFromPixel({ xAxisIndex: 0 }, x) → 返回 value
+        // category axis: 返回的就是 xAxis.data 里的字符串
+        category = chart.convertFromPixel({ xAxisIndex: 0 }, zrEvent.offsetX) as string | number
+      } catch {
+        return
+      }
+      if (category == null) return
+
+      // 2. 在 dates 里找精确 / 最近匹配
+      const catStr = String(category)
+      let idx = dates.indexOf(catStr)
+      if (idx < 0) {
+        // 浮点 category 也兼容一下
+        const num = Number(category)
+        if (Number.isFinite(num)) {
+          idx = Math.max(0, Math.min(dates.length - 1, Math.round(num)))
+        } else {
+          return
+        }
+      }
+      if (idx < 0 || idx >= data.length) return
+      cb(idx, data[idx])
+    }
+
+    // mousedown 阶段就拦下来, 避免被 axisPointer 的 click 抢先吃掉
+    chart.getZr().on("click", onZrClick)
+    return () => {
+      const c = chartRef.current
+      if (!c) return
+      try { c.getZr().off("click", onZrClick) } catch { /* 已 dispose, 忽略 */ }
+    }
+  }, [data, dates])
 
   return <div ref={ref} className="h-full w-full bg-white" />
 }

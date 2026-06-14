@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { fetchStyleSectors, fetchMarketOverviewAkshare, fetchMarketOverviewEltdx, fetchStyleSectorConstituents, triggerMarketOverviewEltdxRefresh, type StyleSectorItem, type MarketOverview, type MarketOverviewEltdx, type MarketHistoryPoint, type IndustryConstituentsIndexResponse, type StyleSectorConstituent } from "@/lib/api"
 import { StyleSectorsHeatmap } from "./components/style-sectors-heatmap"
 import { MarketPulsePanel } from "./components/market-pulse-panel"
+import { IndexKlineDeck } from "./components/index-kline-deck"
 import { IndustryConstituentsDrawer } from "@/views/industry-application/components/industry-constituents-drawer"
 
 const PLACEHOLDER_CARDS = [
@@ -44,6 +45,31 @@ function formatYi(v: number | null | undefined): string {
   if (!Number.isFinite(v)) return "—"
   const sign = v > 0 ? "+" : ""
   return `${sign}${v.toFixed(2)}亿`
+}
+
+// ---------------------------------------------------------------------------
+// 客户端 A 股交易日 / 交易时段判定 (只处理周末; 节假日由后端 overview.tradingDate 覆盖)
+//
+// **使用场景**: overview API 还没回来 / 失败时, 给 IndexKlineDeck 一个"非空"的兜底,
+// 避免 deck 顶部 pill 错误显示 "今日实时 1m" 并且把请求的 date 钉到"今天".
+// 真实节假日会让周末 fallback 给个非交易日日期, 此时后端 overview 一旦回来就会用
+// ``overview.tradingDate`` (上一个真正交易日) 覆盖.
+// ---------------------------------------------------------------------------
+function getMostRecentTradingDayClient(now: Date = new Date()): string {
+  const d = new Date(now.getTime())
+  const day = d.getDay()
+  if (day === 0) d.setDate(d.getDate() - 2) // 周日 → 周五
+  else if (day === 6) d.setDate(d.getDate() - 1) // 周六 → 周五
+  return d.toISOString().slice(0, 10)
+}
+
+function isTradeTimeClient(now: Date = new Date()): boolean {
+  const day = now.getDay()
+  if (day === 0 || day === 6) return false
+  const hm = now.getHours() * 60 + now.getMinutes()
+  const morning = 9 * 60 + 30 <= hm && hm <= 11 * 60 + 30
+  const afternoon = 13 * 60 <= hm && hm <= 15 * 60
+  return morning || afternoon
 }
 
 /** 成交量: 万手 */
@@ -120,7 +146,7 @@ function FlowMiniCard({ item }: { item: FlowValue }) {
   const arrow = item.diff == null ? "" : item.diff > 0 ? "↑" : item.diff < 0 ? "↓" : "·"
 
   return (
-    <div className={`relative overflow-hidden rounded-xl border ${tone.border} ${tone.bg} px-3 py-2.5`}>
+    <div className={`relative overflow-hidden rounded-xl border ${tone.border} ${tone.bg} px-3 py-2`}>
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] font-medium text-slate-500">{item.label}</div>
         {item.diff != null && (
@@ -150,7 +176,7 @@ function FlowStructureBar({ items }: { items: FlowValue[] }) {
   if (totalAbs <= 0) return null
 
   return (
-    <div className="rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50/50 to-white px-3 py-2.5">
+    <div className="rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50/50 to-white px-3 py-2">
       <div className="flex items-center justify-between">
         <div className="text-xs font-semibold text-slate-700">资金结构</div>
         <div className="text-[10px] text-slate-400">按绝对值占比</div>
@@ -230,9 +256,9 @@ export function MoneyFlowCard({ data }: { data: MoneyFlowData }) {
           : "bg-slate-50"
 
   return (
-    <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
       {/* 头部 */}
-      <div className="mb-3 flex items-start justify-between gap-3">
+      <div className="mb-2 flex items-start justify-between gap-3">
         <div>
           <div className="text-base font-semibold text-slate-900">资金流向</div>
           <div className="mt-0.5 text-[11px] text-slate-500">
@@ -246,7 +272,7 @@ export function MoneyFlowCard({ data }: { data: MoneyFlowData }) {
 
       {/* hero: 主力净流入 + 内联 diff (5xl 大字 + 渐变背景) */}
       <div
-        className={`relative overflow-hidden rounded-2xl border ${mainTone.border} ${heroBg} px-4 py-3.5`}
+        className={`relative overflow-hidden rounded-2xl border ${mainTone.border} ${heroBg} px-3 py-2.5`}
       >
         <div className="flex items-baseline justify-between gap-2">
           <div className="text-xs font-medium text-slate-500">今日主力净流入</div>
@@ -257,21 +283,21 @@ export function MoneyFlowCard({ data }: { data: MoneyFlowData }) {
           )}
         </div>
         <div
-          className={`mt-1 text-4xl font-bold tracking-tight tabular-nums ${mainTone.text}`}
+          className={`mt-1 text-3xl font-bold tracking-tight tabular-nums ${mainTone.text}`}
         >
           {_formatYi(data.main)}
         </div>
       </div>
 
       {/* 2x2 分类: 超大单 / 大单 / 中单 / 小单 (每个保留 diff) */}
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-2 grid grid-cols-2 gap-2">
         {items.map((item) => (
           <FlowMiniCard key={item.label} item={item} />
         ))}
       </div>
 
       {/* 资金结构条 (纯可视化) */}
-      <div className="mt-3">
+      <div className="mt-2">
         <FlowStructureBar items={items} />
       </div>
     </section>
@@ -324,8 +350,40 @@ export default function MarketPulsePage() {
   const [constituentsData, setConstituentsData] = useState<IndustryConstituentsIndexResponse | null>(null)
   const [constituentsLoading, setConstituentsLoading] = useState(false)
 
-  // 历史趋势图 hover 联动: 非 null 时顶部两个快照卡显示该日数据
-  const [hoverPoint, setHoverPoint] = useState<MarketHistoryPoint | null>(null)
+  // 历史趋势图 联动:
+  //   hoveredPoint  → 鼠标 hover 某根柱子 (瞬时预览, 不持久化, 不影响 K 线)
+  //   selectedPoint → 鼠标 click 某根柱子 (持久化, 钉住, 顶部 K 线 + 快照卡 全部跟随)
+  //
+  // **三级 fallback** 决定 overview 卡片显示:
+  //   hoveredPoint ?? selectedPoint ?? overview (今日 / 上次收盘)
+  //   hover 优先于 click: 用户先 click 锁定到 A 日, 然后 hover B 日预览 → 显示 B
+  //   鼠标离开 hover → 自动回退到 click 锁定的 A 日
+  //
+  // selectedPoint 为 null 时, K 线回退到 overview.tradingDate (今日 / 上次收盘)
+  const [hoveredPoint, setHoveredPoint] = useState<MarketHistoryPoint | null>(null)
+  const [selectedPoint, setSelectedPoint] = useState<MarketHistoryPoint | null>(null)
+  // overview 卡片显示源: hover > click > 今日 overview
+  const activePoint = hoveredPoint ?? selectedPoint
+  // K 线 + replay 状态只看 click 锁定的 selectedPoint (hover 不影响 K 线, 避免抖动)
+  const activeTradingDate =
+    selectedPoint?.date ?? overview?.tradingDate ?? getMostRecentTradingDayClient()
+  // isTradeTime 同理: 后端 get_latest_snapshot 已经覆盖为"当前真实时间", 这里再补一道
+  // 客户端兜底, 处理 overview 尚未到达的初始空窗.
+  const liveIsTradeTime = overview?.isTradeTime ?? isTradeTimeClient()
+  const isReplayMode = Boolean(selectedPoint)
+  const isPinnedReplay = Boolean(selectedPoint)
+
+  const clearReplay = () => {
+    setSelectedPoint(null)
+  }
+
+  /**
+   * 鼠标 hover 历史图某根柱子 → 瞬时切换 overview 卡片数据预览
+   * (K 线不动, 只有成交额 / 主力净流入 卡片跟手)
+   */
+  const handlePointHover = (point: MarketHistoryPoint | null) => {
+    setHoveredPoint(point)
+  }
 
   const load = async () => {
     setLoading(true)
@@ -437,11 +495,11 @@ export default function MarketPulsePage() {
       () => {
         void loadOverview()
       },
-      overview?.isTradeTime ? 5 * 60_000 : 30 * 60_000,
+      liveIsTradeTime ? 5 * 60_000 : 30 * 60_000,
     )
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overview?.isTradeTime])
+  }, [liveIsTradeTime])
 
   const sorted = useMemo(
     () => [...items].sort((a, b) => (b.change_pct ?? -Infinity) - (a.change_pct ?? -Infinity)),
@@ -465,55 +523,8 @@ export default function MarketPulsePage() {
         </div>
       </div>
 
-      {/* === 风格板块涨跌幅 (29 个, 来自 /api/stock-chart/style-sectors) === */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight text-foreground">
-              风格板块涨跌幅
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              29 个动态股票池, 等权平均涨跌幅 (TDX 风格板块口径)
-              {fetchedAt ? ` · ${fetchedAt} 拉取` : ""}
-            </p>
-          </div>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            {loading ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="size-3.5" />
-            )}
-            <span className="ml-1">刷新</span>
-          </Button>
-        </div>
-
-        {error && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
-            拉取失败: {error}
-          </div>
-        )}
-
-        {loading && items.length === 0 ? (
-          <div className="h-[420px] w-full animate-pulse rounded-2xl border border-border/30 bg-muted/30" />
-        ) : (
-            // **h-[420px] 固定高度父容器**: StyleSectorsHeatmap 内部用
-            // flex h-full min-h-0 flex-col, h-full 一路吃高度到这里的 420px,
-            // 才能让 treemap 拿到稳定 420-legend 高度的 canvas. 不写这个父级
-            // h-[420px], heatmap 自己没高度, treemap canvas 就是 0, 渲染怪.
-            <div className="h-[420px]">
-              <StyleSectorsHeatmap
-                items={sorted}
-                loading={loading}
-                onCellClick={(name) => {
-                  setConstituentsStyle(name)
-                  setConstituentsOpen(true)
-                  void loadConstituents(name)
-                }}
-              />
-            </div>
-        )}
-      </div>
-
+      {/* === 页面正文: 统一 24px section 间距, 5 大区块按 spec 顺序堆叠 === */}
+      <div className="space-y-6">
       {/* === 大盘成交额 / 主力净流入 (AKShare 双源) === */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -553,26 +564,26 @@ export default function MarketPulsePage() {
           </div>
         )}
 
-        {/* === 统一显示数据: hover 历史日 → 用 hoverPoint; 否则用今日 overview/overviewCounts === */}
+        {/* === 统一显示数据: hover/click 历史日 → 用 activePoint; 否则用今日 overview/overviewCounts === */}
         {(() => {
-          const display = hoverPoint
+          const display = activePoint
             ? {
                 source: "history" as const,
-                tradingDate: hoverPoint.date,
+                tradingDate: activePoint.date,
                 prevDayTradingDate: null as string | null,
                 prevDayFlow: null as Record<string, unknown> | null,
-                totalAmount: hoverPoint.totalAmount,
+                totalAmount: activePoint.totalAmount,
                 stockCount: null as number | null,
-                risingCount: hoverPoint.risingCount,
-                fallingCount: hoverPoint.fallingCount,
-                flatCount: hoverPoint.flatCount,
-                limitUpCount: hoverPoint.limitUpCount,
-                limitDownCount: hoverPoint.limitDownCount,
-                mainNetInflow: hoverPoint.mainNetInflow,
-                superLargeNetInflow: hoverPoint.superLargeNetInflow,
-                largeNetInflow: hoverPoint.largeNetInflow,
-                mediumNetInflow: hoverPoint.mediumNetInflow,
-                smallNetInflow: hoverPoint.smallNetInflow,
+                risingCount: activePoint.risingCount,
+                fallingCount: activePoint.fallingCount,
+                flatCount: activePoint.flatCount,
+                limitUpCount: activePoint.limitUpCount,
+                limitDownCount: activePoint.limitDownCount,
+                mainNetInflow: activePoint.mainNetInflow,
+                superLargeNetInflow: activePoint.superLargeNetInflow,
+                largeNetInflow: activePoint.largeNetInflow,
+                mediumNetInflow: activePoint.mediumNetInflow,
+                smallNetInflow: activePoint.smallNetInflow,
               }
             : {
                 source: "today" as const,
@@ -611,17 +622,17 @@ export default function MarketPulsePage() {
               <button
                 type="button"
                 className="ml-1 text-amber-700 underline-offset-2 hover:underline"
-                onClick={() => setHoverPoint(null)}
+                onClick={clearReplay}
               >
                 返回今日
               </button>
             </div>
           )}
 
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-3 xl:grid-cols-[1.05fr_1fr]">
           {/* 1. 大盘成交额: hero (5xl + 渐变) + 2x2 涨跌家数 */}
           <Card className="flex h-full flex-col border-border/30">
-            <CardHeader className="pb-2">
+            <CardHeader className="px-4 pb-2 pt-4">
               <CardTitle className="flex items-center justify-between text-sm font-medium text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5">
                   <Waves className="size-3.5" />
@@ -632,13 +643,13 @@ export default function MarketPulsePage() {
                 </span>
               </CardTitle>
             </CardHeader>
-            <CardContent className="flex flex-1 flex-col pt-0">
+            <CardContent className="flex flex-1 flex-col px-4 pb-4 pt-0">
               {/* hero: 5xl 大字 + 渐变背景, 跟右卡片 hero 视觉对齐 */}
-              <div className="rounded-2xl border border-slate-100 bg-gradient-to-br from-slate-50 via-slate-50/40 to-white px-4 py-3.5">
+              <div className="rounded-2xl border border-slate-100 bg-gradient-to-br from-slate-50 via-slate-50/40 to-white px-3 py-2.5">
                 <div className="text-xs font-medium text-slate-500">
                   全 A 成交额
                 </div>
-                <div className="mt-1 text-4xl font-bold tracking-tight tabular-nums text-slate-900">
+                <div className="mt-1 text-3xl font-bold tracking-tight tabular-nums text-slate-900">
                   {display.totalAmount != null ? formatYi(display.totalAmount) : "—"}
                 </div>
                 {/* 较昨日差额: 涨红跌绿, A股惯例 */}
@@ -666,9 +677,9 @@ export default function MarketPulsePage() {
               </div>
 
               {/* 2x2 stats: 涨 / 跌 / 涨停 / 跌停 */}
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 {/* 涨 */}
-                <div className="rounded-xl border border-red-100 bg-red-50/50 px-3 py-2.5">
+                <div className="rounded-xl border border-red-100 bg-red-50/50 px-3 py-2">
                   <div className="flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
                     <ArrowUpRight className="size-3" />
                     <span>上涨</span>
@@ -678,7 +689,7 @@ export default function MarketPulsePage() {
                   </div>
                 </div>
                 {/* 跌 */}
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2.5">
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2">
                   <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
                     <ArrowDownRight className="size-3" />
                     <span>下跌</span>
@@ -688,14 +699,14 @@ export default function MarketPulsePage() {
                   </div>
                 </div>
                 {/* 涨停 */}
-                <div className="rounded-xl border border-red-100 bg-white px-3 py-2.5">
+                <div className="rounded-xl border border-red-100 bg-white px-3 py-2">
                   <div className="text-[11px] font-medium text-slate-500">涨停</div>
                   <div className="mt-1 text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
                     {formatCount(display.limitUpCount)}
                   </div>
                 </div>
                 {/* 跌停 */}
-                <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2.5">
+                <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2">
                   <div className="text-[11px] font-medium text-slate-500">跌停</div>
                   <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                     {formatCount(display.limitDownCount)}
@@ -783,15 +794,76 @@ export default function MarketPulsePage() {
         </div>
           )
         })()}
+      </div>
 
-        {/* === 市场脉搏 · 历史趋势图 (4 视图复合图 + 洞察小指标) === */}
-        <MarketPulsePanel
-          defaultView="flow"
-          onPointHover={(_idx, point) => {
-            // hover 历史点 → 顶部快照卡切换; mouseout → 自动回今日
-            setHoverPoint(point ?? null)
-          }}
-        />
+      {/* === 三大指数分时图 === */}
+      <IndexKlineDeck
+        tradingDate={activeTradingDate}
+        replay={isReplayMode}
+        pinned={isPinnedReplay}
+        onClearPinned={clearReplay}
+        isTradeTime={liveIsTradeTime}
+      />
+
+      {/* === 市场脉搏 · 历史趋势图 (4 视图复合图 + 洞察小指标) === */}
+      <MarketPulsePanel
+        defaultView="flow"
+        selectedPoint={selectedPoint}
+        hoveredPoint={hoveredPoint}
+        onPointClick={(_idx, point) => {
+          // toggle: 同一根再点 → 取消; 不同的 → 切换
+          setSelectedPoint((cur) => (cur?.date === point.date ? null : point))
+        }}
+        onPointHover={handlePointHover}
+      />
+
+      {/* === 风格板块涨跌幅 (29 个, 来自 /api/stock-chart/style-sectors) === */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">
+              风格板块涨跌幅
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              29 个动态股票池, 等权平均涨跌幅 (TDX 风格板块口径)
+              {fetchedAt ? ` · ${fetchedAt} 拉取` : ""}
+            </p>
+          </div>
+          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+            {loading ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            <span className="ml-1">刷新</span>
+          </Button>
+        </div>
+
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300">
+            拉取失败: {error}
+          </div>
+        )}
+
+        {loading && items.length === 0 ? (
+          <div className="h-[420px] w-full animate-pulse rounded-2xl border border-border/30 bg-muted/30" />
+        ) : (
+            // **h-[420px] 固定高度父容器**: StyleSectorsHeatmap 内部用
+            // flex h-full min-h-0 flex-col, h-full 一路吃高度到这里的 420px,
+            // 才能让 treemap 拿到稳定 420-legend 高度的 canvas. 不写这个父级
+            // h-[420px], heatmap 自己没高度, treemap canvas 就是 0, 渲染怪.
+            <div className="h-[420px]">
+              <StyleSectorsHeatmap
+                items={sorted}
+                loading={loading}
+                onCellClick={(name) => {
+                  setConstituentsStyle(name)
+                  setConstituentsOpen(true)
+                  void loadConstituents(name)
+                }}
+              />
+            </div>
+        )}
       </div>
 
       {/* === 后续接入模块的占位 === */}
@@ -818,6 +890,7 @@ export default function MarketPulsePage() {
           路线
         </div>
         后续把 stock-overview/mock-market.tsx 中的强势板块 / 主力净流入 / 行业轮动 三个核心模块拆解后,逐步迁入本页面。
+      </div>
       </div>
 
       {/* === 风格板块 成分股 drawer (复用 industry-application 的 IndustryConstituentsDrawer) === */}

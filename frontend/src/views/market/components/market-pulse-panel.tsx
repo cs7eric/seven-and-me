@@ -8,8 +8,8 @@
  *   - 底部洞察小指标 (PulseStats)
  *
  * 数据源: fetchMarketPulseHistory(range)
- * hover 联动: 通过 onPointHover 把当前 hover 的 point 推给父组件,
- *   父组件可以据此让顶部两个快照卡临时切换到该日数据.
+ * 选中联动: 父组件把 selectedPoint 传进来, panel 算 selectedIndex 给 chart 高亮.
+ *   hover 不再联动 K 线 (避免抖动); K 线只在 click 后才切.
  */
 import { useEffect, useMemo, useState } from "react"
 import { Loader2, RefreshCw } from "lucide-react"
@@ -27,10 +27,14 @@ import { PulseStats } from "./market-pulse-stats"
 interface Props {
   /** 初始 view (默认 flow) */
   defaultView?: PulseView
-  /** hover 联动回调 */
-  onPointHover?: (idx: number | null, point: MarketHistoryPoint | null) => void
-  /** 初始 hover 状态 (从外面驱动, 默认 null) */
-  hoverIndex?: number | null
+  /** 点击某一天 (toggle 选中 / 取消, 父组件决定) */
+  onPointClick?: (idx: number, point: MarketHistoryPoint) => void
+  /** 鼠标 hover 某一天 (瞬时, 父组件用来切换 overview 卡片) */
+  onPointHover?: (point: MarketHistoryPoint | null) => void
+  /** 父组件当前选中的 point; panel 算出 selectedIndex 喂给 chart 高亮 */
+  selectedPoint?: MarketHistoryPoint | null
+  /** 父组件当前 hover 的 point; panel 算出 hoveredIndex 喂给 chart 高亮 (蓝色) */
+  hoveredPoint?: MarketHistoryPoint | null
 }
 
 const VIEW_TABS: Array<{ key: PulseView; label: string }> = [
@@ -47,10 +51,23 @@ const RANGE_TABS: Array<{ key: PulseRange; label: string }> = [
   { key: "1y", label: "1年" },
 ]
 
+/**
+ * 是否周末 (周六=6, 周日=0). 后端 archive 是按文件名 glob 拉最近 N 个,
+ * scheduler 偶尔在节假日 / 周末误触发就会留下非交易日数据, 趋势图不该展示.
+ * 节假日先不专门识别 (用户原话 "最起码 周末"), 后面若需要可扩展节假日表.
+ */
+function isWeekend(dateStr: string): boolean {
+  const d = new Date(dateStr + "T00:00:00")
+  const day = d.getDay()
+  return day === 0 || day === 6
+}
+
 export function MarketPulsePanel({
   defaultView = "flow",
+  onPointClick,
   onPointHover,
-  hoverIndex = null,
+  selectedPoint = null,
+  hoveredPoint = null,
 }: Props) {
   const [view, setView] = useState<PulseView>(defaultView)
   const [range, setRange] = useState<PulseRange>("60d")
@@ -59,12 +76,27 @@ export function MarketPulsePanel({
   const [error, setError] = useState<string | null>(null)
   const [fetchedAt, setFetchedAt] = useState<string | null>(null)
 
+  // 父组件传进来的 selectedPoint → dataIndex (chart 用来高亮)
+  const selectedIndex = useMemo(() => {
+    if (!selectedPoint) return null
+    const i = items.findIndex((it) => it.date === selectedPoint.date)
+    return i >= 0 ? i : null
+  }, [selectedPoint, items])
+
+  // 父组件传进来的 hoveredPoint → dataIndex (chart 用来瞬时高亮 + tip, 蓝色)
+  const hoveredIndex = useMemo(() => {
+    if (!hoveredPoint) return null
+    const i = items.findIndex((it) => it.date === hoveredPoint.date)
+    return i >= 0 ? i : null
+  }, [hoveredPoint, items])
+
   const load = async (r: PulseRange) => {
     setLoading(true)
     setError(null)
     try {
       const res = await fetchMarketPulseHistory(r)
-      setItems(res.items || [])
+      // 过滤周末: 让 Market Pulse 趋势图只展示交易日.
+      setItems((res.items || []).filter((it) => !isWeekend(it.date)))
       setFetchedAt(new Date().toLocaleTimeString())
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -166,7 +198,9 @@ export function MarketPulsePanel({
           <MarketPulseEChart
             data={items}
             view={view}
-            hoverIndex={hoverIndex}
+            selectedIndex={selectedIndex}
+            hoveredIndex={hoveredIndex}
+            onPointClick={onPointClick}
             onPointHover={onPointHover}
           />
         )}

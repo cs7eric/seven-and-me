@@ -23,7 +23,24 @@ def _sanitize_jsonable(value):
     return value
 
 
-def stock_symbol_to_eltdx_code(symbol: str) -> str:
+def stock_symbol_to_eltdx_code(symbol: str, target_type: str | None = None) -> str:
+    """给 eltdx TCP 客户端拼带交易所前缀的代码.
+
+    规则:
+      - target_type='index' 时按指数代码前缀严格判断:
+          000xxx / 880xxx → 上交所 sh (上证指数 / 上证综指 / 中证系列)
+          399xxx         → 深交所 sz (深证成指 / 创业板指)
+      - 个股时按上市板判断:
+          5/6/9 开头 → 沪市 sh
+          其它      → 深市 sz
+    """
+    if target_type == 'index':
+        if symbol.startswith(('000', '880')):
+            return f'sh{symbol}'
+        if symbol.startswith('399'):
+            return f'sz{symbol}'
+        # 兜底: 未知指数代码, 默认沪
+        return f'sh{symbol}'
     return f'sh{symbol}' if symbol.startswith(('5', '6', '9')) else f'sz{symbol}'
 
 
@@ -97,7 +114,9 @@ def _extract_rows_from_response(response) -> list[dict]:
 
     if callable(rows):
         rows = rows()
-    if not isinstance(rows, list):
+    # eltdx MinuteSeries.points / TradePage.ticks 都是 tuple, 不是 list;
+    # 之前 isinstance(list) 卡死了 → 明明有 240 个点却返回 0.
+    if not isinstance(rows, (list, tuple)):
         return []
 
     extracted: list[dict] = []
@@ -133,6 +152,11 @@ def _coerce_trade_time(row: dict) -> datetime | None:
         row.get('day'),
     ]
     for value in candidates:
+        if value is None:
+            continue
+        # eltdx MinutePoint / TradeTick 解析后, 'time' 已经是 datetime 对象
+        if isinstance(value, datetime):
+            return value
         if isinstance(value, str) and value.strip():
             try:
                 return parse_stock_trade_timestamp(value.strip())
@@ -184,8 +208,8 @@ def _normalize_kline_rows(rows: list[dict]) -> list[dict]:
     return items
 
 
-def fetch_stock_history_timeshare_from_eltdx(symbol: str, trade_date: str) -> list[dict]:
-    full_code = stock_symbol_to_eltdx_code(symbol)
+def fetch_stock_history_timeshare_from_eltdx(symbol: str, trade_date: str, target_type: str | None = None) -> list[dict]:
+    full_code = stock_symbol_to_eltdx_code(symbol, target_type=target_type)
     trading_date = _safe_trade_date(trade_date)
     if hasattr(trading_date, 'date'):
         trading_date_value = trading_date.date()
@@ -271,20 +295,26 @@ def fetch_stock_klines_from_eltdx(
     if target_type == 'sector':
         raise ValueError('eltdx 暂不支持板块分钟K线')
 
-    full_code = stock_symbol_to_eltdx_code(symbol)
+    full_code = stock_symbol_to_eltdx_code(symbol, target_type=target_type)
     requested_trade_date = _safe_trade_date(trade_date).isoformat() if period == '1m' else None
     with _build_client() as client:
         rows: list[dict] = []
         if period == '1m':
+            # 关键顺序: trade_date 给定时, get_history_minute 必须先于 get_minute.
+            # get_minute(('sh000001',), {}) 永远返"今日" MinuteSeries (time=None),
+            # 会被 _coerce_trade_time 过滤掉, normalize 出来 0 行;
+            # 但 _call_client_variants 一旦看到 _extract_rows_from_response 返回非空
+            # (240 行字典) 就停, 后面的 get_history_minute(history) 不会再试.
             minute_variants = [
+                ((full_code, requested_trade_date), {}),
+                ((), {'code': full_code, 'trade_date': requested_trade_date}),
                 ((full_code,), {}),
                 ((), {'code': full_code}),
                 ((), {'symbol': full_code}),
-                ((full_code, requested_trade_date), {}),
-                ((), {'code': full_code, 'trade_date': requested_trade_date}),
                 ((), {'symbol': full_code, 'trade_date': requested_trade_date}),
             ]
-            rows = _call_client_variants(client, ['get_minute', 'get_history_minute'], minute_variants)
+            methods = ['get_history_minute', 'get_minute'] if requested_trade_date else ['get_minute', 'get_history_minute']
+            rows = _call_client_variants(client, methods, minute_variants)
         else:
             kline_variants = [
                 ((full_code, period), {}),

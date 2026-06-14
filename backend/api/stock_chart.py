@@ -16,7 +16,7 @@ def _beijing_today():
 
 from backend.adapters.market.eastmoney import fetch_stock_meta, fetch_market_breadth
 from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
-from backend.repositories.stock.workspace_repo import stock_kline_cache_file
+from backend.repositories.stock.workspace_repo import read_cached_stock_intraday, stock_kline_cache_file
 from backend.services.stock.turnover_repo import load_turnover
 from backend.services.stock.auction_service import fetch_stock_auction
 from backend.services.scheduler.auction_analysis_scheduler import (
@@ -102,6 +102,120 @@ def _merge_turnover_into_kline_items(target_type: str, symbol: str, items: list[
                 row['turnover'] = match.get('amount')
         merged.append(row)
     return merged
+
+
+def _load_persisted_index_intraday_snapshot(code: str, trade_date: str, interval: str) -> tuple[dict | None, str | None]:
+    """优先读持久化的 intraday cache，避免历史分钟K退化成异常占位数据。"""
+    cached_snapshot = read_cached_stock_intraday('index', code, trade_date)
+    if not isinstance(cached_snapshot, dict):
+        return None, None
+
+    if str(cached_snapshot.get('trade_date') or '').strip() != trade_date:
+        return None, None
+
+    minute_bars = cached_snapshot.get('minute_bars')
+    if not isinstance(minute_bars, dict):
+        return None, None
+
+    bars = minute_bars.get(interval)
+    if not isinstance(bars, list) or not bars:
+        return None, None
+
+    period_sources = cached_snapshot.get('period_sources')
+    period_source = None
+    if isinstance(period_sources, dict):
+        source_value = period_sources.get(interval)
+        if isinstance(source_value, str) and source_value.strip():
+            period_source = source_value.strip()
+
+    return cached_snapshot, period_source or 'persisted-cache'
+
+
+def _is_valid_ohlc_minute_bar(bar: dict) -> bool:
+    try:
+        timestamp = float(bar.get('timestamp') or 0)
+        open_price = float(bar.get('open'))
+        high_price = float(bar.get('high'))
+        low_price = float(bar.get('low'))
+        close_price = float(bar.get('close'))
+    except (TypeError, ValueError):
+        return False
+
+    if timestamp <= 0:
+        return False
+    if min(open_price, high_price, low_price, close_price) <= 0:
+        return False
+    return high_price >= max(open_price, close_price) and low_price <= min(open_price, close_price)
+
+
+def _has_renderable_kline_shape(bars: list[dict]) -> bool:
+    for bar in bars:
+        try:
+            open_price = float(bar.get('open'))
+            high_price = float(bar.get('high'))
+            low_price = float(bar.get('low'))
+            close_price = float(bar.get('close'))
+        except (TypeError, ValueError):
+            continue
+        if high_price > low_price or open_price != close_price:
+            return True
+    return False
+
+
+def _usable_index_minute_bars(snapshot: dict, interval: str) -> list[dict]:
+    minute_bars = snapshot.get('minute_bars')
+    if not isinstance(minute_bars, dict):
+        return []
+    raw_bars = minute_bars.get(interval)
+    if not isinstance(raw_bars, list):
+        return []
+    bars = [bar for bar in raw_bars if isinstance(bar, dict) and _is_valid_ohlc_minute_bar(bar)]
+    if not _has_renderable_kline_shape(bars):
+        return []
+    return bars
+
+
+def _derive_index_minute_bars_from_timeshare(snapshot: dict, trade_date: str) -> list[dict]:
+    timeshare = snapshot.get('timeshare')
+    if not isinstance(timeshare, list):
+        return []
+
+    bars: list[dict] = []
+    previous_close: float | None = None
+    for point in sorted(
+        (item for item in timeshare if isinstance(item, dict)),
+        key=lambda row: float(row.get('timestamp') or 0),
+    ):
+        try:
+            timestamp = int(float(point.get('timestamp') or 0))
+            close_price = float(point.get('price'))
+        except (TypeError, ValueError):
+            continue
+        if timestamp <= 0 or close_price <= 0:
+            continue
+
+        point_trade_date = str(point.get('trade_date') or trade_date or '').strip()
+        open_price = previous_close if previous_close and previous_close > 0 else close_price
+        high_price = max(open_price, close_price)
+        low_price = min(open_price, close_price)
+        volume = point.get('volume')
+        turnover = point.get('turnover')
+        bars.append({
+            'timestamp': timestamp,
+            'trade_date': point_trade_date,
+            'open': open_price,
+            'high': high_price,
+            'low': low_price,
+            'close': close_price,
+            'volume': volume if isinstance(volume, (int, float)) else 0,
+            'turnover': turnover if isinstance(turnover, (int, float)) else 0,
+            'derived_from': 'timeshare',
+        })
+        previous_close = close_price
+
+    if not _has_renderable_kline_shape(bars):
+        return []
+    return bars
 
 
 
@@ -208,6 +322,160 @@ def stock_chart_intraday():
         })
     except Exception as exc:
         return jsonify({'ok': False, 'error': str(exc), 'symbol': symbol, 'target_type': target_type, 'requested_periods': periods}), 502
+
+
+# ---------------------------------------------------------------------------
+# 三大指数 1m K 批量接口 (Market Pulse 联动用)
+# ---------------------------------------------------------------------------
+# code → 中文名 (跟 market_overview.style_rotation.INDEX_SYMBOLS 保持一致)
+_INDEX_CODE_TO_NAME = {
+    '000001': '上证指数',
+    '399001': '深证成指',
+    '000300': '沪深300',
+    '000016': '上证50',
+    '000905': '中证500',
+    '000852': '中证1000',
+    '932000': '中证2000',
+    '399006': '创业板指',
+    '000688': '科创50',
+}
+
+
+def _normalize_index_code(raw: str) -> str:
+    """兼容 'sh000001' / 'sz399001' → '000001' / '399001' (跟现有 target_type=index 约定一致)."""
+    c = (raw or '').strip()
+    if not c:
+        return ''
+    lower = c.lower()
+    if lower.startswith(('sh', 'sz')):
+        c = c[2:]
+    return c
+
+
+def _resolve_previous_close_for_index(code: str, target_date: str) -> float | None:
+    """取上一交易日的 1d K 最后 close (失败返回 None, 不阻塞主流程)."""
+    try:
+        items, _ = resolve_stock_klines('index', code, '1d', '')
+    except Exception:
+        return None
+    prev_close: float | None = None
+    for bar in items or []:
+        td = (bar.get('trade_date') or '').strip()
+        if not td or td >= target_date:
+            continue
+        try:
+            close_val = float(bar.get('close') or 0)
+        except (TypeError, ValueError):
+            continue
+        if close_val > 0:
+            prev_close = close_val
+    return prev_close
+
+
+@stock_chart_bp.route('/api/index-kline/batch')
+def index_kline_batch():
+    """三大指数 1m K 批量接口 (Market Pulse 顶部 3 卡联动用).
+
+    Query:
+      codes: 逗号分隔, 例 "000001,399001,399006" 或 "sh000001,sz399001,sz399006"
+             默认 000001,399001,399006 (上证 / 深证 / 创业板)
+      date:  YYYY-MM-DD, 必填
+      interval: 周期, 目前只支持 1m
+
+    Response:
+      { ok, date, interval, items: [{ code, name, date, interval, previousClose,
+                                       source, points: [{time, open, high, low, close, volume, turnover}],
+                                       error? }] }
+    """
+    raw_codes = str(request.args.get('codes', '000001,399001,399006')).strip()
+    trade_date = str(request.args.get('date', '')).strip()
+    interval = str(request.args.get('interval', '1m')).strip() or '1m'
+
+    if interval != '1m':
+        return jsonify({
+            'ok': False,
+            'error': f'unsupported interval: {interval} (only 1m supported)',
+            'items': [],
+        }), 400
+    if not trade_date:
+        return jsonify({
+            'ok': False,
+            'error': 'date query param required (YYYY-MM-DD)',
+            'items': [],
+        }), 400
+
+    codes: list[str] = []
+    for token in raw_codes.split(','):
+        norm = _normalize_index_code(token)
+        if norm and norm not in codes:
+            codes.append(norm)
+    if not codes:
+        return jsonify({'ok': False, 'error': 'no valid codes', 'items': []}), 400
+
+    items: list[dict] = []
+    for code in codes:
+        try:
+            snapshot, source = _load_persisted_index_intraday_snapshot(code, trade_date, interval)
+            if snapshot is None:
+                snapshot, source = build_intraday_snapshot(
+                    'index', code, 'none', sample_stock_klines,
+                    trade_date=trade_date, periods=[interval],
+                )
+            bars = _usable_index_minute_bars(snapshot, interval)
+            if not bars:
+                bars = _derive_index_minute_bars_from_timeshare(snapshot, trade_date)
+                if bars and source:
+                    source = f'{source}-timeshare-derived'
+            if not bars:
+                raise ValueError(f'{trade_date} {code} 未获取到可渲染的 {interval} OHLC 数据')
+            points: list[dict] = []
+            for bar in sorted(bars, key=lambda row: float(row.get('timestamp') or 0)):
+                ts = bar.get('timestamp')
+                if not isinstance(ts, (int, float)):
+                    continue
+                td = (bar.get('trade_date') or trade_date or '').strip()
+                time_label = datetime.fromtimestamp(float(ts) / 1000).strftime('%H:%M:%S')
+                points.append({
+                    'time': f'{td} {time_label}' if td else time_label,
+                    'timestamp': int(ts),
+                    'open': bar.get('open'),
+                    'high': bar.get('high'),
+                    'low': bar.get('low'),
+                    'close': bar.get('close'),
+                    'volume': bar.get('volume'),
+                    'turnover': bar.get('turnover'),
+                })
+
+            previous_close = _resolve_previous_close_for_index(code, trade_date)
+
+            items.append({
+                'ok': True,
+                'code': code,
+                'name': _INDEX_CODE_TO_NAME.get(code, code),
+                'date': trade_date,
+                'interval': interval,
+                'previousClose': previous_close,
+                'source': source,
+                'points': points,
+            })
+        except Exception as exc:
+            items.append({
+                'ok': False,
+                'code': code,
+                'name': _INDEX_CODE_TO_NAME.get(code, code),
+                'date': trade_date,
+                'interval': interval,
+                'previousClose': None,
+                'error': str(exc),
+                'points': [],
+            })
+
+    return jsonify({
+        'ok': True,
+        'date': trade_date,
+        'interval': interval,
+        'items': items,
+    })
 
 
 @stock_chart_bp.route('/api/stock-chart/workspace')

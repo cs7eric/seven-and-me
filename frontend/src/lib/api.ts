@@ -1240,6 +1240,101 @@ export async function fetchMarketPulseHistory(range: PulseRange = "60d"): Promis
   }
 }
 
+// ---------------------------------------------------------------------------
+// 三大指数 1m K (Market Pulse 顶部 3 张指数卡联动)
+// ---------------------------------------------------------------------------
+export interface IndexKlinePoint {
+  /** "2026-06-12 09:31:00" */
+  time: string
+  /** 毫秒时间戳 (前端直接喂给 ChartPanel) */
+  timestamp: number
+  open: number | null
+  high: number | null
+  low: number | null
+  close: number | null
+  /** 手 (1手=100股), klinecharts volumePrecision=0 */
+  volume: number | null
+  /** 元 (1手=100元) */
+  turnover: number | null
+}
+
+export interface IndexKlineItem {
+  ok: boolean
+  /** 6 位纯数字, 例 "000001" (跟现有 target_type=index 约定一致) */
+  code: string
+  /** 中文名, 例 "上证指数" */
+  name: string
+  /** 交易日 YYYY-MM-DD */
+  date: string
+  interval: "1m"
+  /** 上一交易日 1d K 的收盘 (用于卡片上"昨收"标签), 可能为 null (拉不到 1d 时) */
+  previousClose: number | null
+  source?: string
+  points: IndexKlinePoint[]
+  error?: string
+}
+
+export interface IndexKlineBatchResponse {
+  ok: boolean
+  date: string
+  interval: string
+  items: IndexKlineItem[]
+  error?: string
+}
+
+export async function fetchIndexKlineBatch(params: {
+  codes?: string[]
+  date: string
+  interval?: "1m"
+}): Promise<IndexKlineBatchResponse> {
+  const codes = (params.codes && params.codes.length > 0
+    ? params.codes
+    : ["000001", "399001", "399006"]
+  ).join(",")
+  const query = new URLSearchParams({
+    codes,
+    date: params.date,
+    interval: params.interval ?? "1m",
+  })
+  const res = await fetch(`${API_BASE}/api/index-kline/batch?${query.toString()}`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    throw new Error((data?.error as string) || `获取指数K线失败: ${res.status}`)
+  }
+  const rawItems = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    date: String(data.date ?? params.date),
+    interval: String(data.interval ?? params.interval ?? "1m"),
+    items: rawItems.map((it) => ({
+      ok: Boolean(it.ok),
+      code: String(it.code ?? ""),
+      name: String(it.name ?? it.code ?? ""),
+      date: String(it.date ?? params.date),
+      interval: (it.interval as "1m") ?? "1m",
+      previousClose:
+        typeof it.previousClose === "number" && Number.isFinite(it.previousClose)
+          ? (it.previousClose as number)
+          : null,
+      source: typeof it.source === "string" ? (it.source as string) : undefined,
+      points: Array.isArray(it.points)
+        ? (it.points as Array<Record<string, unknown>>).map((p) => ({
+            time: String(p.time ?? ""),
+            timestamp: typeof p.timestamp === "number" ? (p.timestamp as number) : 0,
+            open: (p.open as number) ?? null,
+            high: (p.high as number) ?? null,
+            low: (p.low as number) ?? null,
+            close: (p.close as number) ?? null,
+            volume: (p.volume as number) ?? null,
+            turnover: (p.turnover as number) ?? null,
+          }))
+        : [],
+      error: typeof it.error === "string" ? (it.error as string) : undefined,
+    })),
+    error: typeof data.error === "string" ? (data.error as string) : undefined,
+  }
+}
+
 export async function triggerMarketOverviewAkshareRefresh(): Promise<{
   ok: boolean
   snapshot?: MarketOverview

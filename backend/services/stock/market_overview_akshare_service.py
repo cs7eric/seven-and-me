@@ -382,11 +382,17 @@ def get_latest_snapshot() -> dict[str, Any]:
     """读 latest snapshot (前端 API 用).
 
     优先级: latest.json > 同日 archive > 上一交易日 archive.
+
+    **isTradeTime 覆盖**: 持久化里的 ``isTradeTime`` 是 ``capture_snapshot()`` 上一次落盘时的值
+    (e.g. 上一交易日 10:00 写入, 字段就是 ``true``); 现在重新算成"当前时间"的真实状态,
+    否则非交易日 (周末 / 节假日) 拉到的 ``isTradeTime`` 永远是陈旧的 ``true``,
+    前端 deck 顶部 pill 会错误显示 "今日实时 1m" 而非 "上次收盘".
     """
     if MARKET_OVERVIEW_LATEST_FILE.exists():
         data = read_json_file(MARKET_OVERVIEW_LATEST_FILE, None)
         if isinstance(data, dict):
             data.setdefault("source", "archived")
+            data["isTradeTime"] = is_trade_time()
             return data
 
     # 兜底: 找 archive 里最近一天
@@ -400,6 +406,7 @@ def get_latest_snapshot() -> dict[str, Any]:
             data = read_json_file(files[0], None)
             if isinstance(data, dict):
                 data.setdefault("source", "archived")
+                data["isTradeTime"] = is_trade_time()
                 return data
 
     return {
@@ -409,6 +416,7 @@ def get_latest_snapshot() -> dict[str, Any]:
         "fetchedAt": None,
         "totalAmount": None,
         "mainNetInflow": None,
+        "isTradeTime": is_trade_time(),
     }
 
 

@@ -651,7 +651,7 @@ function applyIndicatorLineColors(
   chart.overrideIndicator({ name, styles: { lines } })
 }
 
-function syncIndicators(chart: Chart, indicators: string[], maLines: number[], hasTurnover: boolean) {
+function syncIndicators(chart: Chart, indicators: string[], maLines: number[], hasTurnover: boolean, hasVolume: boolean) {
   chart.removeIndicator({})
 
   const mainContent = buildMainPaneContent(indicators, maLines)
@@ -675,6 +675,11 @@ function syncIndicators(chart: Chart, indicators: string[], maLines: number[], h
 
   if (hasTurnover && indicators.includes("AMOUNT")) {
     chart.createIndicator("AMOUNT", {
+      isStack: false,
+      pane: { id: AMOUNT_PANE_ID, height: 128, minHeight: 84, dragEnabled: true, order: 1 },
+    })
+  } else if (hasVolume && (indicators.includes("VOL") || indicators.includes("AMOUNT"))) {
+    chart.createIndicator("VOL", {
       isStack: false,
       pane: { id: AMOUNT_PANE_ID, height: 128, minHeight: 84, dragEnabled: true, order: 1 },
     })
@@ -735,6 +740,7 @@ export function ChartPanel({
   const [hoveredBarCard, setHoveredBarCard] = useState<{ bar: StockKlineBar; x: number; y: number } | null>(null)
   const [chartSizeTick, setChartSizeTick] = useState(0)
   const hasTurnover = useMemo(() => bars.some((bar) => typeof bar.turnover === "number" && bar.turnover > 0), [bars])
+  const hasVolume = useMemo(() => bars.some((bar) => typeof bar.volume === "number" && bar.volume > 0), [bars])
 
   const derivedAiAnnotations = useMemo<DerivedAiAnnotation[]>(() =>
     overlayAnnotations.map((overlay, index) => {
@@ -1205,8 +1211,8 @@ export function ChartPanel({
     const chart = chartRef.current
     if (!chart) return
 
-    syncIndicators(chart, indicators, maLines, hasTurnover)
-  }, [hasTurnover, indicators, maLines])
+    syncIndicators(chart, indicators, maLines, hasTurnover, hasVolume)
+  }, [hasTurnover, hasVolume, indicators, maLines])
 
   useEffect(() => {
     const chart = chartRef.current
