@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react"
 import { Activity, ArrowDownRight, ArrowUpRight, Flame, Loader2, RefreshCw, TrendingUp, Waves, Wallet } from "lucide-react"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { fetchStyleSectors, fetchMarketOverviewAkshare, fetchMarketOverviewEltdx, fetchStyleSectorConstituents, triggerMarketOverviewEltdxRefresh, type StyleSectorItem, type MarketOverview, type MarketOverviewEltdx, type MarketHistoryPoint, type IndustryConstituentsIndexResponse, type StyleSectorConstituent } from "@/lib/api"
 import { StyleSectorsHeatmap } from "./components/style-sectors-heatmap"
@@ -128,182 +127,19 @@ function moneyTone(v: number | null | undefined) {
   }
 }
 
+function diffBadgeTone(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v) || v === 0) {
+    return "border-slate-200 bg-slate-100 text-slate-500"
+  }
+  if (v > 0) {
+    return "border-red-200 bg-red-100 text-red-700"
+  }
+  return "border-emerald-200 bg-emerald-100 text-emerald-700"
+}
+
 // ---------------------------------------------------------------------------
 // 类型: 资金流条目 (label + 当前值 + 较昨日 diff)
 // ---------------------------------------------------------------------------
-type FlowValue = {
-  label: string
-  value: number | null
-  diff: number | null
-}
-
-// ---------------------------------------------------------------------------
-// 子组件: FlowMiniCard (单个资金分类: label + 主数 + 较昨 diff)
-// ---------------------------------------------------------------------------
-function FlowMiniCard({ item }: { item: FlowValue }) {
-  const tone = moneyTone(item.value)
-  const diffTone = moneyTone(item.diff)
-  const arrow = item.diff == null ? "" : item.diff > 0 ? "↑" : item.diff < 0 ? "↓" : "·"
-
-  return (
-    <div className={`relative overflow-hidden rounded-xl border ${tone.border} ${tone.bg} px-3 py-2`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] font-medium text-slate-500">{item.label}</div>
-        {item.diff != null && (
-          <div className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${diffTone.soft}`}>
-            <span>{arrow}</span>
-            <span>{item.diff >= 0 ? "+" : ""}{item.diff.toFixed(2)}亿</span>
-          </div>
-        )}
-      </div>
-      <div className={`mt-1 text-lg font-bold tabular-nums ${tone.text}`}>
-        {item.value != null
-          ? `${item.value >= 0 ? "+" : ""}${item.value.toFixed(2)}`
-          : "—"}
-        <span className="ml-0.5 text-[11px] font-medium text-slate-400">亿</span>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// 子组件: FlowStructureBar (纯可视化: 横向色块条 + 下方 4 色点图例)
-// 数字本身已在 FlowMiniCard 显示, 这里只负责 "占比 + 流向方向" 可视化
-// ---------------------------------------------------------------------------
-function FlowStructureBar({ items }: { items: FlowValue[] }) {
-  const valid = items.filter((x) => x.value != null && Number.isFinite(x.value))
-  const totalAbs = valid.reduce((s, x) => s + Math.abs(x.value || 0), 0)
-  if (totalAbs <= 0) return null
-
-  return (
-    <div className="rounded-xl border border-slate-100 bg-gradient-to-b from-slate-50/50 to-white px-3 py-2">
-      <div className="flex items-center justify-between">
-        <div className="text-xs font-semibold text-slate-700">资金结构</div>
-        <div className="text-[10px] text-slate-400">按绝对值占比</div>
-      </div>
-
-      {/* 色块条 */}
-      <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-slate-100">
-        {valid.map((item) => {
-          const pct = Math.abs(item.value || 0) / totalAbs
-          const tone = moneyTone(item.value)
-          return (
-            <div
-              key={item.label}
-              className={tone.bar}
-              style={{ width: `${pct * 100}%` }}
-              title={`${item.label} ${_formatYi(item.value)} · 占比 ${_formatPct(pct * 100)}`}
-            />
-          )
-        })}
-      </div>
-
-      {/* 4 色点图例 (只显示 label + 占比, 不重复金额) */}
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-        {valid.map((item) => {
-          const pct = Math.abs(item.value || 0) / totalAbs
-          const tone = moneyTone(item.value)
-          return (
-            <div key={item.label} className="flex items-center gap-1 text-[11px]">
-              <span className={`h-1.5 w-1.5 rounded-full ${tone.bar}`} />
-              <span className="text-slate-500">{item.label}</span>
-              <span className="font-semibold tabular-nums text-slate-700">
-                {_formatPct(pct * 100)}
-              </span>
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// 主组件
-// ---------------------------------------------------------------------------
-type MoneyFlowData = {
-  date: string
-  prevDate: string
-  main: number | null
-  mainDiff: number | null
-  superLarge: FlowValue
-  large: FlowValue
-  medium: FlowValue
-  small: FlowValue
-}
-
-export function MoneyFlowCard({ data }: { data: MoneyFlowData }) {
-  const mainTone = moneyTone(data.main)
-  const items = [data.superLarge, data.large, data.medium, data.small]
-
-  // 内联 diff: 较 06/11 +X.XX亿 ↑ / ↓
-  const mainDiffText =
-    data.mainDiff != null
-      ? `较 ${data.prevDate || "昨日"} ${
-          data.mainDiff >= 0 ? "+" : ""
-        }${data.mainDiff.toFixed(2)}亿 ${data.mainDiff > 0 ? "↑" : data.mainDiff < 0 ? "↓" : ""}`
-      : null
-  const mainDiffTone = moneyTone(data.mainDiff)
-
-  // hero 渐变背景: 流入浅红 / 流出浅绿 / null slate
-  const heroBg =
-    data.main == null
-      ? "bg-slate-50"
-      : data.main > 0
-        ? "bg-gradient-to-br from-red-50 via-red-50/60 to-white"
-        : data.main < 0
-          ? "bg-gradient-to-br from-emerald-50 via-emerald-50/60 to-white"
-          : "bg-slate-50"
-
-  return (
-    <section className="flex h-full flex-col rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
-      {/* 头部 */}
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div>
-          <div className="text-base font-semibold text-slate-900">资金流向</div>
-          <div className="mt-0.5 text-[11px] text-slate-500">
-            东方财富 · 主力 = 超大单 + 大单
-          </div>
-        </div>
-        <div className="rounded-full bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500">
-          {data.date}
-        </div>
-      </div>
-
-      {/* hero: 主力净流入 + 内联 diff (5xl 大字 + 渐变背景) */}
-      <div
-        className={`relative overflow-hidden rounded-2xl border ${mainTone.border} ${heroBg} px-3 py-2.5`}
-      >
-        <div className="flex items-baseline justify-between gap-2">
-          <div className="text-xs font-medium text-slate-500">今日主力净流入</div>
-          {mainDiffText && (
-            <div className={`text-[11px] font-medium tabular-nums ${mainDiffTone.text}`}>
-              {mainDiffText}
-            </div>
-          )}
-        </div>
-        <div
-          className={`mt-1 text-3xl font-bold tracking-tight tabular-nums ${mainTone.text}`}
-        >
-          {_formatYi(data.main)}
-        </div>
-      </div>
-
-      {/* 2x2 分类: 超大单 / 大单 / 中单 / 小单 (每个保留 diff) */}
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        {items.map((item) => (
-          <FlowMiniCard key={item.label} item={item} />
-        ))}
-      </div>
-
-      {/* 资金结构条 (纯可视化) */}
-      <div className="mt-2">
-        <FlowStructureBar items={items} />
-      </div>
-    </section>
-  )
-}
-
 /**
  * 把数字格式化成 "1.5亿" / "2300万" / "5百万" / "1.2万亿" / "8000" 之类可读字符串.
  *
@@ -614,184 +450,157 @@ export default function MarketPulsePage() {
               ? display.totalAmount - prevDayAmount
               : null
 
+          const prevFlow = display.prevDayFlow as
+            | {
+                mainNetInflow: number | null
+                superLargeNetInflow: number | null
+                largeNetInflow: number | null
+                mediumNetInflow: number | null
+                smallNetInflow: number | null
+              }
+            | null
+          const mainDiff =
+            display.mainNetInflow != null && prevFlow?.mainNetInflow != null
+              ? display.mainNetInflow - prevFlow.mainNetInflow
+              : null
+          const superLargeDiff =
+            display.superLargeNetInflow != null && prevFlow?.superLargeNetInflow != null
+              ? display.superLargeNetInflow - prevFlow.superLargeNetInflow
+              : null
+          const largeDiff =
+            display.largeNetInflow != null && prevFlow?.largeNetInflow != null
+              ? display.largeNetInflow - prevFlow.largeNetInflow
+              : null
+          const mediumDiff =
+            display.mediumNetInflow != null && prevFlow?.mediumNetInflow != null
+              ? display.mediumNetInflow - prevFlow.mediumNetInflow
+              : null
+          const smallDiff =
+            display.smallNetInflow != null && prevFlow?.smallNetInflow != null
+              ? display.smallNetInflow - prevFlow.smallNetInflow
+              : null
+
           return (
-        <div className="space-y-3">
-          {display.source === "history" && display.tradingDate && (
-            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
-              <span>已选中 {display.tradingDate} 历史快照</span>
-              <button
-                type="button"
-                className="ml-1 text-amber-700 underline-offset-2 hover:underline"
-                onClick={clearReplay}
-              >
-                返回今日
-              </button>
+            <div className="space-y-3">
+              {display.source === "history" && display.tradingDate && (
+                <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
+                  <span>已选中 {display.tradingDate} 历史快照</span>
+                  <button
+                    type="button"
+                    className="ml-1 text-amber-700 underline-offset-2 hover:underline"
+                    onClick={clearReplay}
+                  >
+                    返回今日
+                  </button>
+                </div>
+              )}
+
+              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                <div className="grid gap-px bg-slate-200 lg:grid-cols-[1.15fr_1.15fr_0.7fr_0.7fr_0.7fr_0.7fr]">
+                  <div className="bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
+                        <Waves className="size-3.5" />
+                        <span>大盘成交额</span>
+                      </div>
+                      <div className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums ${diffBadgeTone(amountDiff)}`}>
+                        <span>较昨日</span>
+                        {amountDiff != null && amountDiff > 0 ? (
+                          <ArrowUpRight className="size-3.5" />
+                        ) : amountDiff != null && amountDiff < 0 ? (
+                          <ArrowDownRight className="size-3.5" />
+                        ) : null}
+                        <span>{amountDiff == null ? "—" : formatYi(amountDiff)}</span>
+                      </div>
+                    </div>
+                    <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-slate-900">
+                      {display.totalAmount != null ? formatYi(display.totalAmount) : "—"}
+                    </div>
+                  </div>
+
+                  <div className="bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
+                        <Wallet className="size-3.5" />
+                        <span>主力净流入</span>
+                      </div>
+                      <div className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums ${diffBadgeTone(mainDiff)}`}>
+                        <span>较昨日</span>
+                        {mainDiff != null && mainDiff > 0 ? (
+                          <ArrowUpRight className="size-3.5" />
+                        ) : mainDiff != null && mainDiff < 0 ? (
+                          <ArrowDownRight className="size-3.5" />
+                        ) : null}
+                        <span>{mainDiff == null ? "—" : formatYi(mainDiff)}</span>
+                      </div>
+                    </div>
+                    <div className={`mt-1 text-2xl font-bold tracking-tight tabular-nums ${moneyTone(display.mainNetInflow).text}`}>
+                      {formatYi(display.mainNetInflow)}
+                    </div>
+                  </div>
+
+                  <div className="bg-white px-4 py-3">
+                    <div className="text-[11px] font-medium text-slate-500">上涨</div>
+                    <div className="mt-1 text-xl font-bold tabular-nums text-red-600">
+                      {formatCount(display.risingCount)}
+                    </div>
+                  </div>
+
+                  <div className="bg-white px-4 py-3">
+                    <div className="text-[11px] font-medium text-slate-500">下跌</div>
+                    <div className="mt-1 text-xl font-bold tabular-nums text-emerald-600">
+                      {formatCount(display.fallingCount)}
+                    </div>
+                  </div>
+
+                  <div className="bg-white px-4 py-3">
+                    <div className="text-[11px] font-medium text-slate-500">涨停</div>
+                    <div className="mt-1 text-xl font-bold tabular-nums text-red-600">
+                      {formatCount(display.limitUpCount)}
+                    </div>
+                  </div>
+
+                  <div className="bg-white px-4 py-3">
+                    <div className="text-[11px] font-medium text-slate-500">跌停</div>
+                    <div className="mt-1 text-xl font-bold tabular-nums text-emerald-600">
+                      {formatCount(display.limitDownCount)}
+                    </div>
+                    <div className="mt-1 text-[10px] text-slate-400">
+                      平盘 {formatCount(display.flatCount)}
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-px border-t border-slate-200 bg-slate-200 md:grid-cols-4">
+                  {[
+                    { label: "超大单", value: display.superLargeNetInflow, diff: superLargeDiff },
+                    { label: "大单", value: display.largeNetInflow, diff: largeDiff },
+                    { label: "中单", value: display.mediumNetInflow, diff: mediumDiff },
+                    { label: "小单", value: display.smallNetInflow, diff: smallDiff },
+                  ].map((item) => {
+                    const tone = moneyTone(item.value)
+                    return (
+                      <div key={item.label} className="bg-white px-4 py-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-medium text-slate-500">{item.label}</span>
+                          <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold tabular-nums ${diffBadgeTone(item.diff)}`}>
+                            <span>较昨</span>
+                            {item.diff != null && item.diff > 0 ? (
+                              <ArrowUpRight className="size-3" />
+                            ) : item.diff != null && item.diff < 0 ? (
+                              <ArrowDownRight className="size-3" />
+                            ) : null}
+                            <span>{item.diff == null ? "—" : `${item.diff >= 0 ? "+" : ""}${item.diff.toFixed(2)}亿`}</span>
+                          </span>
+                        </div>
+                        <div className={`mt-1 text-base font-bold tabular-nums ${tone.text}`}>
+                          {formatYi(item.value)}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
             </div>
-          )}
-
-        <div className="grid gap-3 xl:grid-cols-[1.05fr_1fr]">
-          {/* 1. 大盘成交额: hero (5xl + 渐变) + 2x2 涨跌家数 */}
-          <Card className="flex h-full flex-col border-border/30">
-            <CardHeader className="px-4 pb-2 pt-4">
-              <CardTitle className="flex items-center justify-between text-sm font-medium text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <Waves className="size-3.5" />
-                  大盘成交额
-                </span>
-                <span className="text-[10px] font-normal text-muted-foreground">
-                  {display.stockCount != null ? `${display.stockCount} 只` : ""}
-                </span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-1 flex-col px-4 pb-4 pt-0">
-              {/* hero: 5xl 大字 + 渐变背景, 跟右卡片 hero 视觉对齐 */}
-              <div className="rounded-2xl border border-slate-100 bg-gradient-to-br from-slate-50 via-slate-50/40 to-white px-3 py-2.5">
-                <div className="text-xs font-medium text-slate-500">
-                  全 A 成交额
-                </div>
-                <div className="mt-1 text-3xl font-bold tracking-tight tabular-nums text-slate-900">
-                  {display.totalAmount != null ? formatYi(display.totalAmount) : "—"}
-                </div>
-                {/* 较昨日差额: 涨红跌绿, A股惯例 */}
-                {amountDiff != null ? (
-                  <div className="mt-1 inline-flex items-baseline gap-1 text-xs tabular-nums">
-                    <span className="text-slate-400">较昨日</span>
-                    {amountDiff > 0 ? (
-                      <ArrowUpRight className="size-3 text-red-500" />
-                    ) : amountDiff < 0 ? (
-                      <ArrowDownRight className="size-3 text-emerald-500" />
-                    ) : null}
-                    <span
-                      className={
-                        amountDiff > 0
-                          ? "font-semibold text-red-600"
-                          : amountDiff < 0
-                            ? "font-semibold text-emerald-600"
-                            : "text-slate-500"
-                      }
-                    >
-                      {formatYi(amountDiff)}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* 2x2 stats: 涨 / 跌 / 涨停 / 跌停 */}
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {/* 涨 */}
-                <div className="rounded-xl border border-red-100 bg-red-50/50 px-3 py-2">
-                  <div className="flex items-center gap-1 text-[11px] font-medium text-red-600 dark:text-red-400">
-                    <ArrowUpRight className="size-3" />
-                    <span>上涨</span>
-                  </div>
-                  <div className="mt-1 text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
-                    {formatCount(display.risingCount)}
-                  </div>
-                </div>
-                {/* 跌 */}
-                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 px-3 py-2">
-                  <div className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                    <ArrowDownRight className="size-3" />
-                    <span>下跌</span>
-                  </div>
-                  <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {formatCount(display.fallingCount)}
-                  </div>
-                </div>
-                {/* 涨停 */}
-                <div className="rounded-xl border border-red-100 bg-white px-3 py-2">
-                  <div className="text-[11px] font-medium text-slate-500">涨停</div>
-                  <div className="mt-1 text-lg font-bold tabular-nums text-red-600 dark:text-red-400">
-                    {formatCount(display.limitUpCount)}
-                  </div>
-                </div>
-                {/* 跌停 */}
-                <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2">
-                  <div className="text-[11px] font-medium text-slate-500">跌停</div>
-                  <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                    {formatCount(display.limitDownCount)}
-                  </div>
-                </div>
-              </div>
-
-              {/* 平盘 footnote (compact 一行) */}
-              <div className="mt-2 text-[10px] text-slate-400">
-                平盘 {formatCount(display.flatCount)} 只
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* 2. 资金流向 */}
-          {(() => {
-            const tradingDate = display.tradingDate
-            const prevTradingDate = display.prevDayTradingDate
-            const prevFlow = display.prevDayFlow as
-              | {
-                  mainNetInflow: number | null
-                  superLargeNetInflow: number | null
-                  largeNetInflow: number | null
-                  mediumNetInflow: number | null
-                  smallNetInflow: number | null
-                }
-              | null
-
-            // 格式化日期 badge: "06月12日"
-            const dateBadge = (() => {
-              if (!tradingDate) return "今日"
-              try {
-                const d = new Date(tradingDate + "T00:00:00")
-                return `${(d.getMonth() + 1).toString().padStart(2, "0")}月${d.getDate().toString().padStart(2, "0")}日`
-              } catch { return "今日" }
-            })()
-
-            // 格式化 prevDate badge: "06/11"
-            const prevDateBadge = prevTradingDate
-              ? prevTradingDate.slice(5).replace("-", "/")
-              : ""
-
-            // 算 diff
-            const diff = (cur: number | null, prev: number | null): number | null =>
-              cur != null && prev != null ? cur - prev : null
-
-            const main = display.mainNetInflow
-            const mainDiff = diff(main, prevFlow?.mainNetInflow ?? null)
-
-            const superLarge = display.superLargeNetInflow
-            const large = display.largeNetInflow
-            const medium = display.mediumNetInflow
-            const small = display.smallNetInflow
-
-            const moneyFlowData: MoneyFlowData = {
-              date: dateBadge,
-              prevDate: prevDateBadge,
-              main,
-              mainDiff,
-              superLarge: {
-                label: "超大单",
-                value: superLarge,
-                diff: diff(superLarge, prevFlow?.superLargeNetInflow ?? null),
-              },
-              large: {
-                label: "大单",
-                value: large,
-                diff: diff(large, prevFlow?.largeNetInflow ?? null),
-              },
-              medium: {
-                label: "中单",
-                value: medium,
-                diff: diff(medium, prevFlow?.mediumNetInflow ?? null),
-              },
-              small: {
-                label: "小单",
-                value: small,
-                diff: diff(small, prevFlow?.smallNetInflow ?? null),
-              },
-            }
-
-            return <MoneyFlowCard data={moneyFlowData} />
-          })()}
-        </div>
-        </div>
           )
         })()}
       </div>
@@ -869,18 +678,19 @@ export default function MarketPulsePage() {
       {/* === 后续接入模块的占位 === */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {PLACEHOLDER_CARDS.map((item) => (
-          <Card key={item.title}>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Activity className="size-4 text-muted-foreground" />
-                {item.title}
-              </CardTitle>
-              <CardDescription>Mock · 待接入</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm leading-6 text-muted-foreground">{item.description}</p>
-            </CardContent>
-          </Card>
+          <section
+            key={item.title}
+            className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
+          >
+            <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
+              <Activity className="size-4 text-slate-400" />
+              {item.title}
+            </div>
+            <div className="mt-1 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
+              Mock · 待接入
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-500">{item.description}</p>
+          </section>
         ))}
       </div>
 

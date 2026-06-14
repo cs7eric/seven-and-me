@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef } from "react"
 import { Loader2 } from "lucide-react"
 import * as echarts from "echarts/core"
-import { BarChart, LineChart } from "echarts/charts"
+import { BarChart, CustomChart, LineChart } from "echarts/charts"
 import { GridComponent, TooltipComponent } from "echarts/components"
 import { CanvasRenderer } from "echarts/renderers"
 
 import type { StockIntradayPoint } from "../../stock-chart/lib/types"
 
-echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, CanvasRenderer])
+echarts.use([LineChart, BarChart, CustomChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 export interface IndexTimeshareItem {
   ok: boolean
@@ -37,6 +37,12 @@ function formatPct(value: number | null): string {
   return `${sign}${value.toFixed(2)}%`
 }
 
+function formatSignedPoint(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "—"
+  const sign = value > 0 ? "+" : ""
+  return `${sign}${value.toFixed(2)}`
+}
+
 function formatVolume(value: number | null): string {
   if (value == null || !Number.isFinite(value) || value <= 0) return "—"
   if (value >= 1e8) return `${(value / 1e8).toFixed(2)}亿`
@@ -44,12 +50,16 @@ function formatVolume(value: number | null): string {
   return value.toFixed(0)
 }
 
-function computePriceDomain(values: number[]) {
-  if (!values.length) return [0, 1] as const
+function computeDeltaDomain(values: number[]) {
+  if (!values.length) return [-1, 1] as const
   const min = Math.min(...values)
   const max = Math.max(...values)
-  const spread = Math.max(max - min, max * 0.003, 0.1)
-  return [min - spread * 0.18, max + spread * 0.18] as const
+  const limit = Math.max(Math.abs(min), Math.abs(max), 0.1)
+  return [-limit * 1.18, limit * 1.18] as const
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
 }
 
 function isValidAverageLine(points: Array<Pick<StockIntradayPoint, "price" | "avg_price">>) {
@@ -77,13 +87,95 @@ function isValidAverageLine(points: Array<Pick<StockIntradayPoint, "price" | "av
   return true
 }
 
-function buildXAxisLabels(points: StockIntradayPoint[]) {
-  return points.map((point) => point.time_label)
+function toSessionMinute(timeLabel: string, fallback: number) {
+  const match = /^(\d{2}):(\d{2})$/.exec(timeLabel || "")
+  if (!match) return fallback
+  const minutes = Number(match[1]) * 60 + Number(match[2])
+  if (minutes <= 11 * 60 + 30) return clamp(minutes - (9 * 60 + 30), 0, 120)
+  return clamp(120 + minutes - 13 * 60, 120, 240)
 }
 
-function buildTickLabels(points: StockIntradayPoint[]) {
-  const visibleTicks = new Set(["09:31", "10:30", "11:30", "13:00", "14:00", "15:00"])
-  return points.map((point) => (visibleTicks.has(point.time_label) ? point.time_label : ""))
+function formatSessionTick(value: number) {
+  const rounded = Math.round(value)
+  const labels: Record<number, string> = {
+    0: "09:30",
+    30: "10:00",
+    90: "11:00",
+    120: "11:30",
+    180: "14:00",
+    240: "15:00",
+  }
+  return labels[rounded] ?? ""
+}
+
+type SignedSegment = {
+  side: "up" | "down"
+  values: [number, number, number, number]
+  startIntensity: number
+  endIntensity: number
+}
+
+type SignedSliceRenderApi = {
+  value: (dimension: number) => unknown
+  coord: (data: [number, number]) => [number, number]
+}
+
+function buildSignedSegments(
+  points: StockIntradayPoint[],
+  xValues: number[],
+  referenceClose: number | null,
+  maxAbsDelta: number,
+) {
+  if (referenceClose == null || points.length === 0) return { up: [], down: [] } as const
+
+  const up: SignedSegment[] = []
+  const down: SignedSegment[] = []
+  const append = (segment: SignedSegment) => {
+    const [x1, y1, x2, y2] = segment.values
+    if (x1 === x2) return
+    if (y1 === 0 && y2 === 0) return
+    if (segment.side === "up") up.push(segment)
+    else down.push(segment)
+  }
+
+  const pushSegment = (side: "up" | "down", start: [number, number], end: [number, number]) => {
+    append({
+      side,
+      values: [start[0], start[1], end[0], end[1]],
+      startIntensity: clamp(Math.abs(start[1]) / Math.max(maxAbsDelta, 0.1), 0, 1),
+      endIntensity: clamp(Math.abs(end[1]) / Math.max(maxAbsDelta, 0.1), 0, 1),
+    })
+  }
+
+  for (let i = 1; i < points.length; i++) {
+    const prevX = xValues[i - 1] ?? i - 1
+    const curX = xValues[i] ?? i
+    const prevDelta = points[i - 1].price - referenceClose
+    const curDelta = points[i].price - referenceClose
+
+    if (prevDelta === 0 && curDelta === 0) continue
+
+    if (prevDelta >= 0 && curDelta >= 0 && (prevDelta > 0 || curDelta > 0)) {
+      pushSegment("up", [prevX, prevDelta], [curX, curDelta])
+      continue
+    }
+
+    if (prevDelta <= 0 && curDelta <= 0 && (prevDelta < 0 || curDelta < 0)) {
+      pushSegment("down", [prevX, prevDelta], [curX, curDelta])
+      continue
+    }
+
+    if (prevDelta === curDelta) continue
+    const ratio = prevDelta / (prevDelta - curDelta)
+    const crossX = prevX + (curX - prevX) * clamp(ratio, 0, 1)
+    const cross: [number, number] = [crossX, 0]
+    const firstSide = prevDelta > 0 ? "up" : "down"
+    const secondSide = firstSide === "up" ? "down" : "up"
+    pushSegment(firstSide, [prevX, prevDelta], cross)
+    pushSegment(secondSide, cross, [curX, curDelta])
+  }
+
+  return { up, down } as const
 }
 
 export function IndexKlineCard({ item, loading, directionTone }: Props) {
@@ -115,22 +207,32 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
   )
 
   const chartModel = useMemo(() => {
-    const xAxisData = buildXAxisLabels(item.timeshare)
-    const tickLabels = buildTickLabels(item.timeshare)
-    const priceSeries = item.timeshare.map((point) => point.price)
-    const avgSeries = item.timeshare.map((point) => (averageLineEnabled ? point.avg_price ?? null : null))
+    const xValues = item.timeshare.map((point, index) => toSessionMinute(point.time_label, index))
+    const priceSeries = item.timeshare.map((point, index) => [
+      xValues[index] ?? index,
+      referenceClose != null ? point.price - referenceClose : point.price,
+    ] as [number, number])
+    const avgSeries = item.timeshare.map((point, index) =>
+      averageLineEnabled && referenceClose != null && point.avg_price != null
+        ? [xValues[index] ?? index, point.avg_price - referenceClose]
+        : [xValues[index] ?? index, null],
+    )
+    const referenceSeries = referenceClose != null ? [[0, 0], [240, 0]] : []
     const volumeSeries = item.timeshare.map((point, index) => {
       const prev = item.timeshare[index - 1]?.price ?? point.price
       return {
-        value: point.volume || 0,
+        value: [xValues[index] ?? index, point.volume || 0],
         itemStyle: { color: point.price >= prev ? "rgba(220, 38, 38, 0.42)" : "rgba(22, 163, 74, 0.42)" },
       }
     })
 
-    const priceValues = [...priceSeries]
+    const priceValues = item.timeshare.map((point) => point.price)
     if (averageLineEnabled) {
       avgSeries.forEach((value) => {
-        if (typeof value === "number" && Number.isFinite(value) && value > 0) priceValues.push(value)
+        const y = Array.isArray(value) ? value[1] : null
+        if (typeof y === "number" && Number.isFinite(y) && referenceClose != null) {
+          priceValues.push(y + referenceClose)
+        }
       })
     }
     if (referenceClose != null && basePriceValues.length > 0) {
@@ -140,15 +242,22 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
         priceValues.push(referenceClose)
       }
     }
-    const priceDomain = computePriceDomain(priceValues.filter((value) => Number.isFinite(value) && value > 0))
+    const deltaValues = referenceClose != null
+      ? priceValues.filter((value) => Number.isFinite(value)).map((value) => value - referenceClose)
+      : priceValues.filter((value) => Number.isFinite(value))
+    const deltaDomain = computeDeltaDomain(deltaValues)
+    const maxAbsDelta = Math.max(...deltaValues.map((value) => Math.abs(value)), 0.1)
+    const segments = buildSignedSegments(item.timeshare, xValues, referenceClose, maxAbsDelta)
 
     return {
-      xAxisData,
-      tickLabels,
+      xValues,
       priceSeries,
       avgSeries,
+      referenceSeries,
+      upSegments: segments.up,
+      downSegments: segments.down,
       volumeSeries,
-      priceDomain,
+      deltaDomain,
     }
   }, [averageLineEnabled, basePriceValues, item.timeshare, referenceClose])
 
@@ -160,7 +269,9 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
     const rafId = requestAnimationFrame(() => {
       try {
         chart.resize()
-      } catch {}
+      } catch {
+        return
+      }
     })
 
     let resizeTimer: number | null = null
@@ -191,60 +302,171 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
       return
     }
 
-    chart.setOption({
-      animation: false,
-      backgroundColor: "#ffffff",
-      grid: [
-        { left: 6, right: 48, top: 18, height: "68%" },
-        { left: 6, right: 48, top: "79%", height: "14%" },
-      ],
-      axisPointer: {
-        link: [{ xAxisIndex: [0, 1] }],
-      },
-      tooltip: {
-        trigger: "axis",
+    const renderSignedSlice = (side: "up" | "down") => (_params: unknown, api: SignedSliceRenderApi) => {
+      const x1 = Number(api.value(0))
+      const y1 = Number(api.value(1))
+      const x2 = Number(api.value(2))
+      const y2 = Number(api.value(3))
+      const startIntensity = clamp(Number(api.value(4)) || 0, 0, 1)
+      const endIntensity = clamp(Number(api.value(5)) || 0, 0, 1)
+      const start = api.coord([x1, y1])
+      const end = api.coord([x2, y2])
+      const baseEnd = api.coord([x2, 0])
+      const baseStart = api.coord([x1, 0])
+      const isUp = side === "up"
+      const fillAlphaStart = 0.08 + startIntensity * 0.3
+      const fillAlphaEnd = 0.08 + endIntensity * 0.3
+      const lineAlphaStart = 0.7 + startIntensity * 0.3
+      const lineAlphaEnd = 0.7 + endIntensity * 0.3
+      const fillColorStart = isUp
+        ? `rgba(220, 38, 38, ${fillAlphaStart})`
+        : `rgba(22, 163, 74, ${fillAlphaStart})`
+      const fillColorEnd = isUp
+        ? `rgba(220, 38, 38, ${fillAlphaEnd})`
+        : `rgba(22, 163, 74, ${fillAlphaEnd})`
+      const lineColorStart = isUp
+        ? `rgba(220, 23, 23, ${lineAlphaStart})`
+        : `rgba(5, 148, 71, ${lineAlphaStart})`
+      const lineColorEnd = isUp
+        ? `rgba(220, 23, 23, ${lineAlphaEnd})`
+        : `rgba(5, 148, 71, ${lineAlphaEnd})`
+      const gradientBase = {
+        type: "linear" as const,
+        x: start[0],
+        y: 0,
+        x2: end[0],
+        y2: 0,
+        global: true,
+      }
+      const fillColor = {
+        ...gradientBase,
+        colorStops: [
+          { offset: 0, color: fillColorStart },
+          { offset: 1, color: fillColorEnd },
+        ],
+      }
+      const lineColor = {
+        ...gradientBase,
+        colorStops: [
+          { offset: 0, color: lineColorStart },
+          { offset: 1, color: lineColorEnd },
+        ],
+      }
+
+      return {
+        type: "group",
+        children: [
+          {
+            type: "polygon",
+            shape: { points: [baseStart, start, end, baseEnd] },
+            style: { fill: fillColor, stroke: "none" },
+            silent: true,
+          },
+          {
+            type: "polyline",
+            shape: { points: [start, end] },
+            style: {
+              fill: "none",
+              stroke: lineColor,
+              lineWidth: 3.2,
+              lineCap: "butt",
+              lineJoin: "round",
+            },
+            silent: true,
+          },
+        ],
+      }
+    }
+
+    chart.setOption(
+      {
+        animation: false,
+        backgroundColor: "#ffffff",
+        grid: [
+          { left: 6, right: 48, top: 18, height: "68%" },
+          { left: 6, right: 48, top: "79%", height: "14%" },
+        ],
         axisPointer: {
-          type: "line",
-          lineStyle: { color: "#94a3b8", width: 1, type: "dashed" },
+          link: [{ xAxisIndex: [0, 1] }],
         },
-        backgroundColor: "rgba(15, 23, 42, 0.94)",
-        borderColor: "transparent",
-        textStyle: { color: "#f8fafc", fontSize: 12 },
-        extraCssText: "border-radius: 12px; box-shadow: 0 12px 28px rgba(15,23,42,.22);",
-        formatter: (params: unknown) => {
-          const rows = params as Array<{ seriesName: string; data: number | { value: number } | null; dataIndex: number }>
-          const dataIndex = rows?.[0]?.dataIndex ?? 0
-          const point = item.timeshare[dataIndex]
-          if (!point) return ""
-          return [
-            `<div style="font-weight:700;margin-bottom:6px">${[point.trade_date || "", point.time_label || ""].filter(Boolean).join(" ")}</div>`,
-            `<div>价格：<b>${formatClose(point.price)}</b></div>`,
-            averageLineEnabled ? `<div>均价：<b>${formatClose(point.avg_price ?? null)}</b></div>` : "",
-            `<div>分时量：<b>${formatVolume(point.volume)}</b></div>`,
-          ]
-            .filter(Boolean)
-            .join("")
+        tooltip: {
+          trigger: "axis",
+          axisPointer: {
+            type: "line",
+            lineStyle: { color: "#94a3b8", width: 1, type: "dashed" },
+          },
+          backgroundColor: "rgba(15, 23, 42, 0.94)",
+          borderColor: "transparent",
+          textStyle: { color: "#f8fafc", fontSize: 12 },
+          extraCssText: "border-radius: 12px; box-shadow: 0 12px 28px rgba(15,23,42,.22);",
+          formatter: (params: unknown) => {
+            const rows = params as Array<{
+              seriesName: string
+              data: [number, number] | number | { value: number[] } | null
+              dataIndex: number
+            }>
+            const row = rows.find((item) => item.seriesName === "价格")
+              ?? rows.find((item) => item.seriesName !== "昨收")
+              ?? rows[0]
+            const rawData = row?.data
+            const x =
+              Array.isArray(rawData)
+                ? rawData[0]
+                : rawData && typeof rawData === "object" && "value" in rawData && Array.isArray(rawData.value)
+                  ? rawData.value[0]
+                  : chartModel.xValues[row?.dataIndex ?? 0]
+            const dataIndex = chartModel.xValues.reduce((bestIndex, value, index) => {
+              return Math.abs(value - x) < Math.abs(chartModel.xValues[bestIndex] - x) ? index : bestIndex
+            }, 0)
+            const point = item.timeshare[dataIndex]
+            if (!point) return ""
+            const change =
+              referenceClose != null && Number.isFinite(referenceClose)
+                ? point.price - referenceClose
+                : null
+            const changePct =
+              change != null && referenceClose != null && referenceClose > 0
+                ? (change / referenceClose) * 100
+                : null
+            const changeColor =
+              change == null || change === 0
+                ? "#cbd5e1"
+                : change > 0
+                  ? "#fca5a5"
+                  : "#86efac"
+            return [
+              `<div style="font-weight:700;margin-bottom:6px">${[point.trade_date || "", point.time_label || ""].filter(Boolean).join(" ")}</div>`,
+              `<div>价格：<b>${formatClose(point.price)}</b></div>`,
+              `<div>涨跌：<b style="color:${changeColor}">${formatSignedPoint(change)}</b></div>`,
+              `<div>涨幅：<b style="color:${changeColor}">${formatPct(changePct)}</b></div>`,
+              averageLineEnabled ? `<div>均价：<b>${formatClose(point.avg_price ?? null)}</b></div>` : "",
+              `<div>分时量：<b>${formatVolume(point.volume)}</b></div>`,
+            ]
+              .filter(Boolean)
+              .join("")
+          },
         },
-      },
-      xAxis: [
+        xAxis: [
         {
-          type: "category",
+          type: "value",
           boundaryGap: false,
-          data: chartModel.xAxisData,
+          min: 0,
+          max: 240,
           axisLine: { show: false },
           axisTick: { show: false },
           axisLabel: {
             color: "#94a3b8",
             fontSize: 11,
-            formatter: (_value: string, index: number) => chartModel.tickLabels[index] || "",
+            formatter: (value: number) => formatSessionTick(value),
           },
           splitLine: { show: false },
         },
         {
-          type: "category",
+          type: "value",
           boundaryGap: true,
           gridIndex: 1,
-          data: chartModel.xAxisData,
+          min: 0,
+          max: 240,
           axisLine: { show: false },
           axisTick: { show: false },
           axisLabel: { show: false },
@@ -253,8 +475,8 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
       yAxis: [
         {
           type: "value",
-          min: chartModel.priceDomain[0],
-          max: chartModel.priceDomain[1],
+          min: chartModel.deltaDomain[0],
+          max: chartModel.deltaDomain[1],
           scale: true,
           axisLine: { show: false },
           axisTick: { show: false },
@@ -263,7 +485,8 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
           axisLabel: {
             color: "#64748b",
             fontSize: 11,
-            formatter: (value: number) => value.toFixed(0),
+            formatter: (value: number) =>
+              referenceClose != null ? (referenceClose + value).toFixed(0) : value.toFixed(0),
           },
         },
         {
@@ -277,26 +500,50 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
         },
       ],
       series: [
+        ...(referenceClose != null
+          ? [{
+              name: "昨收",
+              type: "line" as const,
+              data: chartModel.referenceSeries,
+              showSymbol: false,
+              silent: true,
+              lineStyle: { color: "#cbd5e1", width: 1, type: "dashed" as const },
+              tooltip: { show: false },
+              z: 6,
+            }]
+          : []),
+        {
+          name: "上涨区域",
+          type: "custom",
+          coordinateSystem: "cartesian2d",
+          clip: true,
+          renderItem: renderSignedSlice("up"),
+          data: chartModel.upSegments.map((segment) => ({
+            value: [...segment.values, segment.startIntensity, segment.endIntensity],
+          })),
+          tooltip: { show: false },
+          z: 9,
+        },
+        {
+          name: "下跌区域",
+          type: "custom",
+          coordinateSystem: "cartesian2d",
+          clip: true,
+          renderItem: renderSignedSlice("down"),
+          data: chartModel.downSegments.map((segment) => ({
+            value: [...segment.values, segment.startIntensity, segment.endIntensity],
+          })),
+          tooltip: { show: false },
+          z: 10,
+        },
         {
           name: "价格",
           type: "line",
           data: chartModel.priceSeries,
           showSymbol: false,
-          smooth: true,
-          lineStyle: { color: "#0f172a", width: 2 },
-          areaStyle: {
-            color: {
-              type: "linear",
-              x: 0,
-              y: 0,
-              x2: 0,
-              y2: 1,
-              colorStops: [
-                { offset: 0, color: "rgba(15, 23, 42, 0.10)" },
-                { offset: 1, color: "rgba(15, 23, 42, 0.01)" },
-              ],
-            },
-          },
+          smooth: false,
+          lineStyle: { width: 0, opacity: 0 },
+          z: 1,
         },
         {
           name: "均价",
@@ -316,9 +563,11 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
           data: chartModel.volumeSeries,
           barWidth: "45%",
         },
-      ],
-    })
-  }, [averageLineEnabled, chartModel, item.timeshare])
+        ],
+      },
+      { notMerge: true },
+    )
+  }, [averageLineEnabled, chartModel, item.timeshare, referenceClose])
 
   const heroTone =
     directionTone === "up"
