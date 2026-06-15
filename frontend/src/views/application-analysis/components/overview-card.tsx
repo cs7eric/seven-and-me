@@ -1,7 +1,7 @@
 import { Bot, CheckCircle2, FileJson, LineChart } from "lucide-react"
 
-import { CollapsibleCard } from "./collapsible-card"
-import { MetricCard } from "./metric-card"
+import { CollapsibleCard } from "@/components/collapsible-card"
+import { MetricCard } from "@/components/metric-card"
 
 export function OverviewCard({
   collapsed,

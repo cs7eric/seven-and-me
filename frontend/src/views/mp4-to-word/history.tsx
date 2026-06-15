@@ -13,8 +13,8 @@ import { notification } from "@/components/ui/notification";
 import DogLoader from "@/components/loader/dog-loader";
 import { buildSummaryCards } from "./lib/summary-renderer";
 import { renderQaAnswer } from "./lib/qa-renderer";
-import { AskSection } from "./components/AskSection";
-import { FloatingAskBar } from "./components/FloatingAskBar";
+import { AskSection } from "@/components/ask-section";
+import { FloatingAskBar } from "@/components/floating-ask-bar";
 import { QA_STYLE_FIX } from "./styles";
 
 function formatDate(value?: string) {

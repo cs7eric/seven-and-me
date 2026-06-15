@@ -5,6 +5,12 @@ interface ReaderModalProps {
   onClose: () => void;
 }
 
+/**
+ * 阅读模式弹窗 · 黑底 + 文字 + 关闭按钮
+ *
+ * 来源: 抽到 src/components/ 公共目录, 主要给 mp4-to-word 复用,
+ *       其他长文阅读场景也能直接用.
+ */
 export function ReaderModal({ show, title, text, onClose }: ReaderModalProps) {
   if (!show) return null;
 

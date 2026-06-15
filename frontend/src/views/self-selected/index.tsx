@@ -20,7 +20,7 @@ import {
 } from "@/lib/api"
 
 import { AddItemTile } from "./components/add-item-tile"
-import { ConfirmDialog } from "./components/confirm-dialog"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { CreateGroupDialog } from "./components/create-group-dialog"
 import { CreateItemDialog } from "./components/create-item-dialog"
 import { ItemRow } from "./components/item-row"

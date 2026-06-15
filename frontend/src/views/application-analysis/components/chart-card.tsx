@@ -1,6 +1,6 @@
 import { LineChart } from "lucide-react"
 
-import { CollapsibleCard } from "./collapsible-card"
+import { CollapsibleCard } from "@/components/collapsible-card"
 import { ChartPanel, type ChartPanelSelectionItem } from "../../stock-chart/components/chart-panel"
 import type { StockKlineBar, StockOverlayAnnotation } from "../../stock-chart/lib/types"
 

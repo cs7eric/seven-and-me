@@ -37,7 +37,7 @@ import {
   type IndustryFundFlowResponse,
   type IndustryFundFlowRow,
 } from "@/lib/api"
-import { IndustryConstituentsDrawer } from "./industry-constituents-drawer"
+import { IndustryConstituentsDrawer } from "@/components/industry-constituents-drawer"
 
 const TOP_OPTIONS: Array<{ value: number | null; label: string }> = [
   { value: null, label: "全部" },

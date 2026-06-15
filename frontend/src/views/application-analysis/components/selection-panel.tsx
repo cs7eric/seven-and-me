@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 
 import { BarSummary } from "./bar-summary"
-import { CollapsibleCard } from "./collapsible-card"
+import { CollapsibleCard } from "@/components/collapsible-card"
 import { fmtDateTime } from "../lib/format"
 import type { ChartPanelSelectionItem } from "../../stock-chart/components/chart-panel"
 

@@ -1026,6 +1026,10 @@ export interface MarketOverviewEltdx {
   limitUpCount: number | null
   limitDownCount: number | null
   stockCount: number | null
+  /** 上一交易日 eltdx totalAmount (大盘成交额较昨日差额用). akshare 失败时
+   *  overview.prevDayFlow.totalAmount 是 null, 这里兜底让 diff 仍能算. */
+  prevDayTotalAmount?: number | null
+  prevDayTradingDate?: string | null
 }
 
 export async function fetchMarketOverviewEltdx(): Promise<MarketOverviewEltdx> {
@@ -1131,6 +1135,83 @@ export async function fetchMarketOverviewAkshare(): Promise<MarketOverview> {
     prevDayFlow: (data.prevDayFlow as Record<string, unknown> | null) ?? null,
     prevDayTradingDate: (data.prevDayTradingDate as string | null) ?? null,
     error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 手动粘贴的资金流 (东方财富资金流页面 copy-paste 兜底)
+// 持久化: reference/market-overview/fund-flow/manual/YYYYMMDD.json
+// 跟 akshare / eltdx overview 并行, 前端 manual 存在时优先用 manual 覆盖.
+// ---------------------------------------------------------------------------
+export interface ManualFundFlow {
+  tradingDate: string
+  savedAt?: string
+  source?: "manual" | string
+  mainNetInflow: number | null
+  mainNetInflowRatio: number | null
+  superLargeNetInflow: number | null
+  superLargeNetInflowRatio: number | null
+  largeNetInflow: number | null
+  largeNetInflowRatio: number | null
+  mediumNetInflow: number | null
+  mediumNetInflowRatio: number | null
+  smallNetInflow: number | null
+  smallNetInflowRatio: number | null
+}
+
+export async function fetchManualFundFlow(tradingDate: string): Promise<ManualFundFlow | null> {
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/market-overview-manual-fund-flow?tradingDate=${encodeURIComponent(tradingDate)}`,
+  )
+  if (res.status === 404) return null
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data || data.ok !== true) return null
+  return {
+    tradingDate: (data.tradingDate as string) ?? tradingDate,
+    savedAt: (data.savedAt as string) ?? undefined,
+    source: (data.source as string) ?? "manual",
+    mainNetInflow: (data.mainNetInflow as number) ?? null,
+    mainNetInflowRatio: (data.mainNetInflowRatio as number) ?? null,
+    superLargeNetInflow: (data.superLargeNetInflow as number) ?? null,
+    superLargeNetInflowRatio: (data.superLargeNetInflowRatio as number) ?? null,
+    largeNetInflow: (data.largeNetInflow as number) ?? null,
+    largeNetInflowRatio: (data.largeNetInflowRatio as number) ?? null,
+    mediumNetInflow: (data.mediumNetInflow as number) ?? null,
+    mediumNetInflowRatio: (data.mediumNetInflowRatio as number) ?? null,
+    smallNetInflow: (data.smallNetInflow as number) ?? null,
+    smallNetInflowRatio: (data.smallNetInflowRatio as number) ?? null,
+  }
+}
+
+export async function saveManualFundFlow(
+  payload: Partial<ManualFundFlow> & { tradingDate: string },
+): Promise<ManualFundFlow> {
+  const res = await fetch(
+    `${API_BASE}/api/stock-chart/market-overview-manual-fund-flow`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data || data.ok !== true) {
+    throw new Error((data?.error as string) ?? `HTTP ${res.status}`)
+  }
+  return {
+    tradingDate: (data.tradingDate as string) ?? payload.tradingDate,
+    savedAt: (data.savedAt as string) ?? undefined,
+    source: (data.source as string) ?? "manual",
+    mainNetInflow: (data.mainNetInflow as number) ?? null,
+    mainNetInflowRatio: (data.mainNetInflowRatio as number) ?? null,
+    superLargeNetInflow: (data.superLargeNetInflow as number) ?? null,
+    superLargeNetInflowRatio: (data.superLargeNetInflowRatio as number) ?? null,
+    largeNetInflow: (data.largeNetInflow as number) ?? null,
+    largeNetInflowRatio: (data.largeNetInflowRatio as number) ?? null,
+    mediumNetInflow: (data.mediumNetInflow as number) ?? null,
+    mediumNetInflowRatio: (data.mediumNetInflowRatio as number) ?? null,
+    smallNetInflow: (data.smallNetInflow as number) ?? null,
+    smallNetInflowRatio: (data.smallNetInflowRatio as number) ?? null,
   }
 }
 

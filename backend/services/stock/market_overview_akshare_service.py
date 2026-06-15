@@ -461,41 +461,169 @@ _HISTORY_FIELDS = [
     "smallNetInflow",
 ]
 
+# eltdx archive 路径: reference/market-overview/market-overview/archive/YYYYMMDD.json
+# (akshare archive 是 reference/market-overview/archive/YYYYMMDD.json, 共享 dir 上层)
+_ELTDX_ARCHIVE_DIR = MARKET_OVERVIEW_FOLDER / "market-overview" / "archive"
+# manual 路径: reference/market-overview/fund-flow/manual/YYYYMMDD.json
+_MANUAL_DIR = _MARKET_OVERVIEW_FOLDER / "manual"
+# eltdx latest: reference/market-overview/market-overview/latest.json
+_ELTDX_LATEST_FILE = MARKET_OVERVIEW_FOLDER / "market-overview" / "latest.json"
+
+
+def _yyyymmdd_to_iso(stem: str) -> str | None:
+    """'20260615' -> '2026-06-15'. 解析失败返 None."""
+    if len(stem) != 8 or not stem.isdigit():
+        return None
+    return f"{stem[:4]}-{stem[4:6]}-{stem[6:8]}"
+
+
+def _merge_point_fields(
+    point: dict[str, Any],
+    payload: dict[str, Any],
+    fields: list[str],
+    fallback_source: str,
+) -> None:
+    """把 payload 里的 fields 合并到 point (只填 point 当前为 None 的字段, 保留已有值).
+    同时更新 source 标记, 表明该 point 至少有一条字段来自 fallback_source.
+    """
+    merged_any = False
+    for f in fields:
+        v = payload.get(f)
+        if v is not None and point.get(f) is None:
+            point[f] = v
+            merged_any = True
+    if merged_any:
+        # 只在已经合并过 fallback 数据时, 把 source 标记成 fallback (避免覆盖已有 "eastmoney")
+        existing = point.get("source")
+        if existing != "eastmoney":
+            point["source"] = fallback_source
+
 
 def get_history_points(days: int = 60) -> list[dict[str, Any]]:
-    """读最近 N 个交易日的 archive, 返回扁平历史点列表 (按日期升序).
+    """读最近 N 个交易日的历史序列, **多源合并** 后返回.
+
+    数据源优先级 (同一字段先到先得, 后到的不覆盖):
+      1. shared archive (``reference/market-overview/archive/YYYYMMDD.json``)
+         —— akshare 写的, 含部分 eltdx 字段 (merge 依赖写入顺序, 不保证完整).
+      2. eltdx archive (``reference/market-overview/market-overview/archive/``)
+         —— 独立, 字段全 totalAmount / risingCount / 涨跌家数, akshare 失败时
+            这条线依然有大盘成交额 / 涨跌温度, 至少让"市场脉搏"图表能延续到今天.
+      3. manual fund flow (``reference/market-overview/fund-flow/manual/``)
+         —— 用户粘贴, 含 mainNetInflow / 4 单 净流入 + 净比, akshare 资金流
+            失败时这条线兜底.
+      4. fund-flow/latest.json + eltdx latest.json (仅当 tradingDate = 今天,
+         且对应日期还没在 archive 里出现过) —— 给"今天"一个 placeholder 点,
+         避免图表最后一段空白.
 
     字段单位保持跟现有 archive / snapshot 一致:
       - 资金流相关字段 (mainNetInflow 等): 单位 "亿"
       - 成交额 (totalAmount): 单位 "亿"
       - 涨跌家数: 整数
-
-    返回示例:
-      [
-        {"date": "2025-12-11", "totalAmount": None, "mainNetInflow": -857.75, ...},
-        {"date": "2025-12-12", "totalAmount": None, "mainNetInflow": -86.5, ...},
-        ...
-      ]
     """
-    if not MARKET_OVERVIEW_ARCHIVE_DIR.exists():
-        return []
-    # archive 文件名 YYYYMMDD, 排序后取最近 N 天 (文件名大的 = 新的)
-    files = sorted(
-        MARKET_OVERVIEW_ARCHIVE_DIR.glob("*.json"),
-        key=lambda p: p.name,
-        reverse=True,
-    )[: max(1, days)]
-    points: list[dict[str, Any]] = []
-    for f in reversed(files):  # 翻转成升序
-        data = read_json_file(f, None)
-        if not isinstance(data, dict):
-            continue
-        yyyymmdd = f.stem
-        date_str = f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:8]}"
-        point: dict[str, Any] = {"date": date_str}
+    points_by_date: dict[str, dict[str, Any]] = {}
+
+    # 1) shared archive (akshare 写, 可能含部分 eltdx 字段)
+    if MARKET_OVERVIEW_ARCHIVE_DIR.exists():
+        files = sorted(
+            MARKET_OVERVIEW_ARCHIVE_DIR.glob("*.json"),
+            key=lambda p: p.name,
+            reverse=True,
+        )[: max(1, days)]
+        for f in files:
+            data = read_json_file(f, None)
+            if not isinstance(data, dict):
+                continue
+            date_str = _yyyymmdd_to_iso(f.stem)
+            if not date_str:
+                continue
+            point = points_by_date.setdefault(date_str, {"date": date_str})
+            for field in _HISTORY_FIELDS:
+                v = data.get(field)
+                if v is not None and point.get(field) is None:
+                    point[field] = v
+            point.setdefault("source", "eastmoney")
+
+    # 2) eltdx archive (独立, 字段 totalAmount / risingCount / 涨跌家数)
+    if _ELTDX_ARCHIVE_DIR.exists():
+        eltdx_fields = [
+            "totalAmount", "totalVolume",
+            "risingCount", "fallingCount", "flatCount",
+            "limitUpCount", "limitDownCount", "stockCount",
+        ]
+        files = sorted(
+            _ELTDX_ARCHIVE_DIR.glob("*.json"),
+            key=lambda p: p.name,
+            reverse=True,
+        )[: max(1, days)]
+        for f in files:
+            data = read_json_file(f, None)
+            if not isinstance(data, dict):
+                continue
+            date_str = _yyyymmdd_to_iso(f.stem)
+            if not date_str:
+                continue
+            point = points_by_date.setdefault(date_str, {"date": date_str})
+            _merge_point_fields(point, data, eltdx_fields, "eltdx")
+
+    # 3) manual fund flow (字段 mainNetInflow / 4 单 净流入 + 净比)
+    if _MANUAL_DIR.exists():
+        manual_fields = [
+            "mainNetInflow", "mainNetInflowRatio",
+            "superLargeNetInflow", "superLargeNetInflowRatio",
+            "largeNetInflow", "largeNetInflowRatio",
+            "mediumNetInflow", "mediumNetInflowRatio",
+            "smallNetInflow", "smallNetInflowRatio",
+        ]
+        files = sorted(
+            _MANUAL_DIR.glob("*.json"),
+            key=lambda p: p.name,
+            reverse=True,
+        )[: max(1, days)]
+        for f in files:
+            data = read_json_file(f, None)
+            if not isinstance(data, dict):
+                continue
+            date_str = _yyyymmdd_to_iso(f.stem)
+            if not date_str:
+                continue
+            point = points_by_date.setdefault(date_str, {"date": date_str})
+            _merge_point_fields(point, data, manual_fields, "manual")
+
+    # 4) 给"今天"一个 fallback 点: 拿 fund-flow/latest.json + eltdx latest.json
+    #    (仅当 tradingDate = 今天, 且 #1/#2/#3 都没覆盖到).
+    today_str = _today_str()
+    if today_str not in points_by_date:
+        point: dict[str, Any] = {"date": today_str, "source": "eastmoney-latest"}
         for field in _HISTORY_FIELDS:
-            v = data.get(field)
-            point[field] = v if v is not None else None
-        point["source"] = "eastmoney"
-        points.append(point)
+            point[field] = None
+
+        # akshare latest
+        if MARKET_OVERVIEW_LATEST_FILE.exists():
+            data = read_json_file(MARKET_OVERVIEW_LATEST_FILE, None)
+            if isinstance(data, dict) and data.get("tradingDate") == today_str:
+                for field in _HISTORY_FIELDS:
+                    v = data.get(field)
+                    if v is not None and point.get(field) is None:
+                        point[field] = v
+
+        # eltdx latest (兜底 totalAmount / 涨跌家数)
+        if _ELTDX_LATEST_FILE.exists():
+            data = read_json_file(_ELTDX_LATEST_FILE, None)
+            if isinstance(data, dict) and data.get("tradingDate") == today_str:
+                for field in (
+                    "totalAmount", "totalVolume",
+                    "risingCount", "fallingCount", "flatCount",
+                    "limitUpCount", "limitDownCount", "stockCount",
+                ):
+                    v = data.get(field)
+                    if v is not None and point.get(field) is None:
+                        point[field] = v
+                        if point.get("source") == "eastmoney-latest":
+                            point["source"] = "eltdx-latest"
+
+        points_by_date[today_str] = point
+
+    # 排序返回 (按日期升序)
+    points = list(points_by_date.values())
+    points.sort(key=lambda p: p["date"])
     return points

@@ -29,6 +29,19 @@ interface AskSectionProps {
   onFollowupClick?: (question: string) => void;
 }
 
+/**
+ * Ask AI 问答折叠列表
+ *
+ * 来源: 之前仅在 mp4-to-word 内部用, 已经被 Mp4ToWordPage / Mp4HistoryPage
+ *        跨文件复用. 抽到 src/components/ 公共目录后, 其他 page
+ *        (例如未来个股复盘 / 行业分析的 Ask AI) 也能直接使用.
+ *
+ * 行为:
+ *   - 整段可折叠 (collapsed prop)
+ *   - 每条问答可单独折叠 (collapsedQaItems[qaId] 控制)
+ *   - 通过事件代理捕获 `.qa-followup-chip` 的 `data-followup`,
+ *     调用 onFollowupClick 实现"追问" (不强制用 onClick, 兼容 history DOM 结构)
+ */
 export function AskSection({
   qaItems,
   collapsed,

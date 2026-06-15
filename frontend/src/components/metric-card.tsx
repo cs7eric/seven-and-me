@@ -1,6 +1,23 @@
 import type { LucideIcon } from "lucide-react"
 
-export function MetricCard({ label, value, icon: Icon, tone = "slate" }: { label: string; value: string; icon: LucideIcon; tone?: "slate" | "teal" | "violet" }) {
+export interface MetricCardProps {
+  label: string
+  value: string
+  icon: LucideIcon
+  tone?: "slate" | "teal" | "violet"
+}
+
+/**
+ * 通用 MetricCard · 小指标卡
+ *
+ * 用途:
+ *   - 任何需要展示"label + value + icon"的小指标卡
+ *   - 3 种 tone (slate / teal / violet) 决定背景与文本强调色
+ *
+ * 来源: 从 application-analysis/components/metric-card.tsx 抽出,
+ * 原本仅在 application-analysis 内部用, 现挪到公共目录以便复用.
+ */
+export function MetricCard({ label, value, icon: Icon, tone = "slate" }: MetricCardProps) {
   const toneClass =
     tone === "teal"
       ? "bg-gradient-to-br from-teal-50 to-white text-teal-700"

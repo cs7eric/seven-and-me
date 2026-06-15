@@ -944,6 +944,45 @@ def stock_chart_market_overview_eltdx_refresh():
 
 
 # =============================================================================
+# 手动粘贴的资金流 (东方财富资金流页面 copy-paste 兜底)
+# 持久化: reference/market-overview/fund-flow/manual/YYYYMMDD.json
+# 跟 akshare / eltdx overview 并行 — 前端 manual 存在时优先用 manual 覆盖.
+# =============================================================================
+
+@stock_chart_bp.route('/api/stock-chart/market-overview-manual-fund-flow', methods=['GET'])
+def stock_chart_manual_fund_flow_get():
+    """读指定 tradingDate 的 manual 资金流数据 (?tradingDate=YYYY-MM-DD, 默认今天)."""
+    from datetime import datetime, timedelta
+    from backend.services.stock.market_overview_manual_fund_flow_service import load_manual_fund_flow
+    trading_date = str(request.args.get('tradingDate', '')).strip()
+    if not trading_date:
+        trading_date = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y-%m-%d')
+    data = load_manual_fund_flow(trading_date)
+    if not data:
+        return jsonify({"ok": False, "error": "no manual data", "tradingDate": trading_date}), 404
+    return jsonify({"ok": True, **data})
+
+
+@stock_chart_bp.route('/api/stock-chart/market-overview-manual-fund-flow', methods=['POST'])
+def stock_chart_manual_fund_flow_post():
+    """保存 manual 资金流数据.
+
+    Body: {tradingDate: "YYYY-MM-DD", mainNetInflow: 685.17, mainNetInflowRatio: 2.26, ...}
+    tradingDate 必填, 其余 10 个字段 (4 单净流入 + 4 单净比 + 主力净流入 + 主力净比) 可选.
+    """
+    from backend.services.stock.market_overview_manual_fund_flow_service import save_manual_fund_flow
+    body = request.get_json(silent=True) or {}
+    trading_date = str(body.get('tradingDate') or '').strip()
+    if not trading_date:
+        return jsonify({"ok": False, "error": "tradingDate required"}), 400
+    try:
+        saved = save_manual_fund_flow(trading_date, body)
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, **saved})
+
+
+# =============================================================================
 # 行业 / 概念 应用面分析（独立于 application-analysis）
 # 数据源：eltdx bars.get(kind="index")
 # 持久化：reference/industry-application/  (独立)

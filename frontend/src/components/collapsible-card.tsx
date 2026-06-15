@@ -5,6 +5,27 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
+export interface CollapsibleCardProps {
+  title: string
+  description?: string
+  icon?: LucideIcon
+  badge?: string
+  collapsed: boolean
+  onToggle: () => void
+  children: React.ReactNode
+  className?: string
+}
+
+/**
+ * 通用 CollapsibleCard · 可折叠卡
+ *
+ * 用途:
+ *   - 任何需要"标题 + 折叠按钮 + 可选内容区"的卡片
+ *   - icon / description / badge 全部可选
+ *
+ * 来源: 从 application-analysis/components/collapsible-card.tsx 抽出,
+ * 原本在 application-analysis 内部 4 处复用, 现挪到公共目录.
+ */
 export function CollapsibleCard({
   title,
   description,
@@ -14,16 +35,7 @@ export function CollapsibleCard({
   onToggle,
   children,
   className,
-}: {
-  title: string
-  description?: string
-  icon?: LucideIcon
-  badge?: string
-  collapsed: boolean
-  onToggle: () => void
-  children: React.ReactNode
-  className?: string
-}) {
+}: CollapsibleCardProps) {
   return (
     <Card
       className={`flex h-full min-h-0 flex-col rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] ${className ?? ""}`}

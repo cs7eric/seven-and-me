@@ -54,6 +54,55 @@ def _archive_path_for(trading_date: str) -> Path:
 # ---------------------------------------------------------------------------
 # 归档持久化 (给 archive 使用, 共享 tradingDate/prevDayFlow)
 # ---------------------------------------------------------------------------
+def _load_eltdx_prev_day_overview(target_trading_date: str) -> dict | None:
+    """读上一个交易日的 eltdx archive, 返回 totalAmount 等字段.
+
+    给 eltdx latest.json / archive 算 ``prevDayTotalAmount`` 用.
+    找不到返 None, 调用方按 missing 处理 (frontend 显示 "—").
+
+    Fallback 链: eltdx 同日 archive (口径最准) → fund-flow 同日 archive (口径近似).
+    后者只在前者缺失时用, 比如 eltdx scheduler 某天没跑, fund-flow 当天有数据
+    (akshare spot_em 跑通), 用它先顶上去, 至少能让 diff 算个大概.
+    """
+    from backend.services.stock.trading_calendar import previous_trading_day
+    try:
+        target = datetime.strptime(target_trading_date, "%Y-%m-%d").date()
+    except Exception:
+        return None
+    prev_date = previous_trading_day(target)
+    prev_iso = prev_date.isoformat()
+
+    # 1) 优先 eltdx 同日 archive
+    eltdx_arch = _archive_path_for(prev_iso)
+    if eltdx_arch.exists():
+        try:
+            data = json.loads(eltdx_arch.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("totalAmount") is not None:
+                return {
+                    "prevDayTradingDate": prev_iso,
+                    "prevDayTotalAmount": data.get("totalAmount"),
+                    "prevDaySource": "eltdx",
+                }
+        except Exception:
+            pass
+
+    # 2) Fallback: fund-flow 同日 archive 的 totalAmount (口径不同但能算 diff 方向)
+    fund_arch = OVERVIEW_DIR / "fund-flow" / "archive" / f"{prev_date.strftime('%Y%m%d')}.json"
+    if fund_arch.exists():
+        try:
+            data = json.loads(fund_arch.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("totalAmount") is not None:
+                return {
+                    "prevDayTradingDate": prev_iso,
+                    "prevDayTotalAmount": data.get("totalAmount"),
+                    "prevDaySource": "fund-flow",
+                }
+        except Exception:
+            pass
+
+    return None
+
+
 def _save_overview_to_archive(
     payload: dict,
     trading_date: str,
@@ -73,18 +122,20 @@ def _save_overview_to_archive(
         eltdx_fields = {
             "totalAmount", "totalVolume", "risingCount", "fallingCount",
             "flatCount", "limitUpCount", "limitDownCount", "stockCount",
+            "prevDayTotalAmount", "prevDayTradingDate",
         }
         for k, v in payload.items():
             if k in eltdx_fields:
                 existing[k] = v
         payload = existing
     else:
-        # 新建, 补 prevDayFlow 引用 (从 fund-flow archive 读)
-        fund_arch = OVERVIEW_DIR / "fund-flow" / "archive" / f"{trading_date.replace('-', '')}.json"
-        if fund_arch.exists():
-            fund_data = json.loads(fund_arch.read_text(encoding="utf-8"))
-            payload["prevDayFlow"] = fund_data.get("prevDayFlow")
-            payload["prevDayTradingDate"] = fund_data.get("prevDayTradingDate")
+        # 新建, 补 eltdx 自己的 prevDayTotalAmount (从上一交易日 eltdx archive 读).
+        # 不要从 fund-flow 的 prevDayFlow 拷 totalAmount: akshare 失败时该字段是 null,
+        # 跟 eltdx 的 totalAmount 不是同一口径, 算 diff 会得到错的数.
+        eltdx_prev = _load_eltdx_prev_day_overview(trading_date)
+        if eltdx_prev:
+            payload["prevDayTotalAmount"] = eltdx_prev.get("prevDayTotalAmount")
+            payload["prevDayTradingDate"] = eltdx_prev.get("prevDayTradingDate")
 
     tmp = arch_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -169,11 +220,18 @@ def save_overview(payload: dict) -> None:
         trading_date = payload.get("tradingDate") or _today_str()
         OVERVIEW_LATEST_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-        # 1) archive (永远写, 合并不覆盖)
+        # 1) archive (永远写, 合并不覆盖). archive 内会算 prevDayTotalAmount.
         _save_overview_to_archive(payload, trading_date)
 
-        # 2) latest (有实质数据才覆盖)
+        # 2) latest (有实质数据才覆盖). 把 prevDayTotalAmount 也带上, 让前端
+        #    "大盘成交额 较昨日" 在 akshare 失败时 (overview.prevDayFlow.totalAmount=null)
+        #    仍能用 eltdx 自己的口径算 diff.
         if payload.get("totalAmount") is not None:
+            if "prevDayTotalAmount" not in payload:
+                eltdx_prev = _load_eltdx_prev_day_overview(trading_date)
+                if eltdx_prev:
+                    payload["prevDayTotalAmount"] = eltdx_prev.get("prevDayTotalAmount")
+                    payload["prevDayTradingDate"] = eltdx_prev.get("prevDayTradingDate")
             tmp = OVERVIEW_LATEST_FILE.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(OVERVIEW_LATEST_FILE)
@@ -189,12 +247,14 @@ def save_overview(payload: dict) -> None:
 # ---------------------------------------------------------------------------
 def get_latest_overview() -> dict:
     """读 eltdx overview latest, fallback 到 archive 同日, 再 fallback 到上一交易日."""
+    candidates: list[dict] = []
+
     # 1) latest
     if OVERVIEW_LATEST_FILE.exists():
         try:
             data = json.loads(OVERVIEW_LATEST_FILE.read_text(encoding="utf-8"))
-            if data.get("totalAmount") is not None:
-                return data
+            if isinstance(data, dict) and data.get("totalAmount") is not None:
+                candidates.append(data)
         except Exception:
             pass
 
@@ -204,8 +264,8 @@ def get_latest_overview() -> dict:
     if arch.exists():
         try:
             data = json.loads(arch.read_text(encoding="utf-8"))
-            if data.get("totalAmount") is not None:
-                return data
+            if isinstance(data, dict) and data.get("totalAmount") is not None:
+                candidates.append(data)
         except Exception:
             pass
 
@@ -216,23 +276,39 @@ def get_latest_overview() -> dict:
         if arch2.exists():
             try:
                 data = json.loads(arch2.read_text(encoding="utf-8"))
-                if data.get("totalAmount") is not None:
-                    return data
+                if isinstance(data, dict) and data.get("totalAmount") is not None:
+                    candidates.append(data)
             except Exception:
                 pass
 
-    # 4) 全挂: 返回空壳
-    return {
-        "totalAmount": None,
-        "risingCount": None,
-        "fallingCount": None,
-        "flatCount": None,
-        "limitUpCount": None,
-        "limitDownCount": None,
-        "stockCount": None,
-        "tradingDate": None,
-        "fetchedAt": None,
-    }
+    if not candidates:
+        # 4) 全挂: 返回空壳
+        return {
+            "totalAmount": None,
+            "risingCount": None,
+            "fallingCount": None,
+            "flatCount": None,
+            "limitUpCount": None,
+            "limitDownCount": None,
+            "stockCount": None,
+            "tradingDate": None,
+            "fetchedAt": None,
+            "prevDayTotalAmount": None,
+            "prevDayTradingDate": None,
+        }
+
+    # 取优先级最高的, 但用 archive 同日补 prevDayTotalAmount (老 archive 没这字段)
+    chosen = candidates[0]
+    if "prevDayTotalAmount" not in chosen:
+        trading_date = chosen.get("tradingDate") or today
+        eltdx_prev = _load_eltdx_prev_day_overview(trading_date)
+        if eltdx_prev:
+            chosen["prevDayTotalAmount"] = eltdx_prev.get("prevDayTotalAmount")
+            chosen["prevDayTradingDate"] = eltdx_prev.get("prevDayTradingDate")
+        else:
+            chosen.setdefault("prevDayTotalAmount", None)
+            chosen.setdefault("prevDayTradingDate", None)
+    return chosen
 
 
 # ---------------------------------------------------------------------------

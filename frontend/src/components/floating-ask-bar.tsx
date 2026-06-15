@@ -7,6 +7,12 @@ interface FloatingAskBarProps {
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
 
+/**
+ * 浮动 Ask Bar · 任务可见时的底部输入条
+ *
+ * 来源: 抽到 src/components/ 公共目录, 跨 Mp4ToWordPage / Mp4HistoryPage 复用.
+ *       "visible || taskId" 缺一就不渲染.
+ */
 export function FloatingAskBar({
   visible,
   qaInput,

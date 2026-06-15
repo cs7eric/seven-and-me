@@ -6,7 +6,7 @@ import type { SelfSelectedItem } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-import { ConfirmDialog } from "./confirm-dialog"
+import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { getMarketClasses, getMarketAccentClasses } from "../lib/constants"
 
 interface ItemRowProps {

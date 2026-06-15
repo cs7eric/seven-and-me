@@ -5,7 +5,7 @@ import type { ApplicationAnalysisRecent30FullItem } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 
-import { CollapsibleCard } from "./collapsible-card"
+import { CollapsibleCard } from "@/components/collapsible-card"
 import { BIAS_TONE } from "../lib/constants"
 import { fmt, fmtPercent, safeRecord, safeString, textList, toNumber } from "../lib/format"
 

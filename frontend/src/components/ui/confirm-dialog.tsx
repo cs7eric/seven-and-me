@@ -29,6 +29,17 @@ interface ConfirmDialogProps {
   pending?: boolean
 }
 
+/**
+ * 通用确认弹窗
+ *
+ * 来源: 之前只 self-selected 在用, 抽到 src/components/ui/ 公共目录后
+ * 所有 page 都可以复用 (删除 / 启用 / 危险操作二次确认等).
+ *
+ * 行为:
+ *   - 同时支持 internal pending (await onConfirm 自动管理) 和 external pending (父组件传入网络请求 loading)
+ *   - destructive 模式: 确认按钮变红 + icon 默认红色三角
+ *   - open 状态由父组件控制 (受控), 不会自己关掉 (等 onConfirm resolve 后由父组件 onOpenChange(false))
+ */
 export function ConfirmDialog({
   open,
   onOpenChange,
