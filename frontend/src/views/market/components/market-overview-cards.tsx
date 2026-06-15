@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight, ExternalLink, Loader2, Pencil, RefreshCw, Wallet, Waves } from "lucide-react"
+import { ArrowDownRight, ArrowUpRight, Loader2, Pencil, RefreshCw, Wallet, Waves } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { diffBadgeTone, formatCount, formatYi, moneyTone } from "../lib/format"
@@ -87,19 +87,9 @@ export function MarketOverviewCards({
               title="手动粘贴资金流数据 (东方财富), 落盘后覆盖 overview 主力净流入 / 4 单"
             >
               <Pencil className="size-3.5" />
-              <span className="ml-1">{manualFundFlow ? "修改手动" : "手动添加"}</span>
+              <span className="ml-1">manual add</span>
             </Button>
           )}
-          <a
-            href="https://data.eastmoney.com/zjlx/"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="东方财富资金流页面 (复制粘贴来源)"
-            className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:bg-slate-50 hover:text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-slate-600 dark:hover:bg-slate-800"
-          >
-            <ExternalLink className="size-3.5" />
-            <span>东方财富</span>
-          </a>
           <Button
             variant="secondary"
             size="sm"

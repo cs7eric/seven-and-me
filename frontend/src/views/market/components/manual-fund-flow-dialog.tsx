@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Save } from "lucide-react"
+import { ExternalLink, Loader2, Save } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -148,19 +148,26 @@ export function ManualFundFlowDialog({ open, onOpenChange, tradingDate, existing
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>手动添加 {tradingDate} 资金流</DialogTitle>
-          <DialogDescription>
-            从{" "}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <DialogTitle>手动添加 {tradingDate} 资金流</DialogTitle>
+              <DialogDescription className="mt-1.5">
+                从东方财富资金流页面复制 5 行文本 (主力 / 超大单 / 大单 / 中单 / 小单 各一行),
+                粘贴到下方, 自动解析.
+              </DialogDescription>
+            </div>
+            {/* 东方财富资金流外链: 从 header 搬过来, 用户点 "manual add" 后第一眼看到
+                复制来源, 避免再开一个 tab 找页面. */}
             <a
               href="https://data.eastmoney.com/zjlx/"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-blue-700 dark:hover:bg-blue-950/40 dark:hover:text-blue-300"
             >
-              东方财富资金流
-            </a>{" "}
-            页面复制 5 行文本 (主力 / 超大单 / 大单 / 中单 / 小单 各一行), 粘贴到下方, 自动解析.
-          </DialogDescription>
+              <ExternalLink className="size-3.5" />
+              <span>东方财富</span>
+            </a>
+          </div>
         </DialogHeader>
 
         <div className="space-y-3">

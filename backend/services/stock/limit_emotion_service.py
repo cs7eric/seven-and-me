@@ -78,11 +78,15 @@ def _threshold_for(full_code: str) -> float:
 
     ST 一律 5% (用 4.95), 与板块无关 — 这跟交易所规则一致:
     ST 股票 (含创业板 ST、科创板 ST、北交所 ST) 涨跌幅都是 5%.
+
+    同时支持带前缀 code (sh600519, sz300xxx, bj920xxx) 和纯 6 位数字 code.
     """
-    code = (full_code or "").lower()
-    if code.startswith(("bj8", "bj9", "bj92")):
+    raw = (full_code or "").lower()
+    # 剥掉 sh/sz/bj 前缀，转成 bare 6 位 code
+    bare = raw[2:] if raw[:2] in ("sh", "sz", "bj") and len(raw) == 8 else raw
+    if bare.startswith(("8", "4", "92")):
         return 29.95
-    if code.startswith(("sz30", "sz301", "sh688", "sh689")):
+    if bare.startswith(("30", "301", "688", "689")):
         return 19.95
     return 9.95
 
