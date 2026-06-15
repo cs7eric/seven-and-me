@@ -28,6 +28,7 @@ from typing import Any
 from backend.config.settings import (
     SCHEDULER_DIR,
     SCHEDULER_JOBS_FILE,
+    SCHEDULER_THS_INDUSTRY_CONSTITUENTS_DAILY_JOB_FILE,
 )
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.utils.json_io import read_json_file, write_json_file
@@ -84,7 +85,7 @@ JOB_FILE_NAME = "ths_industry_constituents_daily_job.json"
 
 
 def _job_file_path():
-    return SCHEDULER_DIR / JOB_FILE_NAME
+    return SCHEDULER_THS_INDUSTRY_CONSTITUENTS_DAILY_JOB_FILE
 
 
 def _load_job_config() -> dict[str, Any]:

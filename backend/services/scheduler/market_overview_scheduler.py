@@ -113,13 +113,26 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
         data = {"version": 1, "jobs": []}
     jobs = data.setdefault("jobs", [])
     jobs = [j for j in jobs if j.get("id") != job_id]
-    jobs.append({
+    now_iso = _beijing_now().isoformat(timespec="seconds")
+    payload = {
         "id": job_id,
         "name": name,
+        "description": (
+            "盘内 5 分钟一次 (fund-flow akshare + eltdx overview) + 15:35 收盘落盘 + 09:00 开盘前 warmup, "
+            "落盘 reference/market-overview/latest.json + reference/stock-universe/market_pulse/rotation/YYYY-MM-DD.json, "
+            "供前端 Market Overview / Sector Rotation / 涨跌家数 视图使用"
+        ),
+        "config_file": "market_overview_job.json",
+        "service_module": "backend.services.scheduler.market_overview_scheduler",
+        "service_class": "MarketOverviewScheduler",
+        "enabled": True,
+        "registered_at": now_iso,
+        # 兼容旧 schema 字段 (前端老 UI / 老 reader 可能还在读)
         "module": "backend.services.scheduler.market_overview_scheduler",
         "nextRunTime": next_run_time,
-        "updatedAt": _beijing_now().isoformat(timespec="seconds"),
-    })
+        "updatedAt": now_iso,
+    }
+    jobs.append(payload)
     from backend.utils.json_io import write_json_file
     write_json_file(SCHEDULER_JOBS_FILE, data)
 
@@ -300,6 +313,11 @@ def start_market_overview_scheduler() -> None:
         return
     with _scheduler_lock:
         if _scheduler is not None:
+            return
+        # 检查 enabled 开关 (UI 禁用时不启动 APScheduler)
+        status = _load_job_status()
+        if not status.get("enabled", True):
+            logger.info("[MarketOverviewScheduler] disabled by config (market_overview_job.json enabled=false), not started")
             return
         sched = BackgroundScheduler(timezone="Asia/Shanghai")
 

@@ -68,6 +68,14 @@ from backend.services.scheduler.market_overview_scheduler import (
     start_market_overview_scheduler,
     stop_market_overview_scheduler,
 )
+from backend.services.scheduler.market_pulse_scheduler import (
+    get_market_pulse_scheduler_status,
+    start_market_pulse_scheduler,
+    stop_market_pulse_scheduler,
+    trigger_market_pulse_constituents_now,
+    trigger_market_pulse_close_snapshot_now,
+    trigger_market_pulse_snapshot_now,
+)
 from backend.services.stock.market_overview_eltdx_service import capture_overview
 from backend.utils.json_io import read_json_file, write_json_file
 
@@ -79,10 +87,14 @@ logger = logging.getLogger(__name__)
 _KNOWN_JOB_IDS = {
     'turnover_refresh', 'auction_ai_analysis', 'application_analysis',
     'stock_universe_refresh', 'ths_industry_constituents_weekly', 'ths_industry_constituents_daily',
+    # market_pulse (行业轮动 + 90 行业成分股): 由 market_pulse_scheduler 管理
+    'market_pulse_inside', 'market_pulse_close', 'market_pulse_constituents',
     # market_overview (eastmoney fund flow): 由 market_overview_scheduler 管理
     'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
     # eltdx overview (全A成交额/涨跌家数): 由同一个 market_overview_scheduler 管理
     'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+    # 测试用 job: 无对应 scheduler 模块, 用来演示"删除后重启不自动恢复"
+    'test_scheduler_demo',
 }
 
 # application_analysis 的 enabled 写入 ``scheduler.json``（状态文件），其余两个走
@@ -140,8 +152,19 @@ def _save_job_config(config_file: str, payload: dict[str, Any]) -> None:
 
 
 def _supports_enable(job_id: str) -> bool:
-    """application_analysis 没有全局 enabled（靠 per-target enabled），所以不暴露。"""
-    return job_id in {'turnover_refresh', 'auction_ai_analysis', 'stock_universe_refresh', 'ths_industry_constituents_weekly', 'ths_industry_constituents_daily'}
+    """application_analysis 没有全局 enabled（靠 per-target enabled），所以不暴露。
+
+    market_pulse_* / market_overview_* / eltdx_overview_* 共用同一份 status 文件里的
+    enabled 字段，整组共用同一个开关；UI 上"禁用"对应整组停掉。
+    """
+    return job_id in {
+        'turnover_refresh', 'auction_ai_analysis', 'stock_universe_refresh',
+        'ths_industry_constituents_weekly', 'ths_industry_constituents_daily',
+        'market_pulse_inside', 'market_pulse_close', 'market_pulse_constituents',
+        'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
+        'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+        'test_scheduler_demo',
+    }
 
 
 def _get_live_status(job_id: str) -> dict[str, Any]:
@@ -157,6 +180,9 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         return get_ths_industry_constituents_scheduler_status()
     if job_id == 'ths_industry_constituents_daily':
         return get_ths_industry_constituents_daily_scheduler_status()
+    # market_pulse: 共用 market_pulse_scheduler 的状态
+    if job_id in {'market_pulse_inside', 'market_pulse_close', 'market_pulse_constituents'}:
+        return get_market_pulse_scheduler_status()
     # market_overview / eltdx overview: 共用 market_overview_scheduler 的状态
     if job_id in {
         'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
@@ -179,6 +205,8 @@ def _start_scheduler(job_id: str) -> None:
         start_ths_industry_constituents_scheduler()
     elif job_id == 'ths_industry_constituents_daily':
         start_ths_industry_constituents_daily_scheduler()
+    elif job_id in {'market_pulse_inside', 'market_pulse_close', 'market_pulse_constituents'}:
+        start_market_pulse_scheduler()
     elif job_id in {
         'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
         'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
@@ -201,6 +229,8 @@ def _stop_scheduler(job_id: str) -> None:
         stop_ths_industry_constituents_scheduler()
     elif job_id == 'ths_industry_constituents_daily':
         stop_ths_industry_constituents_daily_scheduler()
+    elif job_id in {'market_pulse_inside', 'market_pulse_close', 'market_pulse_constituents'}:
+        stop_market_pulse_scheduler()
     elif job_id in {
         'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
         'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
@@ -263,6 +293,13 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
         if sched is None:
             return {'ok': False, 'error': 'scheduler not initialized'}
         return sched.trigger_now()
+    # market_pulse_*: 三个 job 走同一 scheduler, trigger 时分别对应不同刷新动作
+    if job_id == 'market_pulse_inside':
+        return trigger_market_pulse_snapshot_now()
+    if job_id == 'market_pulse_close':
+        return trigger_market_pulse_close_snapshot_now()
+    if job_id == 'market_pulse_constituents':
+        return trigger_market_pulse_constituents_now()
     # market_overview_*  (fund-flow, eastmoney 数据源)
     if job_id in {'market_overview_inside', 'market_overview_close', 'market_overview_warmup'}:
         snap = run_market_overview_snapshot_now(force=True)
@@ -285,6 +322,9 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
             'count': 1,
             'failed_count': 0,
         }
+    # test_scheduler_demo: 测试 entry, 没有对应 scheduler, trigger / start / stop 都返回错误
+    if job_id == 'test_scheduler_demo':
+        return {'ok': False, 'error': 'test_scheduler_demo 是测试 entry, 没有对应 scheduler 模块; 用来演示 jobs.json 注册表 CRUD'}
     return {'ok': False, 'error': f'unknown job_id {job_id}'}
 
 
@@ -413,15 +453,27 @@ def _flip_enabled(job_id: str, enabled: bool) -> dict[str, Any]:
     if entry is None:
         return {'ok': False, 'error': f'job {job_id} not registered'}
 
+    enabled_bool = bool(enabled)
+
+    # test_scheduler_demo 没有对应 config 文件, 写到 jobs.json 注册表里的 enabled 字段
+    if job_id == 'test_scheduler_demo':
+        entry['enabled'] = enabled_bool
+        registry.setdefault('jobs', [])
+        # 写回
+        p = _jobs_registry_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        write_json_file(p, registry)
+        return {'ok': True, 'job_id': job_id, 'enabled': enabled_bool, 'config': {'enabled': enabled_bool}}
+
     config_file = entry.get('config_file') or ''
     if not config_file:
         return {'ok': False, 'error': f'job {job_id} has no config_file'}
 
     config = _load_job_config(config_file) or {}
-    config['enabled'] = bool(enabled)
+    config['enabled'] = enabled_bool
     config['job_name'] = config.get('job_name') or job_id
     _save_job_config(config_file, config)
-    return {'ok': True, 'job_id': job_id, 'enabled': bool(enabled), 'config': config}
+    return {'ok': True, 'job_id': job_id, 'enabled': enabled_bool, 'config': config}
 
 
 @scheduler_bp.route('/api/scheduler/jobs/<job_id>/enable', methods=['POST'])

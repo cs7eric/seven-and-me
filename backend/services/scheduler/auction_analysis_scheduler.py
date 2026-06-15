@@ -93,13 +93,17 @@ def _register_job() -> None:
         "config_file": "auction_analysis_job.json",
         "service_module": "backend.services.scheduler.auction_analysis_scheduler",
         "service_class": "AuctionAnalysisScheduler",
-        "enabled": True,
+        # 注意: 不要在这里覆盖 enabled; 已存在 entry 的 enabled 由 UI 控制, 保留用户改过的状态
     }
     if existing is None:
+        payload["enabled"] = True
         payload["registered_at"] = datetime.now().isoformat()
         jobs.append(payload)
     else:
-        existing.update({key: value for key, value in payload.items() if key != "registered_at"})
+        # 已存在: 只补 name / description / config_file / service_module / service_class 字段,
+        # 不要覆盖 enabled / registered_at.
+        for key, value in payload.items():
+            existing.setdefault(key, value)
     write_json_file(SCHEDULER_JOBS_FILE, registry)
 
 

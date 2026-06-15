@@ -105,13 +105,26 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
     jobs = data.setdefault("jobs", [])
     # 去重
     jobs = [j for j in jobs if j.get("id") != job_id]
-    jobs.append({
+    now_iso = _beijing_now().isoformat(timespec="seconds")
+    payload = {
         "id": job_id,
         "name": name,
+        "description": (
+            "交易时间内每 10 分钟刷新一次行业轮动快照；15:30 收盘后落盘当日完整 Top 10；"
+            "15:35 (仅交易日) 拉 90 行业全量成分股 (Playwright 翻全页), "
+            "落盘 reference/stock-universe/ths_industry/constituents/{code}.json"
+        ),
+        "config_file": "market_pulse_job.json",
+        "service_module": "backend.services.scheduler.market_pulse_scheduler",
+        "service_class": "MarketPulseScheduler",
+        "enabled": True,
+        "registered_at": now_iso,
+        # 兼容旧 schema 字段 (前端老 UI / 老 reader 可能还在读)
         "module": "backend.services.scheduler.market_pulse_scheduler",
         "nextRunTime": next_run_time,
-        "updatedAt": _beijing_now().isoformat(timespec="seconds"),
-    })
+        "updatedAt": now_iso,
+    }
+    jobs.append(payload)
     write_json_file(p, data)
 
 
@@ -231,6 +244,11 @@ def start_market_pulse_scheduler() -> None:
     with _scheduler_lock:
         if _scheduler is not None:
             return
+        # 检查 enabled 开关 (UI 禁用时不启动 APScheduler)
+        status = _load_job_status()
+        if not status.get("enabled", True):
+            logger.info("[MarketPulseScheduler] disabled by config (market_pulse_job.json enabled=false), not started")
+            return
         sched = BackgroundScheduler(timezone="Asia/Shanghai")
 
         # 1) 盘内 10 分钟一次: 用 interval trigger, 内部用 is_trade_time 判定
@@ -294,3 +312,39 @@ def get_market_pulse_scheduler_status() -> dict[str, Any]:
     status["isTradeTime"] = is_trade_time()
     status["isTradingDay"] = is_trading_day()
     return status
+
+
+def trigger_market_pulse_snapshot_now() -> dict[str, Any]:
+    """手动触发一次盘内 refresh (绕开 is_trade_time 判定). 给 UI 立即触发按钮用."""
+    if _scheduler is None or not _scheduler.running:
+        return {"ok": False, "error": "market_pulse_scheduler not running"}
+    started = datetime.now()
+    try:
+        _job_inside_refresh()
+        return {"ok": True, "triggered": "market_pulse_inside", "elapsed_seconds": round((datetime.now() - started).total_seconds(), 3)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+def trigger_market_pulse_constituents_now() -> dict[str, Any]:
+    """手动触发一次 90 行业全量成分股刷新 (绕开 is_trading_day 判定). 给 UI 立即触发按钮用."""
+    if _scheduler is None or not _scheduler.running:
+        return {"ok": False, "error": "market_pulse_scheduler not running"}
+    started = datetime.now()
+    try:
+        _job_constituents_refresh()
+        return {"ok": True, "triggered": "market_pulse_constituents", "elapsed_seconds": round((datetime.now() - started).total_seconds(), 3)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}
+
+
+def trigger_market_pulse_close_snapshot_now() -> dict[str, Any]:
+    """手动触发一次 15:30 收盘落盘 (绕开 is_trading_day 判定). 给 UI 立即触发按钮用."""
+    if _scheduler is None or not _scheduler.running:
+        return {"ok": False, "error": "market_pulse_scheduler not running"}
+    started = datetime.now()
+    try:
+        _job_close_snapshot()
+        return {"ok": True, "triggered": "market_pulse_close", "elapsed_seconds": round((datetime.now() - started).total_seconds(), 3)}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)[:300]}

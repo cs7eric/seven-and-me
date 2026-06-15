@@ -100,7 +100,9 @@ SCHEDULER_JOBS_FILE = SCHEDULER_DIR / 'jobs.json'
 SCHEDULER_TURNOVER_JOB_FILE = SCHEDULER_DIR / 'turnover_job.json'
 SCHEDULER_AUCTION_ANALYSIS_JOB_FILE = SCHEDULER_DIR / 'auction_analysis_job.json'
 SCHEDULER_MARKET_PULSE_JOB_FILE = SCHEDULER_DIR / 'market_pulse_job.json'
+SCHEDULER_STOCK_UNIVERSE_JOB_FILE = SCHEDULER_DIR / 'stock_universe_job.json'
 SCHEDULER_THS_INDUSTRY_CONSTITUENTS_JOB_FILE = SCHEDULER_DIR / 'ths_industry_constituents_job.json'
+SCHEDULER_THS_INDUSTRY_CONSTITUENTS_DAILY_JOB_FILE = SCHEDULER_DIR / 'ths_industry_constituents_daily_job.json'
 SCHEDULER_MARKET_OVERVIEW_JOB_FILE = SCHEDULER_DIR / 'market_overview_job.json'
 
 # ---- 大盘资金 / 成交额 落地 (按天归档) ----

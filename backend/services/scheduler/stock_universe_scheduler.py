@@ -29,6 +29,7 @@ from backend.config.settings import (
     BASE_DIR,
     SCHEDULER_DIR,
     SCHEDULER_JOBS_FILE,
+    SCHEDULER_STOCK_UNIVERSE_JOB_FILE,
 )
 from backend.utils.json_io import read_json_file, write_json_file
 
@@ -84,7 +85,7 @@ DEFAULT_JOB_CONFIG: dict[str, Any] = {
 }
 
 
-_JOB_FILE = SCHEDULER_DIR / "stock_universe_job.json"
+_JOB_FILE = SCHEDULER_STOCK_UNIVERSE_JOB_FILE
 
 
 def _load_job_config() -> dict[str, Any]:
