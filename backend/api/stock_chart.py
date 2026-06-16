@@ -19,6 +19,8 @@ def _beijing_today():
     return _beijing_now().date()
 
 from backend.adapters.market.eastmoney import fetch_stock_meta, fetch_market_breadth
+from backend.adapters.market.eltdx_adapter import fetch_stock_klines_from_eltdx
+from backend.adapters.market.tencent import fetch_stock_klines_from_tencent
 from backend.config.settings import STOCK_REFERENCE_CACHE_FOLDER
 from backend.repositories.stock.workspace_repo import read_cached_stock_intraday, stock_kline_cache_file
 from backend.services.stock.turnover_repo import load_turnover
@@ -363,11 +365,40 @@ def _normalize_index_code(raw: str) -> str:
 
 
 def _resolve_previous_close_for_index(code: str, target_date: str) -> float | None:
-    """取上一交易日的 1d K 最后 close (失败返回 None, 不阻塞主流程)."""
-    try:
-        items, _ = resolve_stock_klines('index', code, '1d', '')
-    except Exception:
-        return None
+    """取上一交易日的 1d K 最后 close (失败返回 None, 不阻塞主流程).
+
+    修复历史: 之前调 resolve_stock_klines 走完整 plan, 但 plan 里有 provider
+    异常静默被吞, fallback 到 sample loader → items=[], prev_close 永远 None.
+    现在直接调 fetch_stock_klines_from_eltdx (plan 第一个, 毫秒级), 显式 fallback 到
+    tencent, 都不行再 None. 少一层包装, 日志可观测.
+    """
+    for fetcher in (
+        lambda: fetch_stock_klines_from_eltdx('index', code, '1d', 'none'),
+        lambda: fetch_stock_klines_from_tencent('index', code, '1d', 'none'),
+    ):
+        try:
+            items = fetcher()
+        except Exception:
+            continue
+        # 显式按 trade_date 降序, 拿第一个 < target_date 的 bar (即"上一交易日").
+        # provider 返回顺序不保证 (eltdx 可能是 asc, tencent 可能是 desc), 不排序会拿到
+        # 2 年前的旧 bar, previousClose 会差几千点, 涨幅显示完全错乱.
+        sorted_items = sorted(
+            (bar for bar in (items or []) if (bar.get('trade_date') or '').strip()),
+            key=lambda b: b.get('trade_date') or '',
+            reverse=True,
+        )
+        for bar in sorted_items:
+            td = (bar.get('trade_date') or '').strip()
+            if not td or td >= target_date:
+                continue
+            try:
+                close_val = float(bar.get('close') or 0)
+            except (TypeError, ValueError):
+                continue
+            if close_val > 0:
+                return close_val
+    return None
     prev_close: float | None = None
     for bar in items or []:
         td = (bar.get('trade_date') or '').strip()

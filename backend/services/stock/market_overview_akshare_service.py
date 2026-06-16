@@ -387,15 +387,69 @@ def get_latest_snapshot() -> dict[str, Any]:
     (e.g. 上一交易日 10:00 写入, 字段就是 ``true``); 现在重新算成"当前时间"的真实状态,
     否则非交易日 (周末 / 节假日) 拉到的 ``isTradeTime`` 永远是陈旧的 ``true``,
     前端 deck 顶部 pill 会错误显示 "今日实时 1m" 而非 "上次收盘".
+
+    **交易日 + akshare 失败 + 无 manual 兜底**: 返回 "no_data" 标记, 不 fallback 到昨日 archive.
+    原因: 昨日的 totalAmount / mainNetInflow / 涨跌家数是另一交易日的口径, 当作"今日实时"展示
+    会误导 (e.g. 06-16 9:00 拉取失败 → 看到 06-12 的 archived 数字, 用户以为 06-16 收盘就这样).
+    前端按 no_data 渲染 "—" + 等用户手动粘贴资金流.
     """
+    today = _today_str()
+    is_td_today = is_trading_day(datetime.now().date())
+
+    # 1) 今日 latest.json 存在
     if MARKET_OVERVIEW_LATEST_FILE.exists():
         data = read_json_file(MARKET_OVERVIEW_LATEST_FILE, None)
         if isinstance(data, dict):
-            data.setdefault("source", "archived")
+            # 交易日 latest 是不是今天的? 是今天 → 直接用; 否则当作 stale (走下面的空壳)
+            data_td = (data.get("tradingDate") or "").replace("-", "")
+            today_compact = today.replace("-", "")
+            if data_td == today_compact:
+                data.setdefault("source", "akshare")
+                data["isTradeTime"] = is_trade_time()
+                return data
+            # else: latest 是历史日, 落到下面的判定
+
+    # 2) 找今日 archive
+    today_archive = _archive_path_for(today)
+    if today_archive.exists():
+        data = read_json_file(today_archive, None)
+        if isinstance(data, dict):
+            data.setdefault("source", "akshare")
             data["isTradeTime"] = is_trade_time()
             return data
 
-    # 兜底: 找 archive 里最近一天
+    # 3) 交易日 + 无今日数据: 不 fallback 到昨日 archive, 返回 "no_data" 让前端显示 "—"
+    if is_td_today:
+        return {
+            "ok": False,
+            "error": "akshare fetch failed; no snapshot for today",
+            "tradingDate": today,
+            "fetchedAt": None,
+            "totalAmount": None,
+            "mainNetInflow": None,
+            "superLargeNetInflow": None,
+            "superLargeNetInflowRatio": None,
+            "largeNetInflow": None,
+            "largeNetInflowRatio": None,
+            "mediumNetInflow": None,
+            "mediumNetInflowRatio": None,
+            "smallNetInflow": None,
+            "smallNetInflowRatio": None,
+            "mainNetInflowRatio": None,
+            "risingCount": None,
+            "fallingCount": None,
+            "flatCount": None,
+            "limitUpCount": None,
+            "limitDownCount": None,
+            "stockCount": None,
+            "source": "no_data",
+            "dataStatus": "no_data",
+            "isTradeTime": is_trade_time(),
+            "prevDayFlow": None,
+            "prevDayTradingDate": None,
+        }
+
+    # 4) 非交易日: fallback 到 archive 最近一天 (周末 / 节假日展示历史)
     if MARKET_OVERVIEW_ARCHIVE_DIR.exists():
         files = sorted(
             MARKET_OVERVIEW_ARCHIVE_DIR.glob("*.json"),

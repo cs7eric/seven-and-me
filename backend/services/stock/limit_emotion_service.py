@@ -934,8 +934,41 @@ def _previous_trading_day_file(today: date) -> dict[str, Any] | None:
             td = blob.get("tradeDate")
             if td and str(td) == today.isoformat():
                 continue
+            logger.info(
+                "_previous_trading_day_file(%s) returning %s (tradeDate=%s, stocks=%d, source=%s)",
+                today, c.name, td, len(blob.get("stocks", [])), blob.get("source", "?"),
+            )
             return blob
+    logger.warning("_previous_trading_day_file(%s): no valid previous file found", today)
     return None
+
+
+def _previous_trading_day_payload_for(today: date) -> dict[str, Any] | None:
+    """盘前兜底: 严格按"上一交易日"读取 daily, 不 fallback 到更老的文件.
+
+    跟 _previous_trading_day_file 区别: 后者找不到合适文件时会 fallback 到任意
+    非今日文件, 可能多算几天的 streak; 这个版本只在上一交易日文件存在时返回.
+    """
+    from backend.services.stock.trading_calendar import previous_trading_day
+    try:
+        prev = previous_trading_day(today)
+    except Exception:
+        return None
+    path = MARKET_LIMIT_DAILY_DIR / f"{prev.isoformat()}.json"
+    if not path.exists():
+        logger.warning(
+            "_previous_trading_day_payload_for(%s): %s not found",
+            today, path.name,
+        )
+        return None
+    blob = _read_json_safe(path, default=None)
+    if not blob or not isinstance(blob.get("stocks"), list):
+        return None
+    logger.info(
+        "_previous_trading_day_payload_for(%s) returning %s (stocks=%d)",
+        today, path.name, len(blob.get("stocks", [])),
+    )
+    return blob
 
 
 # ---------------------------------------------------------------------------
@@ -1087,6 +1120,25 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
         except Exception:
             is_td = True
 
+        # 1.5) 盘前 (pre_open): 走"上一交易日 daily" 兜底, 不拉实时.
+        # 原因: 9:00-9:30 实时数据是集合竞价的脏数据, 涨停/跌停/连板全是错的
+        # (例如 eltdx 9:00 抓到 fallingCount=5527, limitDownCount=5527).
+        # 既然市场没开, 显示昨日收盘的最终分布更准确.
+        if is_td and market_status == "pre_open":
+            daily = _previous_trading_day_payload_for(today)
+            if daily:
+                payload = _aggregate_from_daily(daily)
+                payload["tradeDate"] = daily.get("tradeDate") or today.isoformat()
+                payload["marketStatus"] = "pre_open"
+                payload["dataStatus"] = "from_daily_archive"
+                payload["updateTime"] = now.isoformat(timespec="seconds")
+                try:
+                    _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
+                except Exception as exc:
+                    logger.warning("write latest (pre_open from daily) failed: %s", exc)
+                return payload
+            # daily 也找不到, fallthrough 到实时 (会拿到空数据, 写空 latest)
+
         if not is_td:
             daily = _latest_daily_payload()
             if daily:
@@ -1200,11 +1252,22 @@ def snapshot_today_daily(force: bool = False) -> dict[str, Any] | None:
             pass
 
         target = MARKET_LIMIT_DAILY_DIR / f"{today.isoformat()}.json"
-        if not force and target.exists():
+        # 即使 force=True, 已有 backfill 完整数据时也跳过覆盖 (akshare/eltdx 数量远小于 backfill,
+        # 覆盖会丢股票 + streak 链路断). 这是 backfill 数据保护逻辑.
+        if target.exists():
             try:
                 blob = _read_json_safe(target, default=None)
                 if isinstance(blob, dict) and blob.get("marketStatus") in ("closed", "trading"):
-                    return blob
+                    existing_count = blob.get("stockCount") or 0
+                    source = blob.get("source") or ""
+                    is_backfill = existing_count >= 4500 or "tencent" in source.lower()
+                    if is_backfill:
+                        logger.info(
+                            "snapshot_today_daily skipped (backfill data exists: %s, %d stocks, source=%s)",
+                            target.name, existing_count, source,
+                        )
+                        return blob
+                    # 否则（eltdx/akshare 写入的较少股票数）正常覆盖
             except Exception:
                 pass
 

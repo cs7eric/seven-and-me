@@ -289,9 +289,20 @@ def _job_eltdx_close() -> None:
 
 
 def _job_eltdx_warmup() -> None:
-    """eltdx 市场概况: 09:00 开盘前 warmup."""
+    """eltdx 市场概况: 09:00 开盘前 warmup.
+
+    09:00 这一刻 eltdx 抓到的数据是"开盘集合竞价"状态: 涨跌停 + 涨跌家数全是错的
+    (例: fallingCount=5527, limitDownCount=5527, 因为实时价格等于昨日收盘的 -10%).
+    warmup 只为防止 latest.json 完全缺失, 不应该写入脏数据.
+    因此: 9:30 之前跳过; 9:30 之后按盘内 inside 处理.
+    """
     now = _beijing_now()
     if not is_trading_day(now.date()):
+        return
+    # 9:30 之前 skip — 防止 eltdx 把集合竞价的脏数据写进 latest.json
+    hm = now.hour * 60 + now.minute
+    if hm < 9 * 60 + 30:
+        logger.info("eltdx overview warmup skipped: %s before 09:30", now.time())
         return
     try:
         snap = capture_overview(force=True)

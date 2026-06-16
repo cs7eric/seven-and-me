@@ -77,6 +77,30 @@ def _trade_date_from_item(item: dict) -> str | None:
     return _trade_date_from_timestamp(item.get('timestamp'))
 
 
+def _lookup_today_open_from_eastmoney(target_type: str, symbol: str, trade_date: str) -> float | None:
+    """eltdx 1m bar 不带真集合竞价开盘价 (open/close 同价, 不是 09:30 真实 open).
+    从 eltdx 1d 日 K 旁路补今开价, 用于 09:30 合成点.
+
+    优先 eltdx (TDX 协议稳定, 毫秒级). fallback 试 tencent (HTTP 较慢但覆盖好).
+    失败 (网络/限流/盘前无数据) → 返回 None, 退化到 first.price.
+    """
+    candidates: list[Callable[[], list[dict]]] = [
+        lambda: fetch_stock_klines_from_eltdx(target_type, symbol, '1d', 'none'),
+        lambda: fetch_stock_klines_from_tencent(target_type, symbol, '1d', 'none'),
+    ]
+    for fetcher in candidates:
+        try:
+            items = fetcher()
+        except Exception:
+            continue
+        for item in items:
+            if _trade_date_from_item(item) == trade_date:
+                open_price = item.get('open')
+                if isinstance(open_price, (int, float)) and open_price > 0:
+                    return round(float(open_price), 4)
+    return None
+
+
 def _ensure_trade_date(item: dict) -> dict:
     row = dict(item)
     if not row.get('trade_date'):
@@ -244,6 +268,7 @@ def build_intraday_timeshare(items: list[dict]) -> list[dict]:
         timestamp = int(item.get('timestamp') or 0)
         if timestamp <= 0:
             continue
+        open_price = float(item.get('open') or 0)
         close_price = float(item.get('close') or 0)
         volume = float(item.get('volume') or 0)
         turnover = float(item.get('turnover') or 0)
@@ -258,6 +283,9 @@ def build_intraday_timeshare(items: list[dict]) -> list[dict]:
             'trade_date': trade_date,
             'time_label': datetime.fromtimestamp(timestamp / 1000).strftime('%H:%M'),
             'price': round(close_price, 4),
+            # 1m bar 的 open 才是"今开价"; eltdx 历史分时接口不带 open 字段,
+            # 会回退到 close (前向兼容, 不破坏现网).
+            'open': round(open_price, 4) if open_price > 0 else None,
             'avg_price': avg_price,
             'volume': volume,
             'turnover': turnover,
@@ -350,10 +378,43 @@ def build_intraday_snapshot(
             and cached_requested_trade_date == requested_trade_date
             and set(requested_periods).issubset(set(cached_snapshot.get('requested_periods') or requested_periods))
         ):
-            cached_source = str(cached_snapshot.get('source') or 'cache')
-            snapshot = {key: value for key, value in cached_snapshot.items() if key not in {'source', 'requested_periods'}}
-            snapshot['requested_periods'] = requested_periods
-            return snapshot, cached_source
+            # 缓存策略: 历史日 (requested_trade_date < 今天) 直接返回, eltdx 不会再有数据.
+            # 当天 (requested_trade_date == 今天) 必须按 updated_at 算 TTL:
+            #   - 盘内 (15s TTL) → 过期则丢弃, 重新走 eltdx 拉最新 bar
+            #   - 盘后 (24h TTL) → 视为已收盘, 保留
+            # 修复: 修复前当天一旦写盘就锁死在那一分钟, 15s 轮询看到的是 9:45 的快照, 不再增长.
+            try:
+                from datetime import date as _date, datetime as _dt
+                today = _dt.now().date()
+                req_d = _dt.strptime(requested_trade_date, '%Y-%m-%d').date()
+                if req_d < today:
+                    cached_source = str(cached_snapshot.get('source') or 'cache')
+                    snapshot = {key: value for key, value in cached_snapshot.items() if key not in {'source', 'requested_periods'}}
+                    snapshot['requested_periods'] = requested_periods
+                    return snapshot, cached_source
+                if req_d == today:
+                    raw_updated = str(cached_snapshot.get('updated_at') or '').strip()
+                    if raw_updated:
+                        try:
+                            updated_at = _dt.fromisoformat(raw_updated)
+                            age_s = (_dt.now() - updated_at).total_seconds()
+                        except Exception:
+                            age_s = 9999
+                    else:
+                        age_s = 9999
+                    try:
+                        from backend.services.stock.trading_calendar import is_trade_time
+                        ttl = 15 if is_trade_time() else 24 * 3600
+                    except Exception:
+                        ttl = 15
+                    if age_s <= ttl:
+                        cached_source = str(cached_snapshot.get('source') or 'cache')
+                        snapshot = {key: value for key, value in cached_snapshot.items() if key not in {'source', 'requested_periods'}}
+                        snapshot['requested_periods'] = requested_periods
+                        return snapshot, cached_source
+            except Exception:
+                # 任何异常都退化到 TTL=15s 行为, 偏向"重拉"
+                pass
 
     minute_periods = [period for period in requested_periods if _supported_intraday_periods(period)]
     bars_by_period = _load_intraday_bars(target_type, symbol, minute_adjust, requested_trade_date, minute_periods)
@@ -397,6 +458,13 @@ def build_intraday_snapshot(
             if daily_points:
                 if not timeshare_source:
                     timeshare_source = 'eltdx'
+                # 补 open: eltdx 1m bar / history_minute 都不带真集合竞价开盘价
+                # (open/close 同价). 从 eastmoney 1d 日 K 旁路取今开, 注入到当天第一个 point.
+                # 09:30 合成点 (前端在 time_label="09:31" 前 prepend 09:30)
+                # 会从这点 .open 读, 避免误用 09:31 close.
+                open_inject = _lookup_today_open_from_eastmoney(target_type, symbol, date_key)
+                if open_inject is not None:
+                    daily_points[0] = {**daily_points[0], 'open': open_inject}
                 timeshare.extend(daily_points)
         except Exception:
             continue
