@@ -15,6 +15,48 @@ import type {
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
 
+// ---------------------------------------------------------------------------
+// 请求重试: 失败时最多重试 3 次 (1 初始 + 3 重试 = 4 次总尝试, 指数退避).
+// 触发重试: 网络异常 (fetch 抛错) / 5xx / 408 / 429. 其它 4xx 不重试.
+// AI 分析相关 request 请走 `fetchWithRetry(url, init, { retry: false })`.
+// ---------------------------------------------------------------------------
+const RETRY_MAX_RETRIES = 3
+const RETRY_BASE_DELAY_MS = 400
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status >= 500 || status === 408 || status === 429
+}
+
+export async function fetchWithRetry(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  options: { retry?: boolean; maxRetries?: number; baseDelayMs?: number } = {},
+): Promise<Response> {
+  const { retry = true, maxRetries = RETRY_MAX_RETRIES, baseDelayMs = RETRY_BASE_DELAY_MS } = options
+  const maxAttempts = retry ? maxRetries + 1 : 1
+  let lastError: unknown = null
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(input, init)
+      if (!isRetryableStatus(res.status) || attempt === maxAttempts) {
+        return res
+      }
+    } catch (err) {
+      lastError = err
+      if (attempt === maxAttempts) throw err
+    }
+    // 指数退避: 400ms, 800ms, 1600ms
+    await sleep(baseDelayMs * Math.pow(2, attempt - 1))
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("fetch failed")
+}
+
 export type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
 
 export interface DownloaderPageInfo {
@@ -85,7 +127,7 @@ export async function uploadFile(file: File): Promise<string> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const res = await fetch(`${API_BASE}/api/transcribe`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/transcribe`, {
     method: "POST",
     body: formData,
   });
@@ -176,7 +218,7 @@ export function createSSEConnection(
 }
 
 export async function fetchTaskSnapshot(taskId: string): Promise<TaskSnapshot> {
-  const res = await fetch(`${API_BASE}/api/task/${taskId}`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/task/${taskId}`, {
     method: "GET",
     cache: "no-store",
   });
@@ -191,7 +233,7 @@ export async function fetchTaskSnapshot(taskId: string): Promise<TaskSnapshot> {
 }
 
 export async function searchStockChart(query: string): Promise<StockSearchItem[]> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/search?q=${encodeURIComponent(query)}`);
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/search?q=${encodeURIComponent(query)}`);
   const data = (await res.json().catch(() => null)) as { items?: StockSearchItem[] } | null;
   if (!res.ok || !data) throw new Error("搜索股票失败");
   return data.items || [];
@@ -211,7 +253,7 @@ export async function fetchStockKlines(params: {
     period: params.period,
     adjust: params.adjust,
   });
-  const res = await fetch(`${API_BASE}/api/stock-chart/klines?${query.toString()}`);
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/klines?${query.toString()}`);
   const data = (await res.json().catch(() => null)) as { symbol: string; target_type: StockTargetType; period: StockPeriod; adjust: StockAdjust; items: StockKlineBar[] } | null;
   if (!res.ok || !data) throw new Error("获取K线失败");
   return data;
@@ -219,14 +261,14 @@ export async function fetchStockKlines(params: {
 
 export async function fetchStockWorkspace(targetType: StockTargetType, symbol: string, name?: string): Promise<StockWorkspace> {
   const query = new URLSearchParams({ target_type: targetType, symbol, name: name || symbol });
-  const res = await fetch(`${API_BASE}/api/stock-chart/workspace?${query.toString()}`);
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/workspace?${query.toString()}`);
   const data = (await res.json().catch(() => null)) as StockWorkspace | null;
   if (!res.ok || !data) throw new Error("获取图表工作区失败");
   return data;
 }
 
 export async function saveStockWorkspace(payload: Omit<StockWorkspace, "id" | "updated_at"> & { name?: string }): Promise<StockWorkspace> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/workspace`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/workspace`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -238,7 +280,7 @@ export async function saveStockWorkspace(payload: Omit<StockWorkspace, "id" | "u
 
 export async function listStockAnnotations(targetType: StockTargetType, symbol: string, period: string): Promise<StockAnnotation[]> {
   const query = new URLSearchParams({ target_type: targetType, symbol, period });
-  const res = await fetch(`${API_BASE}/api/stock-chart/annotations?${query.toString()}`);
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/annotations?${query.toString()}`);
   const data = (await res.json().catch(() => null)) as { items?: StockAnnotation[] } | null;
   if (!res.ok || !data) throw new Error("获取标记失败");
   return data.items || [];
@@ -253,7 +295,7 @@ export async function createStockAnnotation(payload: {
   styles?: Record<string, unknown>;
   text?: string;
 }): Promise<StockAnnotation> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/annotations`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/annotations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -265,14 +307,14 @@ export async function createStockAnnotation(payload: {
 
 export async function deleteStockAnnotation(targetType: StockTargetType, symbol: string, period: string, annotationId: string): Promise<void> {
   const query = new URLSearchParams({ target_type: targetType, symbol, period });
-  const res = await fetch(`${API_BASE}/api/stock-chart/annotations/${encodeURIComponent(annotationId)}?${query.toString()}`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/annotations/${encodeURIComponent(annotationId)}?${query.toString()}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error("删除标记失败");
 }
 
 export async function fetchStockAuction(symbol: string): Promise<StockAuctionSnapshot> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/auction?symbol=${encodeURIComponent(symbol)}`);
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/auction?symbol=${encodeURIComponent(symbol)}`);
   const data = (await res.json().catch(() => null)) as StockAuctionSnapshot | null;
   if (!res.ok || !data) throw new Error("获取竞价数据失败");
   return data;
@@ -296,7 +338,7 @@ export async function fetchStockIntraday(params: {
   if (params.periods && params.periods.length) {
     query.set("periods", params.periods.join(","))
   }
-  const res = await fetch(`${API_BASE}/api/stock-chart/intraday?${query.toString()}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/intraday?${query.toString()}`)
   const data = (await res.json().catch(() => null)) as StockIntradayResponse | null
   if (!res.ok || !data?.ok) {
     throw new Error(data?.error || "获取当日分时失败")
@@ -397,7 +439,7 @@ export async function fetchStockMeta(params: {
     target_type: params.targetType,
     symbol: params.symbol,
   })
-  const res = await fetch(`${API_BASE}/api/stock-chart/stock-meta?${query.toString()}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/stock-meta?${query.toString()}`)
   const data = (await res.json().catch(() => null)) as StockMetaResponse | null
   if (!res.ok || !data) throw new Error("获取股票元数据失败")
   return data
@@ -429,7 +471,7 @@ export interface StockSectorsResponse {
 
 export async function fetchStockSectors(code: string): Promise<StockSectorsResponse> {
   const query = new URLSearchParams({ symbol: code })
-  const res = await fetch(`${API_BASE}/api/stock-chart/f10/stock-sectors?${query.toString()}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/f10/stock-sectors?${query.toString()}`)
   const data = (await res.json().catch(() => null)) as StockSectorsResponse | null
   if (!res.ok || !data) throw new Error("获取股票所属行业/概念失败")
   return data
@@ -651,7 +693,7 @@ export async function fetchStockValuation(
 ): Promise<StockValuationResponse> {
   const params = new URLSearchParams({ symbol })
   if (options.reqId) params.set("req_id", options.reqId)
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/valuation?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -693,7 +735,7 @@ export async function fetchStockFinanceReport(
   reportType: "zcfzb" | "lrb" | "xjllb" = "zcfzb",
 ): Promise<StockFinanceReportResponse> {
   const params = new URLSearchParams({ symbol, report_type: reportType })
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/finance-report?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -726,7 +768,7 @@ export async function fetchStockBusinessComposition(
 ): Promise<StockBusinessCompositionResponse> {
   const params = new URLSearchParams({ symbol })
   if (options.reportDate) params.set("report_date", options.reportDate)
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/business-composition?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -766,7 +808,7 @@ export async function fetchStockProfitForecast(
   symbol: string,
 ): Promise<StockProfitForecastResponse> {
   const params = new URLSearchParams({ symbol })
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/profit-forecast?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -815,7 +857,7 @@ export async function fetchStockAnnouncements(
   symbol: string,
 ): Promise<StockAnnouncementsResponse> {
   const params = new URLSearchParams({ symbol })
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/announcements?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -847,7 +889,7 @@ export async function fetchStockNews(
   symbol: string,
 ): Promise<StockNewsResponse> {
   const params = new URLSearchParams({ symbol })
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/news?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -877,7 +919,7 @@ export async function fetchStockRoadshows(
   symbol: string,
 ): Promise<StockRoadshowsResponse> {
   const params = new URLSearchParams({ symbol })
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/roadshows?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -911,7 +953,7 @@ export async function fetchStockCompanyNews(
   const params = new URLSearchParams({ symbol })
   const section = options.section ?? "gsyj"
   params.set("section", section)
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/f10/company-news?${params.toString()}`,
     withTimeout(F10_REQ_TIMEOUT_MS),
   )
@@ -948,7 +990,7 @@ export async function fetchMarketBreadth(): Promise<{
   new20HighCount: number | null
   new20LowCount: number | null
 }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/market-breadth`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-breadth`)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取市场情绪数据失败")
   return {
@@ -981,7 +1023,7 @@ export async function fetchMarketBreadthSeries(): Promise<Array<{
   new20LowCount: number | null
   date: string
 }>> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/market-breadth-series`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-breadth-series`)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取市场情绪序列数据失败")
   return ((data.items as Array<Record<string, unknown>>) ?? []).map((item) => ({
@@ -1033,7 +1075,7 @@ export interface MarketOverviewEltdx {
 }
 
 export async function fetchMarketOverviewEltdx(): Promise<MarketOverviewEltdx> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-eltdx`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-overview-eltdx`)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取全A成交额/涨跌家数失败")
   return {
@@ -1055,7 +1097,7 @@ export async function triggerMarketOverviewEltdxRefresh(): Promise<{
   snapshot?: MarketOverviewEltdx
   error?: string
 }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-eltdx/refresh`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-overview-eltdx/refresh`, {
     method: "POST",
   })
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
@@ -1106,7 +1148,7 @@ export interface MarketOverview {
 }
 
 export async function fetchMarketOverviewAkshare(): Promise<MarketOverview> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-akshare`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-overview-akshare`)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取大盘成交额/主力净流入失败")
   return {
@@ -1160,7 +1202,7 @@ export interface ManualFundFlow {
 }
 
 export async function fetchManualFundFlow(tradingDate: string): Promise<ManualFundFlow | null> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/market-overview-manual-fund-flow?tradingDate=${encodeURIComponent(tradingDate)}`,
   )
   if (res.status === 404) return null
@@ -1186,7 +1228,7 @@ export async function fetchManualFundFlow(tradingDate: string): Promise<ManualFu
 export async function saveManualFundFlow(
   payload: Partial<ManualFundFlow> & { tradingDate: string },
 ): Promise<ManualFundFlow> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/market-overview-manual-fund-flow`,
     {
       method: "POST",
@@ -1218,7 +1260,7 @@ export async function saveManualFundFlow(
 export async function fetchMarketOverviewAkshareArchive(tradingDate: string): Promise<MarketOverview> {
   // 接受 YYYY-MM-DD 或 YYYYMMDD
   const normalized = tradingDate.replace(/-/g, "")
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/market-overview-akshare/archive/${normalized}`,
   )
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
@@ -1290,7 +1332,7 @@ export interface MarketHistoryResponse {
 }
 
 export async function fetchMarketPulseHistory(range: PulseRange = "60d"): Promise<MarketHistoryResponse> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/market-overview-akshare/history?range=${encodeURIComponent(range)}`,
   )
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
@@ -1377,7 +1419,7 @@ export async function fetchIndexKlineBatch(params: {
     date: params.date,
     interval: params.interval ?? "1m",
   })
-  const res = await fetch(`${API_BASE}/api/index-kline/batch?${query.toString()}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/index-kline/batch?${query.toString()}`)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) {
     throw new Error((data?.error as string) || `获取指数K线失败: ${res.status}`)
@@ -1421,7 +1463,7 @@ export async function triggerMarketOverviewAkshareRefresh(): Promise<{
   snapshot?: MarketOverview
   error?: string
 }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview-akshare/refresh`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-overview-akshare/refresh`, {
     method: "POST",
   })
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
@@ -1488,12 +1530,12 @@ export interface ApplicationAnalysisResultFile {
 }
 
 export async function fetchApplicationAnalysisTargets(): Promise<{ items: ApplicationAnalysisTarget[]; config: Record<string, unknown> }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/targets`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/application-analysis/targets`)
   return (await res.json()) as { items: ApplicationAnalysisTarget[]; config: Record<string, unknown> }
 }
 
 export async function saveApplicationAnalysisTargets(payload: { horizon: Record<string, number>; items: ApplicationAnalysisTarget[] }): Promise<{ ok: boolean; config: Record<string, unknown> }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/targets`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/application-analysis/targets`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -1502,7 +1544,7 @@ export async function saveApplicationAnalysisTargets(payload: { horizon: Record<
 }
 
 export async function fetchApplicationAnalysisResult(targetId: string): Promise<ApplicationAnalysisResponse & { _meta_result_path: string; _meta_history: ApplicationAnalysisResultFile[] }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/results/${encodeURIComponent(targetId)}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/application-analysis/results/${encodeURIComponent(targetId)}`)
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || "拉取分析结果失败")
@@ -1511,7 +1553,7 @@ export async function fetchApplicationAnalysisResult(targetId: string): Promise<
 }
 
 export async function triggerApplicationAnalysis(targetId: string | null): Promise<{ ok: boolean; target_id?: string; error?: string; items?: unknown[] }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/refresh`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/application-analysis/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_id: targetId || null }),
@@ -1520,7 +1562,7 @@ export async function triggerApplicationAnalysis(targetId: string | null): Promi
 }
 
 export async function fetchApplicationAnalysisSchedulerStatus(): Promise<ApplicationAnalysisSchedulerStatus> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/scheduler`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/application-analysis/scheduler`)
   return (await res.json()) as ApplicationAnalysisSchedulerStatus
 }
 
@@ -1555,7 +1597,7 @@ export async function refreshApplicationAnalysisRecent30(
   targetId: string,
   date?: string,
 ): Promise<ApplicationAnalysisDailySnapshotResponse> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/recent30/refresh`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/application-analysis/recent30/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(date ? { target_id: targetId, date } : { target_id: targetId }),
@@ -1567,7 +1609,7 @@ export async function listApplicationAnalysisRecent30(
   targetId: string,
   limit = 60,
 ): Promise<ApplicationAnalysisDailySnapshotResponse> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/application-analysis/recent30/${encodeURIComponent(targetId)}?limit=${encodeURIComponent(String(limit))}`,
   )
   return (await res.json()) as ApplicationAnalysisDailySnapshotResponse
@@ -1577,19 +1619,19 @@ export async function readApplicationAnalysisRecent30(
   targetId: string,
   date: string,
 ): Promise<ApplicationAnalysisDailySnapshotResponse> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/application-analysis/recent30/${encodeURIComponent(targetId)}/${encodeURIComponent(date)}`,
   )
   return (await res.json()) as ApplicationAnalysisDailySnapshotResponse
 }
 
 export async function controlApplicationAnalysisScheduler(action: "start" | "stop"): Promise<{ ok: boolean; status: ApplicationAnalysisSchedulerStatus }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/application-analysis/scheduler/${action}`, { method: "POST" })
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/application-analysis/scheduler/${action}`, { method: "POST" })
   return (await res.json()) as { ok: boolean; status: ApplicationAnalysisSchedulerStatus }
 }
 
 export async function fetchMarketOverview(): Promise<Record<string, unknown>> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/market-overview`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-overview`)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取市场概览失败")
   return data
@@ -1616,7 +1658,7 @@ export async function fetchMarketPulse(
   if (options.topN)            params.set("topN", String(options.topN))
   const qs = params.toString()
   const url = `${API_BASE}/api/stock-chart/market-pulse/all${qs ? `?${qs}` : ""}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取 Market Pulse 失败")
   return data
@@ -1639,7 +1681,7 @@ export interface StyleSectorListResponse {
 
 export async function fetchStyleSectors(): Promise<StyleSectorListResponse> {
   const url = `${API_BASE}/api/stock-chart/style-sectors`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as StyleSectorListResponse | null
   if (!res.ok || !data) throw new Error("获取风格板块失败")
   return data
@@ -1695,7 +1737,7 @@ export async function fetchStyleSectorConstituents(
 ): Promise<StyleSectorConstituentsResponse> {
   // 走 encodeURIComponent 处理中文
   const url = `${API_BASE}/api/stock-chart/style-sectors/${encodeURIComponent(name)}/constituents`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as StyleSectorConstituentsResponse | null
   if (!res.ok || !data) throw new Error(`获取 ${name} 成分股失败`)
   return data
@@ -1706,7 +1748,7 @@ export async function fetchMarketPulseRotationTrend(
   topN = 10
 ): Promise<Record<string, unknown>> {
   const url = `${API_BASE}/api/stock-chart/market-pulse/rotation-trend?days=${days}&topN=${topN}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取轮动趋势失败")
   return data
@@ -1830,7 +1872,7 @@ export interface LimitEmotionPayload {
 
 export async function fetchMarketPulseLimitEmotion(): Promise<LimitEmotionPayload> {
   const url = `${API_BASE}/api/stock-chart/market-pulse/limit-emotion`
-  const res = await fetch(url, { cache: "no-store" })
+  const res = await fetchWithRetry(url, { cache: "no-store" })
   const data = (await res.json().catch(() => null)) as
     | (LimitEmotionPayload & { ok: boolean; error?: string })
     | null
@@ -1842,7 +1884,7 @@ export async function fetchMarketPulseLimitEmotion(): Promise<LimitEmotionPayloa
 
 export async function refreshMarketPulseLimitEmotion(): Promise<LimitEmotionPayload> {
   const url = `${API_BASE}/api/stock-chart/market-pulse/limit-emotion/refresh`
-  const res = await fetch(url, { method: "POST" })
+  const res = await fetchWithRetry(url, { method: "POST" })
   const data = (await res.json().catch(() => null)) as
     | (LimitEmotionPayload & { ok: boolean; error?: string })
     | null
@@ -1855,7 +1897,7 @@ export async function fetchIndustryDetail(
   topN = 30
 ): Promise<Record<string, unknown>> {
   const url = `${API_BASE}/api/stock-chart/market-pulse/industry-detail?name=${encodeURIComponent(name)}&topN=${topN}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error(`获取行业 ${name} 详情失败`)
   return data
@@ -1910,7 +1952,7 @@ export async function fetchIndustryFundFlow(
   if (options.top) params.push(`top=${options.top}`)
   const query = params.length ? `?${params.join("&")}` : ""
   const url = `${API_BASE}/api/stock-chart/ths-industry/fund-flow${query}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as IndustryFundFlowResponse | null
   if (!res.ok || !data) throw new Error("获取同花顺行业资金失败")
   return data
@@ -1918,7 +1960,7 @@ export async function fetchIndustryFundFlow(
 
 export async function refreshIndustryFundFlow(): Promise<IndustryFundFlowResponse> {
   const url = `${API_BASE}/api/stock-chart/ths-industry/fund-flow/refresh`
-  const res = await fetch(url, { method: "POST" })
+  const res = await fetchWithRetry(url, { method: "POST" })
   const data = (await res.json().catch(() => null)) as IndustryFundFlowResponse | null
   if (!res.ok || !data) throw new Error("刷新同花顺行业资金失败")
   return data
@@ -1928,7 +1970,7 @@ export async function fetchIndustryFundFlowHistory(date?: string): Promise<Recor
   const url = date
     ? `${API_BASE}/api/stock-chart/ths-industry/fund-flow/history?date=${encodeURIComponent(date)}`
     : `${API_BASE}/api/stock-chart/ths-industry/fund-flow/history`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取行业资金历史失败")
   return data
@@ -1958,7 +2000,7 @@ export async function fetchIndustryConstituentsByCode(
   if (options.refresh) params.push("refresh=1")
   const query = params.length ? `?${params.join("&")}` : ""
   const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-by-code?code=${encodeURIComponent(code)}${query}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as IndustryConstituentsResponse | null
   if (!res.ok || !data) throw new Error(`获取行业 ${code} 成分股失败`)
   return data
@@ -1966,7 +2008,7 @@ export async function fetchIndustryConstituentsByCode(
 
 export async function refreshIndustryConstituentsByCode(code: string): Promise<IndustryConstituentsResponse> {
   const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-by-code/refresh?code=${encodeURIComponent(code)}`
-  const res = await fetch(url, { method: "POST" })
+  const res = await fetchWithRetry(url, { method: "POST" })
   const data = (await res.json().catch(() => null)) as IndustryConstituentsResponse | null
   if (!res.ok || !data) throw new Error(`刷新行业 ${code} 成分股失败`)
   return data
@@ -1974,7 +2016,7 @@ export async function refreshIndustryConstituentsByCode(code: string): Promise<I
 
 export async function fetchCachedIndustryConstituentsCodes(): Promise<{ ok: boolean; codes: string[] }> {
   const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-by-code/cached`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as { ok: boolean; codes: string[] } | null
   if (!res.ok || !data) throw new Error("获取已落盘行业 code 失败")
   return data
@@ -2008,7 +2050,7 @@ export async function fetchIndustryConstituentsByName(
   if (options.refresh) params.push("refresh=1")
   const query = params.length ? `?${params.join("&")}` : ""
   const url = `${API_BASE}/api/stock-chart/ths-industry/constituents?name=${encodeURIComponent(name)}${query}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as IndustryConstituentsByNameResponse | null
   if (!res.ok || !data) throw new Error(`获取行业 ${name} 成分股失败`)
   return data
@@ -2084,7 +2126,7 @@ export async function fetchIndustryConstituentsFromIndexByCode(
   code: string
 ): Promise<IndustryConstituentsIndexResponse> {
   const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-file?code=${encodeURIComponent(code)}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as IndustryConstituentsIndexResponse | null
   if (!res.ok || !data) {
     const errMsg = (data && data.error) || `读取行业 ${code} 成分股失败`
@@ -2100,7 +2142,7 @@ export async function fetchIndustryConstituentsFromIndexByName(
   name: string
 ): Promise<IndustryConstituentsIndexResponse> {
   const url = `${API_BASE}/api/stock-chart/ths-industry/constituents-file?name=${encodeURIComponent(name)}`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as IndustryConstituentsIndexResponse | null
   if (!res.ok || !data) {
     const errMsg = (data && data.error) || `读取行业 ${name} 成分股失败`
@@ -2113,7 +2155,7 @@ export async function fetchIndustryConstituentsFromIndexByName(
 
 export async function fetchMarketPulseSchedulerStatus(): Promise<Record<string, unknown>> {
   const url = `${API_BASE}/api/stock-chart/market-pulse-scheduler/status`
-  const res = await fetch(url)
+  const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取 scheduler 状态失败")
   return data
@@ -2121,7 +2163,7 @@ export async function fetchMarketPulseSchedulerStatus(): Promise<Record<string, 
 
 export async function triggerMarketPulseSnapshot(): Promise<Record<string, unknown>> {
   const url = `${API_BASE}/api/stock-chart/market-pulse-scheduler/trigger`
-  const res = await fetch(url, { method: "POST" })
+  const res = await fetchWithRetry(url, { method: "POST" })
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("手动触发 snapshot 失败")
   return data
@@ -2147,7 +2189,7 @@ export async function askQuestion(
 }
 
 export async function exportMarkdown(taskId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/export-markdown/${taskId}`);
+  const res = await fetchWithRetry(`${API_BASE}/api/export-markdown/${taskId}`);
   if (!res.ok) throw new Error("导出失败");
 
   const blob = await res.blob();
@@ -2165,13 +2207,13 @@ export async function checkStatus(): Promise<{
   model_loaded: boolean;
   status: string;
 }> {
-  const res = await fetch(`${API_BASE}/api/status`);
+  const res = await fetchWithRetry(`${API_BASE}/api/status`);
   return res.json();
 }
 
 export async function parseDownloaderUrl(url: string): Promise<DownloaderParseData> {
   const params = new URLSearchParams({ url });
-  const res = await fetch(`${DOWNLOADER_API_BASE}/api/parse?${params.toString()}`, {
+  const res = await fetchWithRetry(`${DOWNLOADER_API_BASE}/api/parse?${params.toString()}`, {
     method: "GET",
     cache: "no-store",
   });
@@ -2190,7 +2232,7 @@ export async function parseDownloaderUrl(url: string): Promise<DownloaderParseDa
 }
 
 export async function saveMP4History(taskId: string): Promise<MP4HistoryListItem> {
-  const res = await fetch(`${API_BASE}/api/reference/mp4-history`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/reference/mp4-history`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ task_id: taskId }),
@@ -2204,7 +2246,7 @@ export async function saveMP4History(taskId: string): Promise<MP4HistoryListItem
 }
 
 export async function listMP4History(): Promise<MP4HistoryListItem[]> {
-  const res = await fetch(`${API_BASE}/api/reference/mp4-history`, { cache: "no-store" });
+  const res = await fetchWithRetry(`${API_BASE}/api/reference/mp4-history`, { cache: "no-store" });
   const data = (await res.json().catch(() => null)) as { items?: MP4HistoryListItem[] } | null;
   if (!res.ok || !data) {
     throw new Error("获取历史记录失败");
@@ -2213,7 +2255,7 @@ export async function listMP4History(): Promise<MP4HistoryListItem[]> {
 }
 
 export async function reorderMP4History(orderedIds: string[]): Promise<MP4HistoryListItem[]> {
-  const res = await fetch(`${API_BASE}/api/reference/mp4-history/reorder`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/reference/mp4-history/reorder`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ordered_ids: orderedIds }),
@@ -2226,7 +2268,7 @@ export async function reorderMP4History(orderedIds: string[]): Promise<MP4Histor
 }
 
 export async function deleteMP4History(historyId: string): Promise<{ id: string; title?: string }> {
-  const res = await fetch(`${API_BASE}/api/reference/mp4-history/${historyId}`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/reference/mp4-history/${historyId}`, {
     method: "DELETE",
   });
   const data = (await res.json().catch(() => null)) as { id?: string; title?: string; error?: string } | null;
@@ -2250,7 +2292,7 @@ export async function askHistoryQuestion(historyId: string, question: string): P
 }
 
 export async function getMP4History(id: string): Promise<MP4HistoryRecord> {
-  const res = await fetch(`${API_BASE}/api/reference/mp4-history/${id}`, { cache: "no-store" });
+  const res = await fetchWithRetry(`${API_BASE}/api/reference/mp4-history/${id}`, { cache: "no-store" });
   const data = (await res.json().catch(() => null)) as MP4HistoryRecord | { error?: string } | null;
   if (!res.ok || !data || !("task" in data)) {
     throw new Error((data && "error" in data && data.error) || "获取历史详情失败");
@@ -2259,7 +2301,7 @@ export async function getMP4History(id: string): Promise<MP4HistoryRecord> {
 }
 
 export async function sendDownloaderResultToParse(payload: RemoteParsePayload): Promise<{ task_id: string; file_name: string }> {
-  const res = await fetch(`${API_BASE}/api/parse-video`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/parse-video`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2298,7 +2340,7 @@ export async function listApplicationAnalysisRecent30Full(
   targetId: string,
   limit = 60,
 ): Promise<ApplicationAnalysisRecent30FullResponse> {
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/application-analysis/recent30/${encodeURIComponent(targetId)}/full?limit=${encodeURIComponent(String(limit))}`,
   )
   return (await res.json()) as ApplicationAnalysisRecent30FullResponse
@@ -2331,7 +2373,7 @@ export interface SchedulerJobsResponse {
 }
 
 export async function fetchSchedulerJobs(): Promise<SchedulerJobsResponse> {
-  const res = await fetch(`${API_BASE}/api/scheduler/jobs`, { cache: "no-store" })
+  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/jobs`, { cache: "no-store" })
   const data = (await res.json().catch(() => null)) as SchedulerJobsResponse | null
   if (!res.ok || !data) throw new Error("获取调度任务列表失败")
   return data
@@ -2351,7 +2393,7 @@ async function postSchedulerAction(
   jobId: string,
   action: "enable" | "disable" | "trigger" | "start" | "stop",
 ): Promise<SchedulerJobActionResponse> {
-  const res = await fetch(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}/${action}`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}/${action}`, {
     method: "POST",
   })
   const data = (await res.json().catch(() => null)) as SchedulerJobActionResponse | null
@@ -2369,7 +2411,7 @@ export const stopSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "s
 
 /** 从 jobs.json 注册表里删除一个 job (后端同时停掉运行中的线程) */
 export async function deleteSchedulerJob(jobId: string): Promise<SchedulerJobActionResponse> {
-  const res = await fetch(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}`, {
     method: "DELETE",
   })
   const data = (await res.json().catch(() => null)) as SchedulerJobActionResponse | null
@@ -2449,7 +2491,7 @@ async function selfSelectedJson<T>(res: Response): Promise<T> {
 // group
 export async function fetchSelfSelectedGroups(): Promise<SelfSelectedGroupListResponse> {
   return selfSelectedJson<SelfSelectedGroupListResponse>(
-    await fetch(`${API_BASE}/api/self-selected/groups`, { cache: "no-store" }),
+    await fetchWithRetry(`${API_BASE}/api/self-selected/groups`, { cache: "no-store" }),
   )
 }
 
@@ -2457,7 +2499,7 @@ export async function createSelfSelectedGroup(
   payload: { name: string; description?: string; color?: string },
 ): Promise<SelfSelectedGroupActionResponse> {
   return selfSelectedJson<SelfSelectedGroupActionResponse>(
-    await fetch(`${API_BASE}/api/self-selected/groups`, {
+    await fetchWithRetry(`${API_BASE}/api/self-selected/groups`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -2470,7 +2512,7 @@ export async function updateSelfSelectedGroup(
   payload: Partial<Pick<SelfSelectedGroup, "name" | "description" | "color" | "sort_order">>,
 ): Promise<SelfSelectedGroupActionResponse> {
   return selfSelectedJson<SelfSelectedGroupActionResponse>(
-    await fetch(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
+    await fetchWithRetry(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -2480,7 +2522,7 @@ export async function updateSelfSelectedGroup(
 
 export async function deleteSelfSelectedGroup(groupId: string): Promise<SelfSelectedGroupActionResponse> {
   return selfSelectedJson<SelfSelectedGroupActionResponse>(
-    await fetch(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
+    await fetchWithRetry(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
       method: "DELETE",
     }),
   )
@@ -2494,7 +2536,7 @@ export async function fetchSelfSelectedItems(
     ? `${API_BASE}/api/self-selected/items?group_id=${encodeURIComponent(groupId)}`
     : `${API_BASE}/api/self-selected/items`
   return selfSelectedJson<SelfSelectedItemListResponse>(
-    await fetch(url, { cache: "no-store" }),
+    await fetchWithRetry(url, { cache: "no-store" }),
   )
 }
 
@@ -2502,7 +2544,7 @@ export async function createSelfSelectedItem(
   payload: { group_id: string; symbol: string; market?: string; name?: string; notes?: string },
 ): Promise<SelfSelectedItemActionResponse> {
   return selfSelectedJson<SelfSelectedItemActionResponse>(
-    await fetch(`${API_BASE}/api/self-selected/items`, {
+    await fetchWithRetry(`${API_BASE}/api/self-selected/items`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -2512,7 +2554,7 @@ export async function createSelfSelectedItem(
 
 export async function deleteSelfSelectedItem(itemId: string): Promise<SelfSelectedItemActionResponse> {
   return selfSelectedJson<SelfSelectedItemActionResponse>(
-    await fetch(`${API_BASE}/api/self-selected/items/${encodeURIComponent(itemId)}`, {
+    await fetchWithRetry(`${API_BASE}/api/self-selected/items/${encodeURIComponent(itemId)}`, {
       method: "DELETE",
     }),
   )
@@ -2523,7 +2565,7 @@ export async function deleteSelfSelectedItem(itemId: string): Promise<SelfSelect
 // =============================================================================
 
 export async function fetchIndustryApplicationTargets(): Promise<IndustryApplicationConfig> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/targets`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/industry-application/targets`)
   return (await res.json()) as IndustryApplicationConfig
 }
 
@@ -2531,7 +2573,7 @@ export async function saveIndustryApplicationTargets(payload: {
   horizon: { days: number; segments: number }
   items: IndustryApplicationConfig["items"]
 }): Promise<IndustryApplicationConfig> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/targets`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/industry-application/targets`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -2544,7 +2586,7 @@ export async function fetchIndustryApplicationTargetCodes(): Promise<{
   count: number
   source: string
 }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/target-codes`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/industry-application/target-codes`)
   return (await res.json()) as { items: IndustryApplicationTargetCode[]; count: number; source: string }
 }
 
@@ -2556,7 +2598,7 @@ export async function fetchIndustryApplicationKline(
   const params = new URLSearchParams({ target_type, symbol })
   if (opts.period) params.set("period", opts.period)
   if (opts.count) params.set("count", String(opts.count))
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/kline?${params.toString()}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/industry-application/kline?${params.toString()}`)
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || "拉取行业 K 线失败")
@@ -2570,7 +2612,7 @@ export async function refreshIndustryApplication(targetId: string | null): Promi
   count?: number
   error?: string
 }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/refresh`, {
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/industry-application/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_id: targetId || null }),
@@ -2585,7 +2627,7 @@ export async function fetchIndustryApplicationResult(targetId: string): Promise<
   indicators: IndustryApplicationIndicators
   meta?: Record<string, unknown>
 }> {
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/results/${encodeURIComponent(targetId)}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/industry-application/results/${encodeURIComponent(targetId)}`)
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || "拉取行业结果失败")
@@ -2601,7 +2643,7 @@ export async function fetchIndustryApplicationOverview(
   if (opts.ascending != null) params.set("ascending", String(opts.ascending))
   if (opts.count) params.set("count", String(opts.count))
   const qs = params.toString()
-  const res = await fetch(
+  const res = await fetchWithRetry(
     `${API_BASE}/api/stock-chart/industry-application/overview${qs ? `?${qs}` : ""}`,
   )
   if (!res.ok) {
@@ -2620,7 +2662,7 @@ export async function fetchMarketHeatmap(
   top_n = 200
 ): Promise<MarketHeatmapResponse> {
   const params = new URLSearchParams({ kind, top_n: String(top_n) })
-  const res = await fetch(`${API_BASE}/api/stock-chart/industry-application/heatmap?${params.toString()}`)
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/industry-application/heatmap?${params.toString()}`)
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || "拉取市场热力图失败")
