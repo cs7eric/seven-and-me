@@ -11,6 +11,8 @@ interface MarketOverviewCardsProps {
   overviewFetchedAt: string | null
   overviewCounts: MarketOverviewEltdx | null
   activePoint: MarketHistoryPoint | null
+  /** 当前显示的交易日期（前端用 getMostRecentTradingDayClient 计算，9:30 前为昨日）*/
+  activeTradingDate: string
   /** 当前显示日期的"上一交易日" history 点 (从 market-pulse 用 history 算出来).
    *  较昨日 diff 优先用这个, 不用 overview.prevDayFlow (stale). */
   prevDayPoint?: MarketHistoryPoint | null
@@ -38,6 +40,7 @@ export function MarketOverviewCards({
   overviewFetchedAt,
   overviewCounts,
   activePoint,
+  activeTradingDate,
   prevDayPoint,
   onRefresh,
   onClearReplay,
@@ -54,10 +57,9 @@ export function MarketOverviewCards({
           <p className="text-sm text-muted-foreground">
             全 A 实时成交 + 东方财富主力资金口径
             {/* 交易日 + (缓存) 标记: 上游 akshare 失败, latest.json 走归档 fallback
-                (source === "archived") 时显示, 提示数据不是当日新拉. */}
-            {overview?.tradingDate
-              ? ` · 交易日 ${overview.tradingDate}${overview.source === "archived" ? " (缓存)" : ""}`
-              : ""}
+                (source === "archived") 时显示, 提示数据不是当日新拉.
+                用 activeTradingDate 而不是 overview.tradingDate: 9:30 前显示昨日. */}
+            {` · 交易日 ${activeTradingDate}${overview?.source === "archived" ? " (缓存)" : ""}`}
             {/* 数据滞后指示: 跟 (缓存) 同一条件, 但用更显眼的琥珀色 pill 强调. */}
             {overview?.source === "archived" && (
               <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">

@@ -16,12 +16,23 @@ function localDateString(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-/** 取最近一个交易日 (周末 → 上一个周五) */
+/** 取最近一个交易日 (周末 → 上一个周五).
+ *
+ * 交易日 9:30 之前市场尚未开市，数据仍属于"上一个交易日"，
+ * 因此工作日 9:30 前返回昨日（与 getPrevTradingDayClient 逻辑一致）。
+ */
 export function getMostRecentTradingDayClient(now: Date = new Date()): string {
   const d = new Date(now.getTime())
   const day = d.getDay()
   if (day === 0) d.setDate(d.getDate() - 2) // 周日 → 周五
   else if (day === 6) d.setDate(d.getDate() - 1) // 周六 → 周五
+  else {
+    // 工作日 9:30 前 → 视为"昨日"（上一个交易日）
+    const hm = d.getHours() * 60 + d.getMinutes()
+    if (hm < 9 * 60 + 30) {
+      return getPrevTradingDayClient(localDateString(d))
+    }
+  }
   return localDateString(d)
 }
 

@@ -133,7 +133,7 @@ function dataStatusLabel(s: string | null | undefined): string {
   }
 }
 
-export function LimitEmotionPanel() {
+export function LimitEmotionPanel({ refreshSignal = 0 }: { refreshSignal?: number } = {}) {
   const [data, setData] = useState<LimitEmotionPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -175,12 +175,20 @@ export function LimitEmotionPanel() {
     void load(true)
   }, [load])
 
-  // 5 / 30 分钟轮询
+  // 父级 (market-pulse.tsx) 在盘内每 15s 递增 refreshSignal → 这里无感重拉.
+  // 父级在盘后不递增, 此 effect 仅初次触发 + 手动 Refresh 触发, 数据冻结.
   useEffect(() => {
+    if (refreshSignal === 0) return
+    void load(false)
+  }, [refreshSignal, load])
+
+  // 兜底自轮询: 若父级没传 refreshSignal (e.g. 单测 / 旧用法), 维持原 5/30min 节奏.
+  useEffect(() => {
+    if (refreshSignal !== 0) return
     const ms = isTradeTimeClient() ? 5 * 60_000 : 30 * 60_000
     const id = window.setInterval(() => void load(false), ms)
     return () => window.clearInterval(id)
-  }, [load])
+  }, [load, refreshSignal])
 
   const isEmpty = data?.dataStatus === "empty"
   const sentimentLevel: LimitEmotionStreakSentimentLevel =

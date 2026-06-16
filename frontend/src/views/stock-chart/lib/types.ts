@@ -162,6 +162,8 @@ export interface StockIntradayPoint {
   trade_date?: string | null
   time_label: string
   price: number
+  /** 1m bar 内的 OHLC open; eltdx 历史分时接口不带此字段. 用于 09:30 今开价占位. */
+  open?: number | null
   avg_price?: number | null
   volume: number
   turnover?: number | null

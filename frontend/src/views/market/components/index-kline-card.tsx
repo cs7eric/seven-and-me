@@ -185,10 +185,17 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
   const lastPoint = item.timeshare[item.timeshare.length - 1] ?? null
   const firstPoint = item.timeshare[0] ?? null
   const previousClose = item.previousClose
+  // 修复: previousClose 缺失时 fallback 优先用今开 (firstPoint.open), 退到 firstPoint.price.
+  // 之前用 price (= 09:31 close), 离 09:30 集合竞价价较远, 涨幅虚高.
+  // 真无 referenceClose 时, 不计算涨幅 / 不画 0 线 (避免 0 线穿心错位).
+  const fallbackClose =
+    firstPoint && firstPoint.open != null && firstPoint.open > 0
+      ? firstPoint.open
+      : firstPoint?.price ?? null
   const referenceClose =
     previousClose != null && Number.isFinite(previousClose) && previousClose > 0
       ? previousClose
-      : firstPoint?.price ?? null
+      : fallbackClose
   const lastPrice = lastPoint?.price ?? null
   const pct =
     lastPrice != null && referenceClose != null && referenceClose > 0
@@ -201,32 +208,52 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
     [item.timeshare],
   )
   const avgPrice = averageLineEnabled ? lastPoint?.avg_price ?? null : null
+  // 总量: 用原始 timeshare (含 09:30 合成点 volume=0, 累加结果不变) 即可
   const totalVolume = useMemo(
     () => item.timeshare.reduce((sum, point) => sum + (point.volume || 0), 0),
     [item.timeshare],
   )
 
   const chartModel = useMemo(() => {
-    const xValues = item.timeshare.map((point, index) => toSessionMinute(point.time_label, index))
-    const priceSeries = item.timeshare.map((point, index) => [
+    // 9:30 开盘占位: eltdx 1m bar 的 time_label 是 bar 的结束时间 (09:31 那根代表 09:30:00→09:31:00).
+    // X 轴 0 位置标签是 "09:30" 但没数据 → 视觉上 09:30 缺失.
+    // 修法: 首根是 09:31 时, 注入一根合成的 09:30 (price=开票价, volume=0, avg=开票价),
+    //       渲染出 09:30 开盘点, 跟 09:31 之间的水平短线即"开盘价线" (同花顺/东财约定).
+    let timeshare = item.timeshare
+    if (timeshare.length > 0 && timeshare[0]?.time_label === "09:31") {
+      const first = timeshare[0]
+      // 09:30 今开占位: 优先用 1m bar 的 open (真实今开), 退到 first.price (eltdx 无 open 字段时).
+      // 之前用 first.price 把 09:31 close 误当开盘, 导致开盘价线和图表"基线"错位.
+      const openPrice = (first.open != null && first.open > 0) ? first.open : first.price
+      const openPoint: StockIntradayPoint = {
+        ...first,
+        price: openPrice,
+        time_label: "09:30",
+        timestamp: (first.timestamp ?? 0) - 60_000,
+        volume: 0,
+      }
+      timeshare = [openPoint, ...timeshare]
+    }
+    const xValues = timeshare.map((point, index) => toSessionMinute(point.time_label, index))
+    const priceSeries = timeshare.map((point, index) => [
       xValues[index] ?? index,
       referenceClose != null ? point.price - referenceClose : point.price,
     ] as [number, number])
-    const avgSeries = item.timeshare.map((point, index) =>
+    const avgSeries = timeshare.map((point, index) =>
       averageLineEnabled && referenceClose != null && point.avg_price != null
         ? [xValues[index] ?? index, point.avg_price - referenceClose]
         : [xValues[index] ?? index, null],
     )
     const referenceSeries = referenceClose != null ? [[0, 0], [240, 0]] : []
-    const volumeSeries = item.timeshare.map((point, index) => {
-      const prev = item.timeshare[index - 1]?.price ?? point.price
+    const volumeSeries = timeshare.map((point, index) => {
+      const prev = timeshare[index - 1]?.price ?? point.price
       return {
         value: [xValues[index] ?? index, point.volume || 0],
         itemStyle: { color: point.price >= prev ? "rgba(220, 38, 38, 0.42)" : "rgba(22, 163, 74, 0.42)" },
       }
     })
 
-    const priceValues = item.timeshare.map((point) => point.price)
+    const priceValues = timeshare.map((point) => point.price)
     if (averageLineEnabled) {
       avgSeries.forEach((value) => {
         const y = Array.isArray(value) ? value[1] : null
@@ -247,10 +274,12 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
       : priceValues.filter((value) => Number.isFinite(value))
     const deltaDomain = computeDeltaDomain(deltaValues)
     const maxAbsDelta = Math.max(...deltaValues.map((value) => Math.abs(value)), 0.1)
-    const segments = buildSignedSegments(item.timeshare, xValues, referenceClose, maxAbsDelta)
+    const segments = buildSignedSegments(timeshare, xValues, referenceClose, maxAbsDelta)
 
     return {
       xValues,
+      // 暴露处理后的 timeshare (含 09:30 合成点) 给 tooltip 用, 跟 xValues / segments 对齐
+      timeshare,
       priceSeries,
       avgSeries,
       referenceSeries,
@@ -418,7 +447,9 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
             const dataIndex = chartModel.xValues.reduce((bestIndex, value, index) => {
               return Math.abs(value - x) < Math.abs(chartModel.xValues[bestIndex] - x) ? index : bestIndex
             }, 0)
-            const point = item.timeshare[dataIndex]
+            // 关键: 用 chartModel.timeshare (含 09:30 合成点) 而不是 item.timeshare,
+            // 避免 dataIndex 因合成点偏移 1 而读错.
+            const point = chartModel.timeshare[dataIndex]
             if (!point) return ""
             const change =
               referenceClose != null && Number.isFinite(referenceClose)
@@ -613,7 +644,12 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
         <div className="flex flex-col">
           <span className="text-slate-400">开盘</span>
           <span className="mt-0.5 font-mono font-semibold tabular-nums text-slate-700">
-            {formatClose(firstPoint?.price ?? null)}
+            {/* 优先读今开 (1m bar open); eltdx 历史分时无 open 字段时退到 first price */}
+            {formatClose(
+              firstPoint?.open != null && firstPoint.open > 0
+                ? firstPoint.open
+                : firstPoint?.price ?? null,
+            )}
           </span>
         </div>
         <div className="flex flex-col">

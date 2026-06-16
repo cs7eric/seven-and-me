@@ -173,13 +173,26 @@ export default function MarketPulsePage() {
   }
 
   const loadManualFundFlow = async (tradingDate: string) => {
-    try {
-      const data = await fetchManualFundFlow(tradingDate)
-      setManualFundFlow(data)
-    } catch {
-      // 404 / 网络错都当 null, 不影响主流程
-      setManualFundFlow(null)
+    // Fallback: 今天没 manual → 尝试最近 3 个交易日, 找到最近一个输过的.
+    // 原因: akshare 失败时今天没有资金流数据, 但用户昨天输入的仍有价值可显示.
+    const candidates = [
+      tradingDate,
+      getPrevTradingDayClient(tradingDate),
+      getPrevTradingDayClient(getPrevTradingDayClient(tradingDate)),
+    ]
+    for (const date of candidates) {
+      if (!date) continue
+      try {
+        const data = await fetchManualFundFlow(date)
+        if (data) {
+          setManualFundFlow(data)
+          return
+        }
+      } catch {
+        // 404 / 网络错就试下一个
+      }
     }
+    setManualFundFlow(null)
   }
 
   const loadHistory = async (range: "20d" | "60d" | "120d" | "1y" = "60d") => {
@@ -268,24 +281,44 @@ export default function MarketPulsePage() {
     }
   }
 
+  // 实时轮询信号 — 盘内每 15s 自增, 传给 IndexKlineDeck 触发 cache 失效 + 重拉.
+  // 盘后保持 0 不递增, deck 走一次性加载 + 缓存.
+  const [intradayRefreshSignal, setIntradayRefreshSignal] = useState(0)
+  // 涨跌停情绪盘内 15s 轮询信号
+  const [limitEmotionRefreshSignal, setLimitEmotionRefreshSignal] = useState(0)
+  // 当前是否处于交易时段 (state 版). 仅在 30s 心跳触发后 / 初次挂载时刷新.
+  // 用于驱动 15s 轮询 setInterval 的 gate, 避免直接依赖 state 变化反复 reset timer.
+  const [isActive, setIsActive] = useState<boolean>(() => isTradeTimeClient())
+
+  // === Effect 1: 初次挂载 — 拉全部首屏数据, 永不重跑 ===
   useEffect(() => {
     void load()
     void loadOverview()
     void loadHeatmap()
-    // 手动粘贴的资金流: 按当前 activeTradingDate 拉 (今天 / 上一个交易日)
     void loadManualFundFlow(getMostRecentTradingDayClient())
-    // 历史序列 (用于 cards 的较昨日 diff)
     void loadHistory("60d")
-    // 交易时间 5min 一次轮询; 非交易时间 30min 一次 (scheduler 也没在跑, 读 archive)
-    const id = window.setInterval(
-      () => {
-        void loadOverview()
-      },
-      liveIsTradeTime ? 5 * 60_000 : 30 * 60_000,
-    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // === Effect 2: 30s 心跳 — 评估交易时段, 必要时翻转 isActive ===
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setIsActive(isTradeTimeClient())
+    }, 30_000)
+    return () => window.clearInterval(id)
+  }, [])
+
+  // === Effect 3: 15s 盘内轮询 — 仅在 isActive 翻转时重绑, 不会因为心跳被 reset ===
+  useEffect(() => {
+    if (!isActive) return
+    const id = window.setInterval(() => {
+      void loadOverview()
+      setIntradayRefreshSignal((n) => n + 1)
+      setLimitEmotionRefreshSignal((n) => n + 1)
+    }, 15_000)
     return () => window.clearInterval(id)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveIsTradeTime])
+  }, [isActive])
 
   useEffect(() => {
     void loadHeatmap(heatmapKind)
@@ -306,6 +339,7 @@ export default function MarketPulsePage() {
           overviewFetchedAt={overviewFetchedAt}
           overviewCounts={overviewCounts}
           activePoint={activePoint}
+          activeTradingDate={activeTradingDate}
           prevDayPoint={prevDayPoint}
           onRefresh={() => void loadOverview()}
           onClearReplay={clearReplay}
@@ -320,6 +354,7 @@ export default function MarketPulsePage() {
           pinned={isPinnedReplay}
           onClearPinned={clearReplay}
           isTradeTime={liveIsTradeTime}
+          refreshSignal={intradayRefreshSignal}
         />
 
         {/* === 市场脉搏 · 历史趋势图 (4 视图复合图 + 洞察小指标) === */}
@@ -363,7 +398,7 @@ export default function MarketPulsePage() {
 
         {/* === 涨跌停情绪 (limitEmotion) · 涨停/跌停/触板/炸板/连板梯队 ===
             扩展模块, 挂在行业热力图下方, 不修改既有代码. */}
-        <LimitEmotionPanel />
+        <LimitEmotionPanel refreshSignal={limitEmotionRefreshSignal} />
 
         {/* === 后续接入模块的占位 === */}
         <MarketPlaceholderCards />

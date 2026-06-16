@@ -28,6 +28,9 @@ interface Props {
    *  非交易时段 → 顶部 pill 显示 "上次收盘 {date}" 而非 "今日实时 1m",
    *  因为此时数据实际是上一交易日的归档 (后端在非交易时段读 archive). */
   isTradeTime?: boolean
+  /** 父级递增的轮询信号. 每次值变化, deck 清掉当前 date 的 cache 并重拉.
+   *  用于盘内 15s 定时刷新; 盘后传 0 / 不递增, 走默认一次性加载 + 缓存. */
+  refreshSignal?: number
 }
 
 const INDEX_CODES = ["000001", "399001", "399006"] as const
@@ -46,7 +49,7 @@ function directionTone(item: IndexTimeshareItem): "up" | "down" | "flat" {
   return "flat"
 }
 
-export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isTradeTime = true }: Props) {
+export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isTradeTime = true, refreshSignal = 0 }: Props) {
   const [items, setItems] = useState<IndexTimeshareItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -81,7 +84,8 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
               name: INDEX_NAMES[code] ?? code,
               adjust: "none",
               tradeDate: requestDate,
-              periods: ["1m"],
+              // 1m 优先, 没有时退到 5m (盘中前几分钟 1m 数据可能 0 bar)
+              periods: ["1m", "5m"],
             })
             return {
               ok: true,
@@ -118,9 +122,15 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
   }
 
   useEffect(() => {
+    // 盘内 15s 轮询: refreshSignal 每 15s 自增 → 清掉今日 cache → 重拉最新 bar.
+    // 盘后父级不递增 refreshSignal, 此 effect 仅因 tradingDate 变化触发一次.
+    if (refreshSignal > 0) {
+      const key = tradingDate ?? "__today__"
+      cacheRef.current.delete(key)
+    }
     void load(tradingDate)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tradingDate])
+  }, [tradingDate, refreshSignal])
 
   // 排序: 按 INDEX_CODES 顺序
   const sortedItems = useMemo(() => {
