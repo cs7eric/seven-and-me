@@ -1,6 +1,7 @@
 import { ArrowDownRight, ArrowUpRight, Loader2, Pencil, RefreshCw, Wallet, Waves } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { CountUp } from "@/components/ui/count-up"
 import { diffBadgeTone, formatCount, formatYi, moneyTone } from "../lib/format"
 import type { ManualFundFlow, MarketHistoryPoint, MarketOverview, MarketOverviewEltdx } from "@/lib/api"
 
@@ -257,7 +258,20 @@ export function MarketOverviewCards({
                     </div>
                   </div>
                   <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-slate-900">
-                    {display.totalAmount != null ? formatYi(display.totalAmount) : "—"}
+                    {display.totalAmount != null ? (
+                      // 不传 key → 组件实例不卸载, spring 从上一次渲染结束的位置 ease 到新 to,
+                      // 实现"接着上一次的值 count up". 首次 mount 时 spring 从 0 ease 到初始 to.
+                      <>
+                        <CountUp
+                          to={display.totalAmount}
+                          duration={1.2}
+                          separator=","
+                        />
+                        <span>亿</span>
+                      </>
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
 
@@ -278,35 +292,79 @@ export function MarketOverviewCards({
                     </div>
                   </div>
                   <div className={`mt-1 text-2xl font-bold tracking-tight tabular-nums ${moneyTone(display.mainNetInflow).text}`}>
-                    {formatYi(display.mainNetInflow)}
+                    {display.mainNetInflow != null ? (
+                      <>
+                        {display.mainNetInflow > 0 ? "+" : ""}
+                        <CountUp
+                          to={Math.abs(display.mainNetInflow)}
+                          duration={1.2}
+                          separator=","
+                        />
+                        <span>亿</span>
+                      </>
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
 
                 <div className="bg-white px-4 py-3">
                   <div className="text-[11px] font-medium text-slate-500">上涨</div>
                   <div className="mt-1 text-xl font-bold tabular-nums text-red-600">
-                    {formatCount(display.risingCount)}
+                    {display.risingCount != null ? (
+                      <CountUp
+                        to={display.risingCount}
+                        duration={1.0}
+                        separator=","
+                      />
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
 
                 <div className="bg-white px-4 py-3">
                   <div className="text-[11px] font-medium text-slate-500">下跌</div>
                   <div className="mt-1 text-xl font-bold tabular-nums text-emerald-600">
-                    {formatCount(display.fallingCount)}
+                    {display.fallingCount != null ? (
+                      <CountUp
+                        to={display.fallingCount}
+                        duration={1.0}
+                        separator=","
+                      />
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
 
                 <div className="bg-white px-4 py-3">
                   <div className="text-[11px] font-medium text-slate-500">涨停</div>
                   <div className="mt-1 text-xl font-bold tabular-nums text-red-600">
-                    {formatCount(display.limitUpCount)}
+                    {display.limitUpCount != null ? (
+                      <CountUp
+                        to={display.limitUpCount}
+                        duration={1.0}
+                        separator=","
+                      />
+                    ) : (
+                      "—"
+                    )}
                   </div>
                 </div>
 
                 <div className="bg-white px-4 py-3">
                   <div className="text-[11px] font-medium text-slate-500">跌停</div>
                   <div className="mt-1 text-xl font-bold tabular-nums text-emerald-600">
-                    {formatCount(display.limitDownCount)}
+                    {display.limitDownCount != null ? (
+                      <CountUp
+                        to={display.limitDownCount}
+                        duration={1.0}
+                        separator=","
+                      />
+                    ) : (
+                      "—"
+                    )}
                   </div>
                   <div className="mt-1 text-[10px] text-slate-400">
                     平盘 {formatCount(display.flatCount)}
