@@ -81,6 +81,9 @@ def table_stats() -> dict[str, int]:
         "intraday_bars",
         "quotes",
         "ingest_state",
+        "index_daily_raw",
+        "ma_count_daily",
+        "index_returns_daily",
     ]
     out: dict[str, int] = {}
     with conn() as c:

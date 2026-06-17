@@ -11,6 +11,7 @@ limit_emotion_service.snapshot_today_daily 的字段兼容.
 """
 from __future__ import annotations
 
+import time
 from datetime import date
 from typing import Any
 
@@ -390,23 +391,333 @@ def _to_date(v: date | str) -> date:
 
 
 # ---------------------------------------------------------------------------
+# 4. 涨跌停情绪综合分 (limit emotion summary)
+#
+# 公式 (跟 schema.sql § 15 注释一致):
+#   up_down_score       = clamp(50 + 25 * log2(ratio))            ∈ [0, 100]
+#   break_board_score   = clamp(100 - 100 * rate)                 ∈ [0, 100]   (反向)
+#   yesterday_return_score = clamp(50 + 10 * avg_return_pct)      ∈ [0, 100]
+#   composite = 0.4 * A + 0.3 * B + 0.3 * C
+#
+# 数据源: 全部用 limit_repo 现有的 snapshot (get_today_limit_snapshot),
+#   不直接查 daily_raw, 跟 limit_emotion_service._assemble_from_duckdb
+#   路径共用同一份 limit_repo 算出的字段, 避免两边算法漂移.
+# ---------------------------------------------------------------------------
+
+def _score_up_down(ratio: float | None) -> float:
+    """涨跌停比 → 0-100 得分. 1.0 锚定 50, 翻倍 4.0 锚定 75, 0 锚定 0."""
+    if ratio is None or ratio <= 0:
+        return 0.0
+    import math
+    return round(max(0.0, min(100.0, 50.0 + 25.0 * math.log2(ratio))), 2)
+
+
+def _score_break_board(rate: float | None) -> float:
+    """炸板率 → 0-100 得分 (反向). 0% → 100, 50% → 50, 100% → 0."""
+    if rate is None:
+        return 50.0  # 无触板数据兜底中性
+    return round(max(0.0, min(100.0, 100.0 - 100.0 * rate)), 2)
+
+
+def _score_yesterday_return(avg_return_pct: float | None) -> float:
+    """昨日涨停股今日平均收益 → 0-100 得分. 0% → 50, +5% → 100, -5% → 0."""
+    if avg_return_pct is None:
+        return 50.0
+    return round(max(0.0, min(100.0, 50.0 + 10.0 * avg_return_pct)), 2)
+
+
+def _level_for(composite: float) -> str:
+    if composite >= 80:
+        return "hot"
+    if composite >= 60:
+        return "active"
+    if composite >= 40:
+        return "normal"
+    if composite >= 20:
+        return "weak"
+    return "ice"
+
+
+def calc_limit_emotion_summary(
+    trade_date: date | str,
+    prev_trade_date: date | str | None = None,
+) -> dict[str, Any]:
+    """算 limit-emotion-summary 在 trade_date 的所有指标 + composite + level.
+
+    Args:
+        trade_date: 主交易日
+        prev_trade_date: 上一交易日 (用于算 "昨日涨停股今日平均收益").
+            None 时自动从 trading_calendar.previous_trading_day 推断.
+
+    Returns:
+      {
+        "tradeDate": "2026-06-12",
+        "prevTradeDate": "2026-06-11",
+        "limitUpCount": 93,
+        "limitDownCount": 0,
+        "touchedCount": 284,
+        "brokenCount": 191,
+        "breakBoardRate": 0.6725,         # broken / touched
+        "limitUpDownRatio": 93.0,         # limit_up / max(limit_down, 1)
+        "yesterdayLimitUpCount": 80,      # 昨日 isLimitUp=True 数量
+        "yesterdayLimitUpAvgReturn": -0.76,  # 昨日涨停股今日 changePct 平均 (%)
+        "components": {
+          "upDownScore": 79.97,
+          "breakBoardScore": 32.75,
+          "yesterdayReturnScore": 42.4,
+        },
+        "compositeScore": 50.78,
+        "level": "normal",
+        "elapsedMs": 1234,
+        "source": "duckdb.daily_raw"
+      }
+    """
+    td = _to_date(trade_date)
+    assert td is not None
+    if prev_trade_date is None:
+        try:
+            from backend.services.stock.trading_calendar import previous_trading_day
+            prev = previous_trading_day(td)
+        except Exception:
+            prev = None
+    else:
+        prev = _to_date(prev_trade_date)
+
+    t0 = time.time()
+
+    # 1) 今日 snapshot
+    snap_today = get_today_limit_snapshot(td)
+    if not snap_today:
+        return {
+            "tradeDate": td.isoformat(),
+            "prevTradeDate": prev.isoformat() if prev else None,
+            "limitUpCount": 0,
+            "limitDownCount": 0,
+            "touchedCount": 0,
+            "brokenCount": 0,
+            "breakBoardRate": None,
+            "limitUpDownRatio": 0.0,
+            "yesterdayLimitUpCount": 0,
+            "yesterdayLimitUpAvgReturn": None,
+            "components": {
+                "upDownScore": 0.0,
+                "breakBoardScore": 50.0,
+                "yesterdayReturnScore": 50.0,
+            },
+            "compositeScore": 30.0,
+            "level": "weak",
+            "elapsedMs": int((time.time() - t0) * 1000),
+            "source": "duckdb.daily_raw",
+        }
+
+    limit_up_count = sum(1 for r in snap_today if r.get("isLimitUp"))
+    limit_down_count = sum(1 for r in snap_today if r.get("isLimitDown"))
+    touched_count = sum(1 for r in snap_today if r.get("isTouchedLimitUp"))
+    broken_count = sum(1 for r in snap_today if r.get("isBrokenLimitUp"))
+    break_board_rate = (
+        round(broken_count / touched_count, 4) if touched_count > 0 else None
+    )
+    limit_up_down_ratio = round(limit_up_count / max(limit_down_count, 1), 4)
+
+    # 2) 昨日涨停股 ∩ 今日 changePct 均值
+    yest_limit_up_count = 0
+    yest_avg_return: float | None = None
+    if prev is not None:
+        snap_yest = get_today_limit_snapshot(prev)
+        if snap_yest:
+            yest_codes = {r["code"] for r in snap_yest if r.get("isLimitUp")}
+            yest_limit_up_count = len(yest_codes)
+            today_by_code = {r["code"]: r for r in snap_today}
+            returns: list[float] = []
+            for code in yest_codes:
+                r = today_by_code.get(code)
+                if r and r.get("changePct") is not None:
+                    returns.append(float(r["changePct"]))
+            if returns:
+                yest_avg_return = round(sum(returns) / len(returns), 4)
+
+    # 3) sub-scores + composite + level
+    a = _score_up_down(limit_up_down_ratio if limit_up_down_ratio > 0 else None)
+    b = _score_break_board(break_board_rate)
+    c = _score_yesterday_return(yest_avg_return)
+    composite = round(0.4 * a + 0.3 * b + 0.3 * c, 2)
+    level = _level_for(composite)
+
+    elapsed_ms = int((time.time() - t0) * 1000)
+    return {
+        "tradeDate": td.isoformat(),
+        "prevTradeDate": prev.isoformat() if prev else None,
+        "limitUpCount": limit_up_count,
+        "limitDownCount": limit_down_count,
+        "touchedCount": touched_count,
+        "brokenCount": broken_count,
+        "breakBoardRate": break_board_rate,
+        "limitUpDownRatio": limit_up_down_ratio,
+        "yesterdayLimitUpCount": yest_limit_up_count,
+        "yesterdayLimitUpAvgReturn": yest_avg_return,
+        "components": {
+            "upDownScore": a,
+            "breakBoardScore": b,
+            "yesterdayReturnScore": c,
+        },
+        "compositeScore": composite,
+        "level": level,
+        "elapsedMs": elapsed_ms,
+        "source": "duckdb.daily_raw",
+    }
+
+
+def save_limit_emotion_summary(payload: dict) -> None:
+    """把 calc_limit_emotion_summary 的 dict 落盘 (INSERT OR REPLACE by trade_date)."""
+    td = _to_date(payload.get("tradeDate"))
+    if td is None:
+        raise ValueError("payload.tradeDate required")
+    comp = payload.get("components") or {}
+    yest_avg = payload.get("yesterdayLimitUpAvgReturn")
+    bb_rate = payload.get("breakBoardRate")
+    con = get_conn()
+    con.execute("""
+        INSERT OR REPLACE INTO limit_emotion_summary_daily
+            (trade_date, limit_up_count, limit_down_count, touched_count, broken_count,
+             break_board_rate,
+             yesterday_limit_up_count, yesterday_limit_up_avg_return,
+             up_down_score, break_board_score, yesterday_return_score,
+             composite_score, level,
+             elapsed_ms, source, ingested_at)
+        VALUES (?, ?, ?, ?, ?,
+                ?,
+                ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?, ?, current_timestamp)
+    """, [
+        td,
+        int(payload.get("limitUpCount") or 0),
+        int(payload.get("limitDownCount") or 0),
+        int(payload.get("touchedCount") or 0),
+        int(payload.get("brokenCount") or 0),
+        float(bb_rate) if bb_rate is not None else 0.0,
+        int(payload.get("yesterdayLimitUpCount") or 0),
+        float(yest_avg) if yest_avg is not None else 0.0,
+        float(comp.get("upDownScore") or 0),
+        float(comp.get("breakBoardScore") or 0),
+        float(comp.get("yesterdayReturnScore") or 0),
+        float(payload.get("compositeScore") or 0),
+        str(payload.get("level") or "normal"),
+        int(payload.get("elapsedMs") or 0),
+        str(payload.get("source") or "duckdb.daily_raw"),
+    ])
+
+
+_LIMIT_EMOTION_SUMMARY_COLS = (
+    "trade_date", "limit_up_count", "limit_down_count", "touched_count", "broken_count",
+    "break_board_rate",
+    "yesterday_limit_up_count", "yesterday_limit_up_avg_return",
+    "up_down_score", "break_board_score", "yesterday_return_score",
+    "composite_score", "level",
+    "elapsed_ms", "source",
+)
+_LIMIT_EMOTION_SUMMARY_SELECT = ", ".join(_LIMIT_EMOTION_SUMMARY_COLS)
+
+
+def _row_to_summary_payload(row: tuple) -> dict:
+    """duckdb 行 → calc_limit_emotion_summary 同 shape dict."""
+    bb_rate = float(row[5]) if row[5] is not None else None
+    yest_avg = float(row[7]) if row[7] is not None else None
+    return {
+        "tradeDate": row[0].isoformat(),
+        "prevTradeDate": None,  # 表里不存, 读时按需重新算
+        "limitUpCount": int(row[1]),
+        "limitDownCount": int(row[2]),
+        "touchedCount": int(row[3]),
+        "brokenCount": int(row[4]),
+        "breakBoardRate": bb_rate,
+        "limitUpDownRatio": round(int(row[1]) / max(int(row[2]), 1), 4),
+        "yesterdayLimitUpCount": int(row[6]),
+        "yesterdayLimitUpAvgReturn": yest_avg,
+        "components": {
+            "upDownScore": float(row[8]),
+            "breakBoardScore": float(row[9]),
+            "yesterdayReturnScore": float(row[10]),
+        },
+        "compositeScore": float(row[11]),
+        "level": str(row[12]),
+        "elapsedMs": int(row[13]) if row[13] is not None else None,
+        "source": str(row[14]),
+        "fromCache": True,
+    }
+
+
+def get_limit_emotion_summary(trade_date: date | str) -> dict | None:
+    """按日期查 limit_emotion_summary_daily. 无记录返 None (不抛)."""
+    td = _to_date(trade_date)
+    if td is None:
+        return None
+    con = get_conn()
+    r = con.execute(
+        f"SELECT {_LIMIT_EMOTION_SUMMARY_SELECT} "
+        f"FROM limit_emotion_summary_daily WHERE trade_date = ?",
+        [td],
+    ).fetchone()
+    return _row_to_summary_payload(r) if r else None
+
+
+def get_limit_emotion_summary_history(
+    start: date | str,
+    end: date | str | None = None,
+) -> list[dict]:
+    """区间查 limit_emotion_summary_daily (按 trade_date ASC), 一日一条."""
+    s = _to_date(start)
+    e = _to_date(end) if end is not None else s
+    if s is None or e is None:
+        return []
+    con = get_conn()
+    rows = con.execute(
+        f"SELECT {_LIMIT_EMOTION_SUMMARY_SELECT} "
+        f"FROM limit_emotion_summary_daily "
+        f"WHERE trade_date BETWEEN ? AND ? "
+        f"ORDER BY trade_date ASC",
+        [s, e],
+    ).fetchall()
+    return [_row_to_summary_payload(r) for r in rows]
+
+
+def calc_limit_emotion_summary_cached(
+    trade_date: date | str,
+    *,
+    force: bool = False,
+) -> dict:
+    """cache-aside 版: 优先查 limit_emotion_summary_daily, 没记录才现算 + 自动落盘.
+
+    Args:
+        trade_date: 目标日
+        force: True 跳过 cache 重算 + 覆盖 (维护用)
+    """
+    if not force:
+        cached = get_limit_emotion_summary(trade_date)
+        if cached is not None:
+            return cached
+    payload = calc_limit_emotion_summary(trade_date)
+    try:
+        save_limit_emotion_summary(payload)
+    except Exception:
+        pass
+    return payload
+
+
+# ---------------------------------------------------------------------------
 # smoke
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import json as _json
-    print("=== 单股连板历史 (000001, 最近 60 天) ===")
-    hist = get_limit_streak_history("000001", end="2026-06-16")
-    for row in hist[-10:]:
-        print(_json.dumps(row, ensure_ascii=False))
+    print("=== calc_limit_emotion_summary(2026-06-12) ===")
+    out = calc_limit_emotion_summary("2026-06-12")
+    print(_json.dumps(out, ensure_ascii=False, indent=2))
     print()
-    print("=== 单日快照 (2026-06-15) 前 10 名 ===")
-    snap = get_today_limit_snapshot("2026-06-15")
-    for row in snap[:10]:
-        print(_json.dumps(row, ensure_ascii=False))
-    print(f"total: {len(snap)}")
-    print()
-    print("=== 连板分布 (2026-06-15) ===")
-    dist = get_limit_streak_distribution("2026-06-15")
-    print(f"maxHeight={dist['maxHeight']}, leaders={len(dist['leaders'])}, "
-          f"distribution={[d['streak'] for d in dist['distribution']]}")
+    print("=== save + get round-trip ===")
+    save_limit_emotion_summary(out)
+    cached = get_limit_emotion_summary("2026-06-12")
+    print(_json.dumps(cached, ensure_ascii=False, indent=2))
+    print(f"fromCache: {cached.get('fromCache')}")
+

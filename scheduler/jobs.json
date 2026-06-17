@@ -152,6 +152,36 @@
       "registered_at": "2026-06-13T14:26:00"
     },
     {
+      "id": "tdx_hsjday_download",
+      "name": "TDX hsjday.zip 下载 + 覆盖 (16:30 工作日)",
+      "description": "tdx_hsjday_download_scheduler 调度, 工作日 16:30 (cron 30 16 * * mon-fri + is_trading_day 二次过滤) 调 scripts/download_tdx_hsjday.py 下载 https://data.tdx.com.cn/vipdoc/hsjday.zip (~538MB) 到 reference/stock/download/{date}/, 解压, 备份旧 reference/tdx/day/hsjday, mv 新 hsjday 覆盖 target; 失败回滚; 周末 / 节假日由 is_trading_day 拦下; 预计耗时 3-5 min",
+      "config_file": "tdx_hsjday_download_job.json",
+      "service_module": "backend.services.scheduler.tdx_hsjday_download_scheduler",
+      "service_class": "TdxHsjdayDownloadScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-17T22:00:00"
+    },
+    {
+      "id": "daily_eod_incremental",
+      "name": "每日 EOD 增量入 duckdb (17:00 工作日)",
+      "description": "daily_eod_incremental_scheduler 调度, 工作日 17:00 (cron 0 17 * * mon-fri + is_trading_day 二次过滤) 调 scripts/daily_eod_incremental.py, 查 duckdb daily_raw.max(trade_date) vs today, 缺则跑 initial_backfill.py 全量重 parse (INSERT OR IGNORE 幂等), 然后调 backfill_limit_emotion_summary.py 回算 limit_emotion_summary_daily 涨跌停综合分; 周末 / 节假日由 is_trading_day 拦下; 预计耗时 1-4 min (max gap 1-2 天时快, 跨周末 + 节假日时跑全量 backfill ~4 min)",
+      "config_file": "daily_eod_incremental_job.json",
+      "service_module": "backend.services.scheduler.daily_eod_incremental_scheduler",
+      "service_class": "DailyEodIncrementalScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-17T21:00:00"
+    },
+    {
+      "id": "market_overview_daily",
+      "name": "大盘概况 / 行业 90 回填 duckdb (17:10 工作日)",
+      "description": "market_overview_daily_scheduler 调度, 工作日 17:10 (cron 10 17 * * mon-fri + is_trading_day 二次过滤) 调 scripts/backfill_market_overview_daily.py, 扫本地 JSON archive 把 (1) akshare 资金流 + spot_em 全 A 涨跌家数 (2) eltdx 涨跌家数 / 成交额 (3) akshare 90 行业 涨跌幅 / 流入流出 / 主力净流入 全部 upsert 到 duckdb (market_overview_daily + market_pulse_sector_daily 表), 字段级 UPSERT 幂等, 跟 17:00 daily_eod_incremental 解耦; 预计耗时 < 30s (扫 60 天 archive)",
+      "config_file": "market_overview_daily_job.json",
+      "service_module": "backend.services.scheduler.market_overview_daily_scheduler",
+      "service_class": "MarketOverviewDailyScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-17T22:00:00"
+    },
+    {
       "id": "test_scheduler_demo",
       "name": "[测试] scheduler 删除演示",
       "description": "测试用 job, 没有对应的 scheduler 模块, 不会在 bootstrap 里自动启动. 用来演示 \"在 UI 上删除后重启 Flask 不会再自动回来\" 的完整流程, 验证 jobs.json 注册表的 CRUD 接口是否正确. 验证完可直接在 UI 上删除",

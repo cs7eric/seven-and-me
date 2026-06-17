@@ -1364,6 +1364,586 @@ export async function fetchMarketPulseHistory(range: PulseRange = "60d"): Promis
 }
 
 // ---------------------------------------------------------------------------
+// Market Pulse · MA 计数 (上一交易日 close > MA20 / MA60 / both 的股票数量)
+// 数据源: duckdb.daily_qfq (单次 SQL 窗口函数)
+// ---------------------------------------------------------------------------
+export interface MaCountBoardStat {
+  total: number
+  aboveMa20: number
+  aboveMa60: number
+  aboveBoth: number
+  pctMa20: number
+  pctMa60: number
+  pctBoth: number
+  /** 近 5 个交易日上涨 (close > close_5d_ago) 数量 */
+  up5d?: number
+  /** up5d / total * 100 */
+  pctUp5d?: number
+  /** 创 60 日新低 (close == 60日窗口内 min) 数量 */
+  newLow60d?: number
+  /** newLow60d / total * 100 */
+  pctNewLow60d?: number
+  /** 创 252 日新高 (close >= 252日窗口内 max, 满 252 行窗口) 数量 */
+  newHigh252d?: number
+  /** newHigh252d / total * 100 */
+  pctNewHigh252d?: number
+}
+
+export interface MaCountResponse {
+  ok: boolean
+  tradeDate: string
+  totalEligible: number
+  aboveMa20: number
+  aboveMa60: number
+  aboveBoth: number
+  pctAboveMa20: number
+  pctAboveMa60: number
+  pctAboveBoth: number
+  /** 近 5 日上涨股票数 (close > 5 个交易日前 close) */
+  up5dCount: number
+  /** up5dCount / totalEligible * 100 */
+  pctUp5d: number
+  /** 创 60 日新低股票数 (close == 60日窗口内 min, 满 60 行窗口) */
+  newLow60dCount: number
+  /** newLow60dCount / totalEligible * 100 */
+  pctNewLow60d: number
+  /** 创 252 日新高股票数 (close >= 252日窗口内 max, 满 252 行窗口) */
+  newHigh252dCount: number
+  /** newHigh252dCount / totalEligible * 100 */
+  pctNewHigh252d: number
+  byBoard: Record<string, MaCountBoardStat>
+  elapsedMs?: number
+  source?: string
+  error?: string
+}
+
+export async function fetchMarketSentimentMaCount(date?: string): Promise<MaCountResponse> {
+  const url = date
+    ? `${API_BASE}/api/stock-chart/market-sentiment/ma-count?date=${encodeURIComponent(date)}`
+    : `${API_BASE}/api/stock-chart/market-sentiment/ma-count`
+  const res = await fetchWithRetry(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, tradeDate: date ?? "", totalEligible: 0,
+             aboveMa20: 0, aboveMa60: 0, aboveBoth: 0,
+             pctAboveMa20: 0, pctAboveMa60: 0, pctAboveBoth: 0,
+             up5dCount: 0, pctUp5d: 0,
+             newLow60dCount: 0, pctNewLow60d: 0,
+             newHigh252dCount: 0, pctNewHigh252d: 0,
+             byBoard: {}, error: `HTTP ${res.status}` }
+  }
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? ""),
+    totalEligible: (data.totalEligible as number) ?? 0,
+    aboveMa20: (data.aboveMa20 as number) ?? 0,
+    aboveMa60: (data.aboveMa60 as number) ?? 0,
+    aboveBoth: (data.aboveBoth as number) ?? 0,
+    pctAboveMa20: (data.pctAboveMa20 as number) ?? 0,
+    pctAboveMa60: (data.pctAboveMa60 as number) ?? 0,
+    pctAboveBoth: (data.pctAboveBoth as number) ?? 0,
+    up5dCount: (data.up5dCount as number) ?? 0,
+    pctUp5d: (data.pctUp5d as number) ?? 0,
+    newLow60dCount: (data.newLow60dCount as number) ?? 0,
+    pctNewLow60d: (data.pctNewLow60d as number) ?? 0,
+    newHigh252dCount: (data.newHigh252dCount as number) ?? 0,
+    pctNewHigh252d: (data.pctNewHigh252d as number) ?? 0,
+    byBoard: (data.byBoard as Record<string, MaCountBoardStat>) ?? {},
+    elapsedMs: (data.elapsedMs as number) ?? undefined,
+    source: (data.source as string) ?? undefined,
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Market Pulse · 宽基指数近 N 日收益 (沪深300 / 中证1000)
+// 数据源: duckdb.index_daily_raw
+// ---------------------------------------------------------------------------
+export interface IndexReturnDaily {
+  date: string
+  close: number
+  dailyReturnPct: number | null
+}
+
+export interface IndexReturnItem {
+  name: string
+  code: string
+  fullCode: string
+  current: number | null
+  currentDate: string | null
+  baseClose: number | null
+  baseDate: string | null
+  returnPct: number | null
+  daily: IndexReturnDaily[]
+  available: boolean
+}
+
+export interface IndexReturnsResponse {
+  ok: boolean
+  days: number
+  items: IndexReturnItem[]
+  error?: string
+}
+
+export async function fetchMarketPulseIndexReturns(days: number = 5): Promise<IndexReturnsResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-pulse/index-returns?days=${days}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, days, items: [], error: `HTTP ${res.status}` }
+  }
+  const rawItems = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    days: (data.days as number) ?? days,
+    items: rawItems.map((it) => ({
+      name: String(it.name ?? ""),
+      code: String(it.code ?? ""),
+      fullCode: String(it.fullCode ?? ""),
+      current: (it.current as number) ?? null,
+      currentDate: (it.currentDate as string) ?? null,
+      baseClose: (it.baseClose as number) ?? null,
+      baseDate: (it.baseDate as string) ?? null,
+      returnPct: (it.returnPct as number) ?? null,
+      daily: Array.isArray(it.daily) ? (it.daily as Array<Record<string, unknown>>).map((d) => ({
+        date: String(d.date ?? ""),
+        close: (d.close as number) ?? 0,
+        dailyReturnPct: (d.dailyReturnPct as number) ?? null,
+      })) : [],
+      available: Boolean(it.available),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MA 计数 + 指数收益 历史趋势 (sparkline 用, 按日期范围查)
+// 数据源: duckdb.ma_count_daily / index_returns_daily (持久化, 0.8ms 返回)
+// ---------------------------------------------------------------------------
+export interface MaCountHistoryItem {
+  tradeDate: string
+  totalEligible: number
+  aboveMa20: number
+  aboveMa60: number
+  aboveBoth: number
+  pctAboveMa20: number
+  pctAboveMa60: number
+  pctAboveBoth: number
+  up5dCount: number
+  pctUp5d: number
+  newLow60dCount: number
+  pctNewLow60d: number
+  newHigh252dCount: number
+  pctNewHigh252d: number
+  fromCache?: boolean
+}
+
+export interface MaCountHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: MaCountHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentMaCountHistory(
+  start: string,
+  end: string,
+): Promise<MaCountHistoryResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/ma-count/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      totalEligible: (it.totalEligible as number) ?? 0,
+      aboveMa20: (it.aboveMa20 as number) ?? 0,
+      aboveMa60: (it.aboveMa60 as number) ?? 0,
+      aboveBoth: (it.aboveBoth as number) ?? 0,
+      pctAboveMa20: (it.pctAboveMa20 as number) ?? 0,
+      pctAboveMa60: (it.pctAboveMa60 as number) ?? 0,
+      pctAboveBoth: (it.pctAboveBoth as number) ?? 0,
+      up5dCount: (it.up5dCount as number) ?? 0,
+      pctUp5d: (it.pctUp5d as number) ?? 0,
+      newLow60dCount: (it.newLow60dCount as number) ?? 0,
+      pctNewLow60d: (it.pctNewLow60d as number) ?? 0,
+      newHigh252dCount: (it.newHigh252dCount as number) ?? 0,
+      pctNewHigh252d: (it.pctNewHigh252d as number) ?? 0,
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export interface IndexReturnsHistoryItem {
+  tradeDate: string
+  code: string
+  name: string
+  current: number | null
+  currentDate: string | null
+  baseClose: number | null
+  baseDate: string | null
+  returnPct: number | null
+}
+
+export interface IndexReturnsHistoryResponse {
+  ok: boolean
+  window: number
+  start: string
+  end: string
+  count: number
+  items: IndexReturnsHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketPulseIndexReturnsHistory(
+  window: number = 5,
+  start: string,
+  end: string,
+): Promise<IndexReturnsHistoryResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-pulse/index-returns/history?window=${window}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, window, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    window: (data.window as number) ?? window,
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      code: String(it.code ?? ""),
+      name: String(it.name ?? ""),
+      current: (it.current as number) ?? null,
+      currentDate: (it.currentDate as string) ?? null,
+      baseClose: (it.baseClose as number) ?? null,
+      baseDate: (it.baseDate as string) ?? null,
+      returnPct: (it.returnPct as number) ?? null,
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Market Sentiment · 风险偏好 (沪深300 20日 - (511010 + 511090)/2 国债 ETF 20日)
+// 数据源: duckdb.risk_appetite_daily (持久化, cache-aside)
+// 归属: /market/sentiment 页面 (Market Sentiment 路由), 不是 market-pulse
+// ---------------------------------------------------------------------------
+export interface RiskAppetiteAsset {
+  /** 当前收盘价 (前复权) */
+  close: number | null
+  /** 当前 bar 的实际日期 (可能滞后于请求日期) */
+  currentDate: string | null
+  /** 20 个交易日前的 close */
+  baseClose: number | null
+  /** 20 个交易日前的实际日期 */
+  baseDate: string | null
+  /** window 日累计收益 % */
+  returnPct: number | null
+  /** 511010 / 511090 才有: 在综合 treasury 里的权重 (默认 0.5 / 0.5) */
+  weight?: number
+  /** 实际用到的 bar 数 (调试用) */
+  barsUsed?: number
+}
+
+export interface RiskAppetiteResponse {
+  ok: boolean
+  tradeDate: string
+  windowDays: number
+  hs300: RiskAppetiteAsset
+  treasury: {
+    "511010": RiskAppetiteAsset
+    "511090": RiskAppetiteAsset
+    weighted: { returnPct: number | null }
+  }
+  spread: {
+    "511010": number | null   // hs300 - 511010
+    "511090": number | null   // hs300 - 511090
+    weighted: number | null   // hs300 - (511010+511090)/2  ← 主指标
+  }
+  elapsedMs?: number
+  source?: string
+  fromCache?: boolean
+  error?: string
+}
+
+export async function fetchMarketSentimentRiskAppetite(date?: string): Promise<RiskAppetiteResponse> {
+  const url = date
+    ? `${API_BASE}/api/stock-chart/market-sentiment/risk-appetite?date=${encodeURIComponent(date)}`
+    : `${API_BASE}/api/stock-chart/market-sentiment/risk-appetite`
+  const res = await fetchWithRetry(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return {
+      ok: false, tradeDate: date ?? "", windowDays: 20,
+      hs300: { close: null, currentDate: null, baseClose: null, baseDate: null, returnPct: null },
+      treasury: {
+        "511010": { close: null, currentDate: null, baseClose: null, baseDate: null, returnPct: null, weight: 0.5 },
+        "511090": { close: null, currentDate: null, baseClose: null, baseDate: null, returnPct: null, weight: 0.5 },
+        weighted: { returnPct: null },
+      },
+      spread: { "511010": null, "511090": null, weighted: null },
+      error: `HTTP ${res.status}`,
+    }
+  }
+  const t = (data.treasury as Record<string, unknown>) || {}
+  const s = (data.spread as Record<string, unknown>) || {}
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? ""),
+    windowDays: (data.windowDays as number) ?? 20,
+    hs300: (data.hs300 as RiskAppetiteAsset) ?? { close: null, currentDate: null, baseClose: null, baseDate: null, returnPct: null },
+    treasury: {
+      "511010": (t["511010"] as RiskAppetiteAsset) ?? { close: null, currentDate: null, baseClose: null, baseDate: null, returnPct: null, weight: 0.5 },
+      "511090": (t["511090"] as RiskAppetiteAsset) ?? { close: null, currentDate: null, baseClose: null, baseDate: null, returnPct: null, weight: 0.5 },
+      weighted: (t.weighted as { returnPct: number | null }) ?? { returnPct: null },
+    },
+    spread: {
+      "511010": (s["511010"] as number | null) ?? null,
+      "511090": (s["511090"] as number | null) ?? null,
+      weighted: (s.weighted as number | null) ?? null,
+    },
+    elapsedMs: (data.elapsedMs as number) ?? undefined,
+    source: (data.source as string) ?? undefined,
+    fromCache: Boolean(data.fromCache),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 风险偏好 历史 (sparkline 用, 跟 ma-count history 同一模式)
+// ---------------------------------------------------------------------------
+export interface RiskAppetiteHistoryItem {
+  tradeDate: string
+  hs300ReturnPct: number | null
+  treasury511010ReturnPct: number | null
+  treasury511090ReturnPct: number | null
+  treasuryWeightedReturnPct: number | null
+  spread511010: number | null
+  spread511090: number | null
+  spreadWeighted: number | null
+  fromCache?: boolean
+}
+
+export interface RiskAppetiteHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: RiskAppetiteHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentRiskAppetiteHistory(
+  start: string,
+  end: string,
+): Promise<RiskAppetiteHistoryResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/risk-appetite/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => {
+      const hs = (it.hs300 as Record<string, unknown>) || {}
+      const t = (it.treasury as Record<string, unknown>) || {}
+      const s = (it.spread as Record<string, unknown>) || {}
+      const tw = (t.weighted as Record<string, unknown>) || {}
+      return {
+        tradeDate: String(it.tradeDate ?? ""),
+        hs300ReturnPct: (hs.returnPct as number | null) ?? null,
+        treasury511010ReturnPct: ((t["511010"] as Record<string, unknown>)?.returnPct as number | null) ?? null,
+        treasury511090ReturnPct: ((t["511090"] as Record<string, unknown>)?.returnPct as number | null) ?? null,
+        treasuryWeightedReturnPct: (tw.returnPct as number | null) ?? null,
+        spread511010: (s["511010"] as number | null) ?? null,
+        spread511090: (s["511090"] as number | null) ?? null,
+        spreadWeighted: (s.weighted as number | null) ?? null,
+        fromCache: Boolean(it.fromCache),
+      }
+    }),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Market Sentiment · 涨跌停情绪综合分 (短线情绪)
+//
+// 公式 (跟 backend/repositories/market/limit_repo.calc_limit_emotion_summary 一致):
+//   涨跌停比    = limit_up / max(limit_down, 1)
+//   炸板率      = broken / touched
+//   昨日涨停收益 = AVG(今日 changePct) for codes where 昨日 isLimitUp
+//   up_down_score       = clamp(50 + 25 * log2(ratio))            ∈ [0, 100]
+//   break_board_score   = clamp(100 - 100 * rate)                 ∈ [0, 100]   (反向)
+//   yesterday_return_score = clamp(50 + 10 * avg_return_pct)      ∈ [0, 100]
+//   composite = 0.4 * A + 0.3 * B + 0.3 * C
+//   level: hot (>=80) / active (>=60) / normal (>=40) / weak (>=20) / ice (<20)
+//
+// 归属: /market/sentiment 页面, 不是 market-pulse.
+// 后端路径: /api/stock-chart/market-sentiment/limit-emotion-summary
+// ---------------------------------------------------------------------------
+export type LimitEmotionLevel = "hot" | "active" | "normal" | "weak" | "ice"
+
+export interface LimitEmotionSummary {
+  ok: boolean
+  tradeDate: string
+  prevTradeDate: string | null
+  /** 今日涨停股数 */
+  limitUpCount: number
+  /** 今日跌停股数 */
+  limitDownCount: number
+  /** 今日盘中触板股数 (high >= 涨停价) */
+  touchedCount: number
+  /** 今日炸板股数 (触板但未封板) */
+  brokenCount: number
+  /** 炸板率 broken / touched, ∈ [0, 1], null when touched=0 */
+  breakBoardRate: number | null
+  /** 涨跌停比 = limitUp / max(limitDown, 1) */
+  limitUpDownRatio: number
+  /** 昨日涨停股数 */
+  yesterdayLimitUpCount: number
+  /** 昨日涨停股今日平均涨跌幅 (%) */
+  yesterdayLimitUpAvgReturn: number | null
+  components: {
+    upDownScore: number
+    breakBoardScore: number
+    yesterdayReturnScore: number
+  }
+  compositeScore: number
+  level: LimitEmotionLevel
+  elapsedMs?: number
+  source?: string
+  fromCache?: boolean
+  error?: string
+}
+
+export async function fetchMarketSentimentLimitEmotionSummary(
+  date?: string,
+): Promise<LimitEmotionSummary> {
+  const url = date
+    ? `${API_BASE}/api/stock-chart/market-sentiment/limit-emotion-summary?date=${encodeURIComponent(date)}`
+    : `${API_BASE}/api/stock-chart/market-sentiment/limit-emotion-summary`
+  const res = await fetchWithRetry(url)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return {
+      ok: false, tradeDate: date ?? "", prevTradeDate: null,
+      limitUpCount: 0, limitDownCount: 0, touchedCount: 0, brokenCount: 0,
+      breakBoardRate: null, limitUpDownRatio: 0,
+      yesterdayLimitUpCount: 0, yesterdayLimitUpAvgReturn: null,
+      components: { upDownScore: 0, breakBoardScore: 50, yesterdayReturnScore: 50 },
+      compositeScore: 0, level: "weak", error: `HTTP ${res.status}`,
+    }
+  }
+  const comp = (data.components as Record<string, unknown>) || {}
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? ""),
+    prevTradeDate: (data.prevTradeDate as string | null) ?? null,
+    limitUpCount: (data.limitUpCount as number) ?? 0,
+    limitDownCount: (data.limitDownCount as number) ?? 0,
+    touchedCount: (data.touchedCount as number) ?? 0,
+    brokenCount: (data.brokenCount as number) ?? 0,
+    breakBoardRate: (data.breakBoardRate as number | null) ?? null,
+    limitUpDownRatio: (data.limitUpDownRatio as number) ?? 0,
+    yesterdayLimitUpCount: (data.yesterdayLimitUpCount as number) ?? 0,
+    yesterdayLimitUpAvgReturn: (data.yesterdayLimitUpAvgReturn as number | null) ?? null,
+    components: {
+      upDownScore: (comp.upDownScore as number) ?? 0,
+      breakBoardScore: (comp.breakBoardScore as number) ?? 50,
+      yesterdayReturnScore: (comp.yesterdayReturnScore as number) ?? 50,
+    },
+    compositeScore: (data.compositeScore as number) ?? 0,
+    level: (data.level as LimitEmotionLevel) ?? "weak",
+    elapsedMs: (data.elapsedMs as number) ?? undefined,
+    source: (data.source as string) ?? undefined,
+    fromCache: Boolean(data.fromCache),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export interface LimitEmotionSummaryHistoryItem {
+  tradeDate: string
+  limitUpCount: number
+  limitDownCount: number
+  touchedCount: number
+  brokenCount: number
+  breakBoardRate: number | null
+  limitUpDownRatio: number
+  yesterdayLimitUpCount: number
+  yesterdayLimitUpAvgReturn: number | null
+  compositeScore: number
+  level: LimitEmotionLevel
+  fromCache?: boolean
+}
+
+export interface LimitEmotionSummaryHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: LimitEmotionSummaryHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentLimitEmotionSummaryHistory(
+  start: string,
+  end: string,
+): Promise<LimitEmotionSummaryHistoryResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/limit-emotion-summary/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      limitUpCount: (it.limitUpCount as number) ?? 0,
+      limitDownCount: (it.limitDownCount as number) ?? 0,
+      touchedCount: (it.touchedCount as number) ?? 0,
+      brokenCount: (it.brokenCount as number) ?? 0,
+      breakBoardRate: (it.breakBoardRate as number | null) ?? null,
+      limitUpDownRatio: (it.limitUpDownRatio as number) ?? 0,
+      yesterdayLimitUpCount: (it.yesterdayLimitUpCount as number) ?? 0,
+      yesterdayLimitUpAvgReturn: (it.yesterdayLimitUpAvgReturn as number | null) ?? null,
+      compositeScore: (it.compositeScore as number) ?? 0,
+      level: (it.level as LimitEmotionLevel) ?? "weak",
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 三大指数 1m K (Market Pulse 顶部 3 张指数卡联动)
 // ---------------------------------------------------------------------------
 export interface IndexKlinePoint {

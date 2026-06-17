@@ -29,6 +29,18 @@ from backend.services.scheduler.market_overview_scheduler import (
     is_market_overview_scheduler_enabled,
     start_market_overview_scheduler,
 )
+from backend.services.scheduler.daily_eod_incremental_scheduler import (
+    is_daily_eod_incremental_scheduler_enabled,
+    start_daily_eod_incremental_scheduler,
+)
+from backend.services.scheduler.tdx_hsjday_download_scheduler import (
+    is_tdx_hsjday_download_scheduler_enabled,
+    start_tdx_hsjday_download_scheduler,
+)
+from backend.services.scheduler.market_overview_daily_scheduler import (
+    is_market_overview_daily_scheduler_enabled,
+    start_market_overview_daily_scheduler,
+)
 from backend.services.scheduler.ths_industry_constituents_scheduler import (
     is_ths_industry_constituents_scheduler_enabled,
     start_ths_industry_constituents_scheduler,
@@ -103,3 +115,18 @@ def register_blueprints(app: Flask) -> None:
             start_ths_industry_constituents_daily_scheduler()
         except Exception as exc:
             logger.exception('THS Industry Constituents Daily scheduler start failed: %s', exc)
+    if is_daily_eod_incremental_scheduler_enabled():
+        try:
+            start_daily_eod_incremental_scheduler()
+        except Exception as exc:
+            logger.exception('Daily EOD Incremental scheduler start failed: %s', exc)
+    if is_tdx_hsjday_download_scheduler_enabled():
+        try:
+            start_tdx_hsjday_download_scheduler()
+        except Exception as exc:
+            logger.exception('TDX hsjday download scheduler start failed: %s', exc)
+    if is_market_overview_daily_scheduler_enabled():
+        try:
+            start_market_overview_daily_scheduler()
+        except Exception as exc:
+            logger.exception('Market Overview Daily scheduler start failed: %s', exc)

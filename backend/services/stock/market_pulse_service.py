@@ -181,6 +181,15 @@ def build_capital_flow(top_n: int = 20) -> dict[str, Any]:
     outflow = sorted([r for r in rows if r["mainNet"] <= 0], key=lambda r:  r["mainNet"])
 
     elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
+
+    # 顺手落 duckdb (字段级 INSERT OR REPLACE, 失败不影响主流程)
+    try:
+        from backend.repositories.market.market_pulse_sector_repo import upsert_sector_spot
+        upsert_sector_spot(rows, trade_date=date.today(),
+                           source="akshare.stock_fund_flow_industry")
+    except Exception as exc:
+        logger.debug("upsert_sector_spot to duckdb failed (non-fatal): %s", exc)
+
     return {
         "ok": True,
         "kind": "akshare.industry",

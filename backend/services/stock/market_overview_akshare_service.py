@@ -375,6 +375,14 @@ def capture_snapshot(*, force: bool = False, source: str = "akshare") -> dict[st
             payload.get("mainNetInflow") or 0,
             payload.get("prevDayTradingDate") or "none",
         )
+
+        # 顺手落 duckdb (字段级 upsert, 失败不影响主流程, 已有 eltdx 字段不覆盖)
+        try:
+            from backend.repositories.market.market_overview_repo import upsert_overview_akshare
+            upsert_overview_akshare(payload)
+        except Exception as exc:
+            logger.debug("upsert_overview_akshare to duckdb failed (non-fatal): %s", exc)
+
         return payload
 
 

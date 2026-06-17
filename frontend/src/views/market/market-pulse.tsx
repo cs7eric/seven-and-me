@@ -10,6 +10,8 @@ import {
   fetchMarketHeatmap,
   fetchMarketPulseHistory,
   fetchManualFundFlow,
+  fetchMarketPulseIndexReturns,
+  fetchMarketPulseIndexReturnsHistory,
   type StyleSectorItem,
   type MarketOverview,
   type MarketOverviewEltdx,
@@ -18,6 +20,8 @@ import {
   type ManualFundFlow,
   type IndustryConstituentsIndexResponse,
   type StyleSectorConstituent,
+  type IndexReturnItem,
+  type IndexReturnsHistoryItem,
 } from "@/lib/api"
 import { formatReadable } from "./lib/format"
 import { getMostRecentTradingDayClient, getPrevTradingDayClient, isTradeTimeClient } from "./lib/trading-time"
@@ -57,6 +61,11 @@ export default function MarketPulsePage() {
   // 不用 latest.json 里 stale 的 prevDayFlow, 否则用户粘贴 manual 6-15 时,
   // diff 会拿 6-11 的数据去减, 错一天)
   const [history, setHistory] = useState<MarketHistoryResponse | null>(null)
+
+  // 宽基指数 5 日收益 (后端 duckdb.index_daily_raw): 沪深300 / 中证1000
+  const [indexReturns, setIndexReturns] = useState<IndexReturnItem[] | null>(null)
+  // 宽基指数 5 日收益历史 (后端 index_returns_daily): sparkline 用
+  const [indexReturnsHistory, setIndexReturnsHistory] = useState<IndexReturnsHistoryItem[] | null>(null)
 
   // 风格板块 成分股 drawer (复用 industry-constituents-drawer, 走 external data 模式)
   const [constituentsOpen, setConstituentsOpen] = useState(false)
@@ -206,6 +215,35 @@ export default function MarketPulsePage() {
   }
 
   /**
+   * 拉宽基 5 日收益: 沪深300 / 中证1000.
+   * 失败不阻塞.
+   */
+  const loadIndexReturns = async (days: number = 5) => {
+    try {
+      const res = await fetchMarketPulseIndexReturns(days)
+      setIndexReturns(res.items ?? [])
+    } catch {
+      setIndexReturns(null)
+    }
+  }
+
+  /**
+   * 拉宽基指数 5 日收益历史 (近 30 天, sparkline 用).
+   */
+  const loadIndexReturnsHistory = async () => {
+    try {
+      const end = activeTradingDate
+      const startDate = new Date(end)
+      startDate.setDate(startDate.getDate() - 30)
+      const startStr = startDate.toISOString().slice(0, 10)
+      const res = await fetchMarketPulseIndexReturnsHistory(5, startStr, end)
+      setIndexReturnsHistory(res.items ?? [])
+    } catch {
+      setIndexReturnsHistory(null)
+    }
+  }
+
+  /**
    * 把后端 constituents 映射到 14 列 IndustryConstituentsIndexResponse 形状,
    * 喂给现成的 IndustryConstituentsDrawer (external data 模式).
    *
@@ -297,6 +335,8 @@ export default function MarketPulsePage() {
     void loadHeatmap()
     void loadManualFundFlow(getMostRecentTradingDayClient())
     void loadHistory("60d")
+    void loadIndexReturns(5)
+    void loadIndexReturnsHistory()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -367,6 +407,8 @@ export default function MarketPulsePage() {
             setSelectedPoint((cur) => (cur?.date === point.date ? null : point))
           }}
           onPointHover={handlePointHover}
+          indexReturns={indexReturns}
+          indexReturnsHistory={indexReturnsHistory}
         />
 
         {/* === 风格板块涨跌幅 (29 个, 来自 /api/stock-chart/style-sectors) === */}

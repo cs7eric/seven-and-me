@@ -76,6 +76,24 @@ from backend.services.scheduler.market_pulse_scheduler import (
     trigger_market_pulse_close_snapshot_now,
     trigger_market_pulse_snapshot_now,
 )
+from backend.services.scheduler.daily_eod_incremental_scheduler import (
+    get_daily_eod_incremental_scheduler_status,
+    run_daily_eod_incremental_now,
+    start_daily_eod_incremental_scheduler,
+    stop_daily_eod_incremental_scheduler,
+)
+from backend.services.scheduler.tdx_hsjday_download_scheduler import (
+    get_tdx_hsjday_download_scheduler_status,
+    run_tdx_hsjday_download_now,
+    start_tdx_hsjday_download_scheduler,
+    stop_tdx_hsjday_download_scheduler,
+)
+from backend.services.scheduler.market_overview_daily_scheduler import (
+    get_market_overview_daily_scheduler_status,
+    run_market_overview_daily_now,
+    start_market_overview_daily_scheduler,
+    stop_market_overview_daily_scheduler,
+)
 from backend.services.stock.market_overview_eltdx_service import capture_overview
 from backend.utils.json_io import read_json_file, write_json_file
 
@@ -93,6 +111,12 @@ _KNOWN_JOB_IDS = {
     'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
     # eltdx overview (全A成交额/涨跌家数): 由同一个 market_overview_scheduler 管理
     'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+    # 每日 EOD 17:00 增量入 duckdb (daily_raw + limit_emotion_summary)
+    'daily_eod_incremental',
+    # 工作日 16:30 下载 TDX hsjday.zip 并覆盖 reference/tdx/day/hsjday
+    'tdx_hsjday_download',
+    # 工作日 17:10 把大盘成交额 / 主力净流入 / 90 行业 回填 duckdb (market_overview_daily + market_pulse_sector_daily)
+    'market_overview_daily',
     # 测试用 job: 无对应 scheduler 模块, 用来演示"删除后重启不自动恢复"
     'test_scheduler_demo',
 }
@@ -163,6 +187,9 @@ def _supports_enable(job_id: str) -> bool:
         'market_pulse_inside', 'market_pulse_close', 'market_pulse_constituents',
         'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
         'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
+        'daily_eod_incremental',
+        'tdx_hsjday_download',
+        'market_overview_daily',
         'test_scheduler_demo',
     }
 
@@ -189,6 +216,12 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
     }:
         return get_market_overview_scheduler_status()
+    if job_id == 'daily_eod_incremental':
+        return get_daily_eod_incremental_scheduler_status()
+    if job_id == 'tdx_hsjday_download':
+        return get_tdx_hsjday_download_scheduler_status()
+    if job_id == 'market_overview_daily':
+        return get_market_overview_daily_scheduler_status()
     return {}
 
 
@@ -214,6 +247,12 @@ def _start_scheduler(job_id: str) -> None:
         # market_overview scheduler 是一个整体, 启动/停止作用于所有 6 个 job
         # (start_market_overview_scheduler 是幂等的, 多次调用安全)
         start_market_overview_scheduler()
+    elif job_id == 'daily_eod_incremental':
+        start_daily_eod_incremental_scheduler()
+    elif job_id == 'tdx_hsjday_download':
+        start_tdx_hsjday_download_scheduler()
+    elif job_id == 'market_overview_daily':
+        start_market_overview_daily_scheduler()
 
 
 def _stop_scheduler(job_id: str) -> None:
@@ -237,6 +276,12 @@ def _stop_scheduler(job_id: str) -> None:
     }:
         # 整体停掉 market_overview_scheduler (会暂停 APScheduler)
         stop_market_overview_scheduler()
+    elif job_id == 'daily_eod_incremental':
+        stop_daily_eod_incremental_scheduler()
+    elif job_id == 'tdx_hsjday_download':
+        stop_tdx_hsjday_download_scheduler()
+    elif job_id == 'market_overview_daily':
+        stop_market_overview_daily_scheduler()
 
 
 def _trigger_scheduler(job_id: str) -> dict[str, Any]:
@@ -322,6 +367,12 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
             'count': 1,
             'failed_count': 0,
         }
+    if job_id == 'daily_eod_incremental':
+        return run_daily_eod_incremental_now()
+    if job_id == 'tdx_hsjday_download':
+        return run_tdx_hsjday_download_now()
+    if job_id == 'market_overview_daily':
+        return run_market_overview_daily_now()
     # test_scheduler_demo: 测试 entry, 没有对应 scheduler, trigger / start / stop 都返回错误
     if job_id == 'test_scheduler_demo':
         return {'ok': False, 'error': 'test_scheduler_demo 是测试 entry, 没有对应 scheduler 模块; 用来演示 jobs.json 注册表 CRUD'}

@@ -1,0 +1,27 @@
+{
+  "name": "tdx_hsjday_download",
+  "description": "工作日 16:30 触发, 调 scripts/download_tdx_hsjday.py 下载 TDX hsjday.zip (~538MB), 解压到 reference/stock/download/{date}/, 备份旧 reference/tdx/day/hsjday, mv 新 hsjday 覆盖 target; 失败回滚",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "run_time": "16:30",
+    "run_once_per_day": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "lastRunAt": "2026-06-17T21:51:43",
+  "lastRunOk": true,
+  "lastRunError": null,
+  "lastRunDate": "2026-06-17",
+  "lastZipPath": "F:\\dev-repo\\mp4-to-word-new\\reference\\stock\\download\\2026-06-17\\hsjday.zip",
+  "lastDayFileCount": null,
+  "lastDownloadBytes": null,
+  "lastDurationSeconds": 14.5,
+  "totalRuns": 1,
+  "totalFailures": 0,
+  "schedulerStartedAt": "2026-06-17T22:24:46",
+  "running": true,
+  "stoppedAt": "2026-06-17T21:51:58",
+  "job_name": "tdx_hsjday_download",
+  "_saved_at": "2026-06-17T21:51:58.156389"
+}

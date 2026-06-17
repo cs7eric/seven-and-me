@@ -1,0 +1,26 @@
+{
+  "name": "market_overview_daily",
+  "description": "工作日 17:10 触发, 调 scripts/backfill_market_overview_daily.py 扫本地 JSON archive, 把 (1) akshare 资金流 + spot_em 全 A 涨跌家数 (2) eltdx 涨跌家数 / 成交额 (3) akshare 90 行业 涨跌幅 / 流入流出 / 主力净流入 全部 upsert 到 duckdb (market_overview_daily + market_pulse_sector_daily 表). 全部走 INSERT OR REPLACE / 字段级 UPSERT, 幂等. 周末 / 节假日由 is_trading_day 二次过滤. 预计耗时 < 30s (扫 60 天 archive).",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "run_time": "17:10",
+    "run_once_per_day": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "lastRunAt": null,
+  "lastRunOk": null,
+  "lastRunError": null,
+  "lastDurationSeconds": null,
+  "lastDaysRequested": null,
+  "lastAkshareUpserted": null,
+  "lastEltdxUpserted": null,
+  "lastSectorDays": null,
+  "lastOverviewCoverage": null,
+  "lastSectorCoverage": null,
+  "totalRuns": 0,
+  "totalFailures": 0,
+  "schedulerStartedAt": "2026-06-17T22:24:46",
+  "running": true
+}

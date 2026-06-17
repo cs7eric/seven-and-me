@@ -1,21 +1,21 @@
 {
   "name": "market_overview_snapshot",
   "enabled": true,
-  "lastRunAt": "2026-06-16T15:35:00",
+  "lastRunAt": "2026-06-17T15:35:00",
   "lastRunOk": false,
   "lastRunError": "force snapshot returned None",
-  "lastInsideRefreshAt": "2026-06-16T14:58:31",
-  "lastCloseSnapshotAt": "2026-06-16T15:35:00",
-  "lastWarmupAt": "2026-06-16T09:00:00",
-  "totalInside": 38,
+  "lastInsideRefreshAt": "2026-06-17T14:56:37",
+  "lastCloseSnapshotAt": "2026-06-17T15:35:00",
+  "lastWarmupAt": "2026-06-17T09:00:00",
+  "totalInside": 40,
   "totalClose": 1,
   "totalWarmup": 0,
-  "schedulerStartedAt": "2026-06-17T08:36:35",
+  "schedulerStartedAt": "2026-06-17T22:24:46",
   "lastInside": {
-    "tradingDate": "2026-06-16",
+    "tradingDate": "2026-06-17",
     "totalAmount": null,
-    "mainNetInflow": 1359.12,
-    "elapsedMs": 6767
+    "mainNetInflow": -5.06,
+    "elapsedMs": 7502
   },
   "lastClose": {
     "tradingDate": "2026-06-12",

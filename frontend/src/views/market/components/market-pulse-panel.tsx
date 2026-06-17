@@ -35,6 +35,10 @@ interface Props {
   selectedPoint?: MarketHistoryPoint | null
   /** 父组件当前 hover 的 point; panel 算出 hoveredIndex 喂给 chart 高亮 (蓝色) */
   hoveredPoint?: MarketHistoryPoint | null
+  /** 透传给 PulseStats: 宽基指数 N 日收益 (后端 duckdb) */
+  indexReturns?: import("@/lib/api").IndexReturnItem[] | null
+  /** 透传给 PulseStats: 宽基指数收益历史 (sparkline 用) */
+  indexReturnsHistory?: import("@/lib/api").IndexReturnsHistoryItem[] | null
 }
 
 const VIEW_TABS: Array<{ key: PulseView; label: string }> = [
@@ -68,6 +72,8 @@ export function MarketPulsePanel({
   onPointHover,
   selectedPoint = null,
   hoveredPoint = null,
+  indexReturns = null,
+  indexReturnsHistory = null,
 }: Props) {
   const [view, setView] = useState<PulseView>(defaultView)
   const [range, setRange] = useState<PulseRange>("60d")
@@ -207,7 +213,13 @@ export function MarketPulsePanel({
       </div>
 
       {/* 底部洞察小指标 */}
-      {hasData && <PulseStats data={items} />}
+      {hasData && (
+        <PulseStats
+          data={items}
+          indexReturns={indexReturns}
+          indexReturnsHistory={indexReturnsHistory}
+        />
+      )}
     </div>
   )
 }

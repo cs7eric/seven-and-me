@@ -237,6 +237,13 @@ def save_overview(payload: dict) -> None:
             tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(OVERVIEW_LATEST_FILE)
             logger.info("eltdx overview latest saved: %s", OVERVIEW_LATEST_FILE.name)
+
+            # 顺手落 duckdb (字段级 upsert, 已有 akshare 字段不覆盖)
+            try:
+                from backend.repositories.market.market_overview_repo import upsert_overview_eltdx
+                upsert_overview_eltdx(payload)
+            except Exception as exc:
+                logger.debug("upsert_overview_eltdx to duckdb failed (non-fatal): %s", exc)
         else:
             logger.info(
                 "eltdx overview 无实质数据 (totalAmount=None), latest.json 保留旧内容"

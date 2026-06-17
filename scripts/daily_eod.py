@@ -9,6 +9,12 @@ Runs each trading day after market close:
   5. fallback_remaining_ashares.py — copy raw → qfq/hfq for 614 A-shares
                                     eltdx missed (mostly delisted)
   6. validate_daily_raw.py       — OHLC / gap / unit-scale / stale checks
+  7. fetch_index_history.py      — pull 沪深300/中证1000 daily K → index_daily_raw
+                                    (Market Pulse "宽基指数 5 日收益" 用, 走 tencent
+                                    一次 1.3s 写 60 行, 不影响主流程)
+  8. backfill_ma_count_and_returns.py — 算当日 MA 计数 + 5/10/20/60 日收益快照
+                                    → 落 ma_count_daily + index_returns_daily
+                                    (cache-aside: 让 Market Pulse 趋势图 0.8ms 查)
 
 Each step logs to stdout with timing. Steps are independent: failure of one
 does not block the next.
@@ -33,12 +39,14 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 
 STEPS = [
-    ("1/6 拉日线 → daily_raw",                       ["initial_backfill.py"]),
-    ("2/6 拉 qfq/hfq via eltdx (parallel)",          ["fetch_eltdx_adjusted_kline.py"]),
-    ("3/6 兜底 指数/B股 (raw → qfq/hfq)",             ["fallback_indices_b_shares.py"]),
-    ("4/6 兜底 ETF (raw → qfq/hfq, 125 只)",          ["fallback_etfs.py"]),
-    ("5/6 兜底 剩余 A 股 (raw → qfq/hfq, 614 只)",    ["fallback_remaining_ashares.py"]),
-    ("6/6 完整性校验",                                ["validate_daily_raw.py"]),
+    ("1/8 拉日线 → daily_raw",                       ["initial_backfill.py"]),
+    ("2/8 拉 qfq/hfq via eltdx (parallel)",          ["fetch_eltdx_adjusted_kline.py"]),
+    ("3/8 兜底 指数/B股 (raw → qfq/hfq)",             ["fallback_indices_b_shares.py"]),
+    ("4/8 兜底 ETF (raw → qfq/hfq, 125 只)",          ["fallback_etfs.py"]),
+    ("5/8 兜底 剩余 A 股 (raw → qfq/hfq, 614 只)",    ["fallback_remaining_ashares.py"]),
+    ("6/8 完整性校验",                                ["validate_daily_raw.py"]),
+    ("7/8 拉宽基指数 → index_daily_raw",              ["fetch_index_history.py", "--days=2"]),
+    ("8/8 算+落 MA 计数 + 指数收益快照",               ["backfill_ma_count_and_returns.py", "--days=1", "--force"]),
 ]
 
 
@@ -71,10 +79,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--skip-qfq", action="store_true",
                     help="Skip all qfq-related steps (steps 2-5).")
+    ap.add_argument("--skip-index", action="store_true",
+                    help="Skip step 7 (index K-line pull).")
+    ap.add_argument("--skip-metrics", action="store_true",
+                    help="Skip step 8 (MA count + index returns snapshot).")
     ap.add_argument("--no-date-check", action="store_true",
                     help="Don't check weekday; run on any day.")
     ap.add_argument("--only", type=str, default=None,
-                    help="Run only this step (1-6).")
+                    help="Run only this step (1-8).")
     args = ap.parse_args()
 
     today = date.today()
@@ -85,7 +97,11 @@ def main():
 
     steps = list(STEPS)
     if args.skip_qfq:
-        steps = [s for s in steps if s[0].startswith(("1/", "6/"))]
+        steps = [s for s in steps if s[0].startswith(("1/", "6/", "7/", "8/"))]
+    if args.skip_index:
+        steps = [s for s in steps if not s[0].startswith("7/")]
+    if args.skip_metrics:
+        steps = [s for s in steps if not s[0].startswith("8/")]
     if args.only:
         steps = [steps[int(args.only) - 1]]
 
