@@ -37,6 +37,7 @@ BASE = Path(__file__).resolve().parent.parent.parent.parent / "reference"
 OVERVIEW_DIR = BASE / "market-overview"
 OVERVIEW_LATEST_FILE = OVERVIEW_DIR / "market-overview" / "latest.json"
 OVERVIEW_ARCHIVE_DIR = OVERVIEW_DIR / "market-overview" / "archive"
+MARKET_LIMIT_DAILY_DIR = BASE / "market-limit" / "daily"
 
 
 def _beijing_now() -> datetime:
@@ -246,7 +247,12 @@ def save_overview(payload: dict) -> None:
 # 读取 latest (带 archive fallback)
 # ---------------------------------------------------------------------------
 def get_latest_overview() -> dict:
-    """读 eltdx overview latest, fallback 到 archive 同日, 再 fallback 到上一交易日."""
+    """读 eltdx overview latest, fallback 到 archive 同日, 再 fallback 到上一交易日.
+
+    limitUpCount / limitDownCount: 优先用 market-limit/daily/<date>.json (跟涨跌停情绪面板
+    走同一份 daily file, 涨跌停口径一致 — 用各板块 9.95/19.95/29.95/4.95 阈值,
+    不是 eltdx overview 自己的 9.5% 宽松口径). daily file 缺失才回退到 eltdx 算的.
+    """
     candidates: list[dict] = []
 
     # 1) latest
@@ -308,6 +314,58 @@ def get_latest_overview() -> dict:
         else:
             chosen.setdefault("prevDayTotalAmount", None)
             chosen.setdefault("prevDayTradingDate", None)
+
+    # limitUp/limitDown: 用 market-limit/daily/<tradingDate>.json 的准确数 (跟涨跌停情绪面板一致).
+    # eltdx 自己的 limitUp/limitDown 用 9.5% 宽松口径 (不区分板块), 跟涨跌停情绪不一致 —
+    # 涨跌停情绪用 9.95/19.95/29.95/4.95 (板块区分) + isLimitUp 字段. 优先用 daily file 覆盖.
+    # 同样过 limit_emotion 的 config 过滤 (excludeST 默认 True, excludeNewStock 默认 False),
+    # 这样 大盘卡片 跟 涨跌停面板 显示同一份数 (不会 142 vs 113 打架).
+    trading_date = chosen.get("tradingDate") or today
+    daily_path = MARKET_LIMIT_DAILY_DIR / f"{trading_date}.json"
+    if daily_path.exists():
+        try:
+            daily_blob = json.loads(daily_path.read_text(encoding="utf-8"))
+            stocks = daily_blob.get("stocks") or []
+            if stocks:
+                # 跟 涨跌停面板 同口径 — 走 limit_emotion_service._apply_filters
+                # is_st 二次用 universe meta 确认, 跟 _aggregate_from_daily 一致
+                # (避免 name 缺失导致漏判 ST / 新股)
+                from backend.services.stock.limit_emotion_service import (
+                    _apply_filters, _is_st, _infer_exchange_from_bare_code, _load_universe_meta,
+                )
+                universe_meta = _load_universe_meta()
+                as_quotes: list[dict] = []
+                for s in stocks:
+                    code = (s.get("code") or "").lower()
+                    name = s.get("name") or ""
+                    meta = universe_meta.get(code) or {}
+                    is_st_flag = bool(
+                        s.get("isST") or _is_st(name) or meta.get("is_st", False)
+                    )
+                    as_quotes.append({
+                        "code": code,
+                        "last_price": s.get("latestPrice"),
+                        "pre_close_price": None,
+                        "change_pct": s.get("changePct"),
+                        "high_price": s.get("highPrice"),
+                        "exchange": (meta.get("exchange") or _infer_exchange_from_bare_code(code)).lower(),
+                        "is_st": is_st_flag,
+                        "is_new": bool(meta.get("is_new", False)),
+                        "is_suspended": not (s.get("latestPrice") and float(s.get("latestPrice") or 0) > 0),
+                    })
+                # 用跟 limit_emotion_service 一样的默认 config (跟 _load_config 行为一致)
+                # _load_config 合并 DEFAULT_CONFIG, 这里直接 inline:
+                from backend.services.stock.limit_emotion_service import DEFAULT_CONFIG
+                filtered = _apply_filters(as_quotes, DEFAULT_CONFIG)
+                keep_codes = {q["code"] for q in filtered}
+                stocks_filtered = [s for s in stocks if (s.get("code") or "").lower() in keep_codes]
+                up_n = sum(1 for s in stocks_filtered if s.get("isLimitUp"))
+                dn_n = sum(1 for s in stocks_filtered if s.get("isLimitDown"))
+                chosen["limitUpCount"] = up_n
+                chosen["limitDownCount"] = dn_n
+        except Exception as exc:
+            logger.debug("read daily %s for limit counts failed: %s", daily_path, exc)
+
     return chosen
 
 

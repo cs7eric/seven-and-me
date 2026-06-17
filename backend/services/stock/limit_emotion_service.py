@@ -56,7 +56,7 @@ _UNIVERSE_TTL_SECONDS = 60 * 30  # 30 分钟
 # ---------------------------------------------------------------------------
 DEFAULT_CONFIG: dict[str, Any] = {
     "excludeST": True,
-    "excludeNewStock": True,
+    "excludeNewStock": False,   # 不再默认过滤新股 — 涨停情绪面板要看到 4 板新股 (e.g. 盛龙股份)
     "excludeSuspended": True,
     "marketScope": ["SH", "SZ", "BJ"],
     "limitPriceTolerance": 0.0001,
@@ -1097,6 +1097,197 @@ def _assemble_from_realtime(
 
 
 # ---------------------------------------------------------------------------
+# 6.5. DuckDB 适配层 — 离线 / Mock Workspace 路径
+#
+# 从 daily_raw + stock_universe 实时算 limitEmotion, 跟现有 API 形状一致.
+# 跟 _assemble_from_realtime (eltdx 实时) 和 _aggregate_from_daily
+# (reference/market-limit/daily/*.json) 互为补充:
+#   - 盘前 / 非交易日: 替代 daily archive (不需要持久化 daily 文件, 实时算)
+#   - Mock Workspace 离线开发: 优先走这里 (eltdx 网络依赖重)
+#   - realtime 失败的兜底
+#
+# 字段映射:
+#   - 涨停/跌停/触板/炸板/isLimitUp/isTouchedLimitUp/isBrokenLimitUp/limitUpStreak 等
+#     直接复用 limit_repo.snapshot 算好的 (跟 realtime 路径算两次不一致, 这里用一次)
+#   - isLimitDown: limit_repo 没出, 从 changePct 反推 pre_close 走同样的阈值逻辑
+#   - industry/concepts: 走 _enrich_stock (跟 realtime 一致)
+#   - isNew: 走 _load_universe_meta (跟 realtime 一致)
+# ---------------------------------------------------------------------------
+def _assemble_from_duckdb(
+    today: date,
+    source: str = "duckdb.daily_raw",
+) -> dict[str, Any] | None:
+    """从 duckdb 算 limitEmotion, 跟现有 payload 形状一致. 失败/无数据返回 None."""
+    try:
+        from backend.repositories.market import limit_repo as _limit_repo
+    except Exception as exc:
+        logger.debug("duckdb import failed: %s", exc)
+        return None
+
+    try:
+        snap = _limit_repo.get_today_limit_snapshot(today)
+    except Exception as exc:
+        logger.warning("duckdb get_today_limit_snapshot(%s) failed: %s", today, exc)
+        return None
+    if not snap:
+        return None
+
+    config = _load_config()
+    tolerance = float(config.get("limitPriceTolerance") or 0.0001)
+    universe_meta = _load_universe_meta()
+
+    # 把 snap 转成 quote 形态, 走 _apply_filters (排除 ST / 新股 / 暂停 / 非沪深京)
+    as_quotes: list[dict[str, Any]] = []
+    for r in snap:
+        code = (r.get("code") or "").lower()
+        meta = (
+            universe_meta.get(code)
+            or universe_meta.get(code[2:] if len(code) == 8 and code[:2] in ("sh", "sz", "bj") else code)
+            or {}
+        )
+        name = r.get("name") or meta.get("name") or ""
+        is_st = bool(r.get("isST") or _is_st(name) or meta.get("is_st", False))
+        is_new = bool(meta.get("is_new", False))
+        bare = code[2:] if len(code) == 8 and code[:2] in ("sh", "sz", "bj") else code
+        ex = (meta.get("exchange") or (code[:2] if code[:2] in ("sh", "sz", "bj") else "")).lower()
+        as_quotes.append({
+            "code": code,
+            "name": name,
+            "last_price": r.get("latestPrice"),
+            "pre_close_price": None,  # 不影响 filter
+            "change_pct": r.get("changePct"),
+            "high_price": r.get("highPrice"),
+            "exchange": ex,
+            "is_st": is_st,
+            "is_new": is_new,
+            "is_suspended": not (r.get("latestPrice") and float(r.get("latestPrice") or 0) > 0),
+        })
+    filtered = _apply_filters(as_quotes, config)
+    keep_codes = {q["code"] for q in filtered}
+    snap_filtered = [r for r in snap if (r.get("code") or "").lower() in keep_codes]
+
+    # 拼 today_rows: 复用 duckdb 已算的字段, 只补 isLimitDown
+    today_rows: list[dict[str, Any]] = []
+    for r in snap_filtered:
+        code = (r.get("code") or "").lower()
+        is_up = bool(r.get("isLimitUp"))
+        is_touched = bool(r.get("isTouchedLimitUp"))
+        is_broken = bool(r.get("isBrokenLimitUp"))
+        prev_streak = int(r.get("previousLimitUpStreak") or 0)
+        cur_streak = int(r.get("limitUpStreak") or 0)
+        cp = r.get("changePct")
+        latest = r.get("latestPrice")
+
+        # isLimitDown: 跟 realtime 路径一致 — 从 changePct 反推 pre_close, 用同样的阈值
+        is_down = False
+        down_price = None
+        if cp is not None and not is_up and latest is not None:
+            try:
+                is_st_flag = bool(r.get("isST"))
+                base = 4.95 if is_st_flag else _threshold_for(code)
+                cp_f = float(cp)
+                if cp_f > -100:
+                    pre_close = float(latest) / (1.0 + cp_f / 100.0)
+                    if pre_close > 0:
+                        down_price = round(pre_close * (1 - base / 100.0), 4)
+                        is_down = float(latest) <= down_price * (1 + tolerance)
+            except (TypeError, ValueError):
+                pass
+
+        today_rows.append({
+            "code": code,
+            "name": r.get("name") or "",
+            "latestPrice": latest,
+            "highPrice": r.get("highPrice"),
+            "limitUpPrice": r.get("limitUpPrice"),
+            "limitDownPrice": down_price,
+            "changePct": cp,
+            "isLimitUp": is_up,
+            "isLimitDown": is_down,
+            "isTouchedLimitUp": is_touched,
+            "isBrokenLimitUp": is_broken,
+            "previousLimitUpStreak": prev_streak,
+            "limitUpStreak": cur_streak,
+            "isPromoted": bool(is_up and prev_streak > 0),
+            "isBrokenStreak": bool((not is_up) and prev_streak > 0),
+        })
+
+    # 限价统计
+    limit_up_stocks = [r for r in today_rows if r["isLimitUp"]]
+    limit_down_stocks = [r for r in today_rows if r["isLimitDown"]]
+    touched_stocks = [r for r in today_rows if r["isTouchedLimitUp"]]
+    broken_stocks = [r for r in today_rows if r["isBrokenLimitUp"]]
+    touched_count = len(touched_stocks)
+    broken_count = len(broken_stocks)
+    rate = round(broken_count / touched_count, 4) if touched_count > 0 else None
+    status = "ready" if touched_count > 0 else "unavailable"
+
+    # 连板 (复用现有 calculate_streak / calculate_streak_sentiment)
+    streak = calculate_streak(today_rows, config)
+    sentiment = calculate_streak_sentiment(streak, {"rate": rate})
+
+    now = _beijing_now()
+    return {
+        "limitUp": {
+            "count": len(limit_up_stocks),
+            "label": "涨停",
+            "stocks": [
+                _enrich_stock(r["code"], r["name"], r.get("changePct"), limitUpPrice=r.get("limitUpPrice"))
+                for r in limit_up_stocks
+            ],
+        },
+        "limitDown": {
+            "count": len(limit_down_stocks),
+            "label": "跌停",
+            "stocks": [
+                _enrich_stock(r["code"], r["name"], r.get("changePct"), limitDownPrice=r.get("limitDownPrice"))
+                for r in limit_down_stocks
+            ],
+        },
+        "breakBoard": {
+            "touchedCount": touched_count,
+            "brokenCount": broken_count,
+            "rate": rate,
+            "status": status,
+            "label": "炸板率",
+            "brokenStocks": [
+                _enrich_stock(r["code"], r["name"], None)
+                for r in broken_stocks[:20]
+            ],
+        },
+        "streak": {
+            "maxHeight": streak["maxHeight"],
+            "label": "连板高度",
+            "leaders": streak["leaders"],
+            "distribution": streak["distribution"],
+            "promotion": streak["promotion"],
+            "broken": streak["broken"],
+            "sentiment": sentiment,
+        },
+        "_meta": {
+            "stockCount": len(filtered),
+            "source": source,
+            "previousTradeDate": None,
+            "updateTime": now.isoformat(timespec="seconds"),
+            "dataStatus": "normal",
+        },
+    }
+
+
+def _duckdb_latest_trading_day() -> date | None:
+    """从 daily_raw 找最近一个有数据的交易日 (兜底给非交易日用)."""
+    try:
+        from backend.adapters.market.duckdb_store import get_conn
+        r = get_conn().execute(
+            "SELECT MAX(trade_date) FROM daily_raw WHERE volume > 0"
+        ).fetchone()
+        return r[0] if r and r[0] is not None else None
+    except Exception as exc:
+        logger.debug("duckdb latest trade date failed: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 7. 对外 API
 # ---------------------------------------------------------------------------
 def build_limit_emotion(force: bool = False) -> dict[str, Any]:
@@ -1120,11 +1311,13 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
         except Exception:
             is_td = True
 
-        # 1.5) 盘前 (pre_open): 走"上一交易日 daily" 兜底, 不拉实时.
+        # 1.5) 盘前 (pre_open): 优先走 daily archive (上一交易日), duckdb 兜底, 都不行 fallthrough.
         # 原因: 9:00-9:30 实时数据是集合竞价的脏数据, 涨停/跌停/连板全是错的
         # (例如 eltdx 9:00 抓到 fallingCount=5527, limitDownCount=5527).
         # 既然市场没开, 显示昨日收盘的最终分布更准确.
         if is_td and market_status == "pre_open":
+            # 优先 daily archive (snap_today_daily 15:30 落盘, 数据源是 qt.gtimg batch
+            # 跟 scheduler 跑出来的, 比 duckdb.daily_raw JOIN 算 change_pct 更准)
             daily = _previous_trading_day_payload_for(today)
             if daily:
                 payload = _aggregate_from_daily(daily)
@@ -1137,9 +1330,44 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                 except Exception as exc:
                     logger.warning("write latest (pre_open from daily) failed: %s", exc)
                 return payload
-            # daily 也找不到, fallthrough 到实时 (会拿到空数据, 写空 latest)
+            # daily 缺失 → duckdb 兜底 (用 close/prev_close JOIN 算, 准头不如 daily 但比 empty 强)
+            prev_td: date | None = None
+            try:
+                from backend.services.stock.trading_calendar import previous_trading_day
+                prev_td = previous_trading_day(today)
+            except Exception:
+                prev_td = None
+            if prev_td is not None:
+                payload = _assemble_from_duckdb(prev_td, source="duckdb.daily_raw")
+                if payload:
+                    payload["tradeDate"] = prev_td.isoformat()
+                    payload["marketStatus"] = "pre_open"
+                    payload["dataStatus"] = "from_duckdb"
+                    payload["updateTime"] = now.isoformat(timespec="seconds")
+                    try:
+                        _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
+                    except Exception as exc:
+                        logger.warning("write latest (pre_open from duckdb) failed: %s", exc)
+                    return payload
+            # 都拿不到, fallthrough 到实时 (会拿到空数据, 写空 latest)
 
         if not is_td:
+            # 非交易日: 优先走 duckdb (找最近一个有数据的交易日), 兜底 daily archive
+            latest_td = _duckdb_latest_trading_day()
+            if latest_td is not None:
+                payload = _assemble_from_duckdb(latest_td, source="duckdb.daily_raw")
+                if payload:
+                    payload["tradeDate"] = latest_td.isoformat()
+                    payload["updateTime"] = now.isoformat(timespec="seconds")
+                    payload["marketStatus"] = "closed"
+                    payload["dataStatus"] = "normal"
+                    # 写 latest (不写 snapshot, 非交易日不要分时)
+                    try:
+                        _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
+                    except Exception as exc:
+                        logger.warning("write market-pulse/latest.json (duckdb) failed: %s", exc)
+                    return payload
+            # duckdb 没有 → 兜底 daily archive
             daily = _latest_daily_payload()
             if daily:
                 payload = _aggregate_from_daily(daily)
@@ -1179,13 +1407,48 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                     except Exception:
                         pass
 
-        # 3) 拉实时
+        # 2.5) 收盘后: 优先用 daily/<today>.json (有 5191 全 A + 完整 isLimitUp / streak)
+        # eltdx list_by_category 翻页只 80×80, 漏股票 (e.g. 6-16 漏 盛龙股份 / 部分首板);
+        # daily file 是 snapshot_today_daily 在 15:30 落盘的, 数据更全 (跟 6-15 tencent backfill
+        # 写出来的 147 涨停 一致). 收盘后 (15:00+) 直接读 daily file.
+        if market_status == "closed":
+            today_daily = MARKET_LIMIT_DAILY_DIR / f"{today.isoformat()}.json"
+            if today_daily.exists():
+                blob = _read_json_safe(today_daily, default=None)
+                if isinstance(blob, dict) and isinstance(blob.get("stocks"), list):
+                    payload = _aggregate_from_daily(blob)
+                    payload["tradeDate"] = today.isoformat()
+                    payload["updateTime"] = now.isoformat(timespec="seconds")
+                    payload["marketStatus"] = "closed"
+                    payload["dataStatus"] = "from_daily_archive"
+                    # 写 latest (收市后 daily file 已存在, 短期不会变, 也写 snapshot)
+                    try:
+                        _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
+                    except Exception as exc:
+                        logger.warning("write latest (closed from daily) failed: %s", exc)
+                    try:
+                        snap_dir = MARKET_PULSE_LIMIT_SNAPSHOTS_DIR / today.isoformat()
+                        snap_dir.mkdir(parents=True, exist_ok=True)
+                        snap_path = snap_dir / f"{now.strftime('%H%M%S')}.json"
+                        _write_json_atomic(snap_path, payload)
+                    except Exception as exc:
+                        logger.warning("write snapshot (closed from daily) failed: %s", exc)
+                    return payload
+
+        # 3) 拉实时 (盘内: realtime 是 primary, 收盘前 daily file 还没写)
         quotes, source, err = _fetch_realtime_quotes()
         if not quotes:
-            logger.warning("limitEmotion: realtime quotes empty: %s", err)
-            payload = _empty_limit_emotion()
-            payload["_meta"]["dataStatus"] = "empty"
-            payload["_meta"]["error"] = err
+            # Mock Workspace / 离线开发: realtime 失败时, 优先用 duckdb 兜底
+            # (daily_raw 已经有今天 close, 跟实时盘中数据有几十分钟延迟, 但比 empty 强)
+            logger.warning("limitEmotion: realtime quotes empty: %s, falling back to duckdb", err)
+            payload = _assemble_from_duckdb(today, source="duckdb.daily_raw.fallback")
+            if payload is None:
+                payload = _empty_limit_emotion()
+                payload["_meta"]["dataStatus"] = "empty"
+                payload["_meta"]["error"] = err
+            else:
+                payload["_meta"]["dataStatus"] = "from_duckdb"
+                payload["_meta"]["error"] = err
         else:
             payload = _assemble_from_realtime(quotes, config, today, source)
 
