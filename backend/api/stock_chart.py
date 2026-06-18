@@ -1643,14 +1643,13 @@ def market_sentiment_limit_emotion_summary():
       1. 优先查 duckdb.limit_emotion_summary_daily (持久化)
       2. 没记录才现算 (复用 limit_repo.get_today_limit_snapshot) + 自动落盘
 
-    公式 (v1.0):
-      - 涨跌停比 = limit_up / max(limit_down, 1)
-      - 炸板率 = broken / touched
-      - 昨日涨停收益 = AVG(今日 changePct) for codes where 昨日 isLimitUp
-      - up_down_score       = clamp(50 + 25 * log2(ratio))            ∈ [0, 100]
-      - break_board_score   = clamp(100 - 100 * rate)                 ∈ [0, 100]   (反向)
-      - yesterday_return_score = clamp(50 + 10 * avg_return_pct)      ∈ [0, 100]
-      - composite = 0.4 * A + 0.3 * B + 0.3 * C, level: hot/active/normal/weak/ice
+    公式 (v1.1, 2026-06-18):
+      - 所有子项改用历史分位 (percentile), 替代固定公式
+      - up_down_score       = percentile(涨跌停比)                        ∈ [0, 100]
+      - break_board_score   = 100 - percentile(炸板率)                    ∈ [0, 100]  (反向)
+      - yesterday_return_score = percentile(昨日涨停收益)                  ∈ [0, 100]
+      - composite = percentile(0.4*A + 0.3*B + 0.3*C)                   ∈ [0, 100]
+      - level: hot/active/normal/weak/ice
     """
     from datetime import date as _date
     from backend.services.stock.trading_calendar import previous_trading_day

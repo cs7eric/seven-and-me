@@ -16,6 +16,7 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.repositories.market.percentile_helper import percentile_score
 from backend.repositories.market.stock_meta_repo import (
     get_threshold,
     is_st_by_name,
@@ -266,7 +267,9 @@ def _snapshot_python(
         if pre_close is None or pre_close == 0:
             continue
         limit_up_price = pre_close * (1 + thr)
+        limit_down_price = pre_close * (1 - thr)
         is_limit_up = close_p >= limit_up_price * (1 - _TOL)
+        is_limit_down = close_p <= limit_down_price * (1 + _TOL)
         is_touched = high_p >= limit_up_price * (1 - _HIGH_TOL)
         is_broken_limit_up = is_touched and not is_limit_up
         prev_streak = prev_streak_by_code.get(code, 0)
@@ -283,8 +286,10 @@ def _snapshot_python(
             "openPrice": open_p,
             "volume": vol,
             "limitUpPrice": round(limit_up_price, 4),
+            "limitDownPrice": round(limit_down_price, 4),
             "changePct": round((close_p - pre_close) / pre_close * 100, 2),
             "isLimitUp": is_limit_up,
+            "isLimitDown": is_limit_down,
             "isTouchedLimitUp": is_touched,
             "isBrokenLimitUp": is_broken_limit_up,
             "previousLimitUpStreak": prev_streak,
@@ -393,15 +398,18 @@ def _to_date(v: date | str) -> date:
 # ---------------------------------------------------------------------------
 # 4. 涨跌停情绪综合分 (limit emotion summary)
 #
-# 公式 (跟 schema.sql § 15 注释一致):
-#   up_down_score       = clamp(50 + 25 * log2(ratio))            ∈ [0, 100]
-#   break_board_score   = clamp(100 - 100 * rate)                 ∈ [0, 100]   (反向)
-#   yesterday_return_score = clamp(50 + 10 * avg_return_pct)      ∈ [0, 100]
-#   composite = 0.4 * A + 0.3 * B + 0.3 * C
+# 所有子项和总分均采用历史分位 (percentile_score, 见 percentile_helper.py):
+#   up_down_score       = percentile(limit_up_down_ratio)              ∈ [0, 100]
+#   break_board_score   = 100 - percentile(break_board_rate)           ∈ [0, 100]   (反向)
+#   yesterday_return_score = percentile(yesterday_limit_up_avg_return) ∈ [0, 100]
+#   composite           = percentile(0.4*A + 0.3*B + 0.3*C)           ∈ [0, 100]
 #
 # 数据源: 全部用 limit_repo 现有的 snapshot (get_today_limit_snapshot),
 #   不直接查 daily_raw, 跟 limit_emotion_service._assemble_from_duckdb
 #   路径共用同一份 limit_repo 算出的字段, 避免两边算法漂移.
+#
+# v2026-06-18: 从固定公式改为历史分位, 自动适应市场环境, 解决原公式
+#   在涨跌停比极大时饱和到 100 的问题.
 # ---------------------------------------------------------------------------
 
 def _score_up_down(ratio: float | None) -> float:
@@ -536,12 +544,32 @@ def calc_limit_emotion_summary(
             if returns:
                 yest_avg_return = round(sum(returns) / len(returns), 4)
 
-    # 3) sub-scores + composite + level
-    a = _score_up_down(limit_up_down_ratio if limit_up_down_ratio > 0 else None)
-    b = _score_break_board(break_board_rate)
-    c = _score_yesterday_return(yest_avg_return)
-    composite = round(0.4 * a + 0.3 * b + 0.3 * c, 2)
-    level = _level_for(composite)
+    # 3) sub-scores via historical percentile rank (v2026-06-18)
+    #    回退: 历史数据不足时用旧固定公式.
+    _TABLE = "limit_emotion_summary_daily"
+
+    up_down_score = _score_up_down(limit_up_down_ratio)  # fallback
+    ud_pct = percentile_score(_TABLE, "limit_up_down_ratio", td, limit_up_down_ratio)
+    if ud_pct is not None:
+        up_down_score = ud_pct
+
+    break_board_score = _score_break_board(break_board_rate)  # fallback
+    if break_board_rate is not None:
+        bb_pct = percentile_score(_TABLE, "break_board_rate", td, break_board_rate)
+        if bb_pct is not None:
+            break_board_score = round(100.0 - bb_pct, 2)  # 反向: 高炸板率=低分
+
+    yesterday_return_score = _score_yesterday_return(yest_avg_return)  # fallback
+    if yest_avg_return is not None:
+        yr_pct = percentile_score(_TABLE, "yesterday_limit_up_avg_return", td, float(yest_avg_return))
+        if yr_pct is not None:
+            yesterday_return_score = yr_pct
+
+    # composite = weighted average of 3 percentile scores, then percentile-ranked
+    composite_raw = round(0.4 * up_down_score + 0.3 * break_board_score + 0.3 * yesterday_return_score, 2)
+    composite_pct = percentile_score(_TABLE, "composite_score", td, composite_raw)
+    composite_score = composite_pct if composite_pct is not None else composite_raw
+    level = _level_for(composite_score)
 
     elapsed_ms = int((time.time() - t0) * 1000)
     return {
@@ -556,11 +584,11 @@ def calc_limit_emotion_summary(
         "yesterdayLimitUpCount": yest_limit_up_count,
         "yesterdayLimitUpAvgReturn": yest_avg_return,
         "components": {
-            "upDownScore": a,
-            "breakBoardScore": b,
-            "yesterdayReturnScore": c,
+            "upDownScore": up_down_score,
+            "breakBoardScore": break_board_score,
+            "yesterdayReturnScore": yesterday_return_score,
         },
-        "compositeScore": composite,
+        "compositeScore": composite_score,
         "level": level,
         "elapsedMs": elapsed_ms,
         "source": "duckdb.daily_raw",
@@ -575,17 +603,28 @@ def save_limit_emotion_summary(payload: dict) -> None:
     comp = payload.get("components") or {}
     yest_avg = payload.get("yesterdayLimitUpAvgReturn")
     bb_rate = payload.get("breakBoardRate")
+    ratio = payload.get("limitUpDownRatio")
     con = get_conn()
+
+    # v2026-06-18: new column — migrate silently
+    try:
+        con.execute(
+            "ALTER TABLE limit_emotion_summary_daily "
+            "ADD COLUMN limit_up_down_ratio DECIMAL(10, 4)"
+        )
+    except Exception:
+        pass  # already exists
+
     con.execute("""
         INSERT OR REPLACE INTO limit_emotion_summary_daily
             (trade_date, limit_up_count, limit_down_count, touched_count, broken_count,
-             break_board_rate,
+             break_board_rate, limit_up_down_ratio,
              yesterday_limit_up_count, yesterday_limit_up_avg_return,
              up_down_score, break_board_score, yesterday_return_score,
              composite_score, level,
              elapsed_ms, source, ingested_at)
         VALUES (?, ?, ?, ?, ?,
-                ?,
+                ?, ?,
                 ?, ?,
                 ?, ?, ?,
                 ?, ?,
@@ -597,6 +636,7 @@ def save_limit_emotion_summary(payload: dict) -> None:
         int(payload.get("touchedCount") or 0),
         int(payload.get("brokenCount") or 0),
         float(bb_rate) if bb_rate is not None else 0.0,
+        float(ratio) if ratio is not None else 0.0,
         int(payload.get("yesterdayLimitUpCount") or 0),
         float(yest_avg) if yest_avg is not None else 0.0,
         float(comp.get("upDownScore") or 0),
@@ -611,7 +651,7 @@ def save_limit_emotion_summary(payload: dict) -> None:
 
 _LIMIT_EMOTION_SUMMARY_COLS = (
     "trade_date", "limit_up_count", "limit_down_count", "touched_count", "broken_count",
-    "break_board_rate",
+    "break_board_rate", "limit_up_down_ratio",
     "yesterday_limit_up_count", "yesterday_limit_up_avg_return",
     "up_down_score", "break_board_score", "yesterday_return_score",
     "composite_score", "level",
@@ -623,7 +663,8 @@ _LIMIT_EMOTION_SUMMARY_SELECT = ", ".join(_LIMIT_EMOTION_SUMMARY_COLS)
 def _row_to_summary_payload(row: tuple) -> dict:
     """duckdb 行 → calc_limit_emotion_summary 同 shape dict."""
     bb_rate = float(row[5]) if row[5] is not None else None
-    yest_avg = float(row[7]) if row[7] is not None else None
+    ratio = float(row[6]) if row[6] is not None else None
+    yest_avg = float(row[8]) if row[8] is not None else None
     return {
         "tradeDate": row[0].isoformat(),
         "prevTradeDate": None,  # 表里不存, 读时按需重新算
@@ -632,18 +673,19 @@ def _row_to_summary_payload(row: tuple) -> dict:
         "touchedCount": int(row[3]),
         "brokenCount": int(row[4]),
         "breakBoardRate": bb_rate,
-        "limitUpDownRatio": round(int(row[1]) / max(int(row[2]), 1), 4),
-        "yesterdayLimitUpCount": int(row[6]),
+        "limitUpDownRatio": ratio if ratio is not None
+                            else round(int(row[1]) / max(int(row[2]), 1), 4),
+        "yesterdayLimitUpCount": int(row[7]),
         "yesterdayLimitUpAvgReturn": yest_avg,
         "components": {
-            "upDownScore": float(row[8]),
-            "breakBoardScore": float(row[9]),
-            "yesterdayReturnScore": float(row[10]),
+            "upDownScore": float(row[9]),
+            "breakBoardScore": float(row[10]),
+            "yesterdayReturnScore": float(row[11]),
         },
-        "compositeScore": float(row[11]),
-        "level": str(row[12]),
-        "elapsedMs": int(row[13]) if row[13] is not None else None,
-        "source": str(row[14]),
+        "compositeScore": float(row[12]),
+        "level": str(row[13]),
+        "elapsedMs": int(row[14]) if row[14] is not None else None,
+        "source": str(row[15]),
         "fromCache": True,
     }
 

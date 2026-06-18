@@ -1,15 +1,15 @@
 {
   "name": "ma_count_refresh",
-  "lastRunAt": null,
-  "lastRunOk": null,
+  "lastRunAt": "2026-06-18T17:06:00",
+  "lastRunOk": true,
   "lastRunError": null,
-  "lastDurationSeconds": null,
-  "lastDaysRequested": null,
+  "lastDurationSeconds": 7.3,
+  "lastDaysRequested": 2,
   "lastMaUpserted": null,
   "lastIrUpserted": null,
   "lastCoverage": null,
-  "totalRuns": 0,
+  "totalRuns": 1,
   "totalFailures": 0,
-  "schedulerStartedAt": "2026-06-18T16:01:11",
+  "schedulerStartedAt": "2026-06-18T17:07:09",
   "running": true
 }

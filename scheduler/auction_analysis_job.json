@@ -9,14 +9,14 @@
   },
   "timezone_offset_hours": 8,
   "tick_seconds": 30,
-  "last_run_at": "2026-06-18T14:32:06.314961",
+  "last_run_at": "2026-06-18T17:07:08.992407",
   "last_run_date": "2026-06-18",
   "last_status": "success",
   "last_targets_processed": 0,
   "last_duration_seconds": 0.001,
   "last_error": null,
-  "total_runs": 22,
+  "total_runs": 24,
   "total_targets_processed": 26,
   "total_failures": 2,
-  "_saved_at": "2026-06-18T16:01:11.526859"
+  "_saved_at": "2026-06-18T17:07:08.992605"
 }

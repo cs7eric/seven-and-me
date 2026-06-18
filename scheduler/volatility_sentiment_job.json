@@ -1,14 +1,14 @@
 {
   "name": "volatility_sentiment_refresh",
-  "lastRunAt": null,
-  "lastRunOk": null,
-  "lastRunError": null,
-  "lastDurationSeconds": null,
-  "lastDaysRequested": null,
+  "lastRunAt": "2026-06-18T17:07:00",
+  "lastRunOk": false,
+  "lastRunError": "56, in get_conn\n    return _LockedConnection(_ensure_conn())\n                             ~~~~~~~~~~~~^^\n  File \"F:\\dev-repo\\mp4-to-word-new\\backend\\adapters\\market\\duckdb_store\\__init__.py\", line 60, in _ensure_conn\n    _conn = duckdb.connect(str(_DB_PATH))\n_duckdb.IOException: IO Error: Cannot open file \"F:\\dev-repo\\mp4-to-word-new\\reference\\stock\\duckdb\\market_data.duckdb\": 另一个程序正在使用此文件，进程无法访问。\n\n\nFile is already open in \nC:\\Python313\\python.exe (PID 44608)\nC:\\Python313\\python.exe (PID 36220)",
+  "lastDurationSeconds": 0.5,
+  "lastDaysRequested": 2,
   "lastRowsUpserted": null,
   "lastCoverage": null,
   "totalRuns": 0,
-  "totalFailures": 0,
-  "schedulerStartedAt": "2026-06-18T16:01:11",
+  "totalFailures": 1,
+  "schedulerStartedAt": "2026-06-18T17:07:09",
   "running": true
 }

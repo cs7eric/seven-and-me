@@ -24,7 +24,7 @@
  * Sparkline: Recharts AreaChart (40-60px 高 + hover tooltip).
  * 日期选择: shadcn DatePicker (Popover + Calendar).
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Activity,
   Calendar,
@@ -39,6 +39,17 @@ import {
   TrendingUp,
 } from "lucide-react"
 import { Area, AreaChart, ResponsiveContainer, Tooltip, type TooltipContentProps } from "recharts"
+import * as echarts from "echarts/core"
+import { LineChart } from "echarts/charts"
+import {
+  GridComponent,
+  TooltipComponent,
+  VisualMapComponent,
+  DataZoomComponent,
+  MarkLineComponent,
+} from "echarts/components"
+import { CanvasRenderer } from "echarts/renderers"
+import type { EChartsOption } from "echarts"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -184,6 +195,186 @@ function toSparkData<T extends { tradeDate: string }>(
     })
     .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))
     .map((it) => ({ date: it.tradeDate.slice(5), value: pick(it) ?? 0 }))
+}
+
+// ---------------------------------------------------------------------------
+// ECharts 情绪分趋势折线 (composite 大卡左侧专用)
+// 视觉: smooth line + 渐变面积 + visualMap 5 档分段着色 + 阈值 markLine +
+//        hover tooltip + inside slider dataZoom.
+// Y 轴固定 0-100, 阈值线 = 冰点(30)/弱势(45)/活跃(55)/火热(70) 分界.
+// ---------------------------------------------------------------------------
+echarts.use([
+  LineChart,
+  GridComponent,
+  TooltipComponent,
+  VisualMapComponent,
+  DataZoomComponent,
+  MarkLineComponent,
+  CanvasRenderer,
+])
+
+interface SentimentLinePoint { date: string; value: number; level?: string }
+interface SentimentLineProps {
+  data: SentimentLinePoint[]
+  height?: number
+  /** 用浅色主题 (默认 false, 大卡深底浅字) */
+  light?: boolean
+}
+
+function SentimentLine({ data, height = 220, light = false }: SentimentLineProps) {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const chartRef = useRef<echarts.ECharts | null>(null)
+
+  const option = useMemo<EChartsOption>(() => {
+    const dates = data.map((d) => d.date)
+    const values = data.map((d) => d.value)
+    const fg = light ? "#475569" : "#94a3b8"
+    const fgStrong = light ? "#0f172a" : "#e2e8f0"
+    const axisLine = light ? "rgba(15, 23, 42, 0.12)" : "rgba(148, 163, 184, 0.35)"
+    const splitLine = light ? "rgba(15, 23, 42, 0.06)" : "rgba(148, 163, 184, 0.12)"
+
+    return {
+      backgroundColor: "transparent",
+      grid: { left: 36, right: 16, top: 18, bottom: 28, containLabel: false },
+      tooltip: {
+        trigger: "axis",
+        backgroundColor: "rgba(15, 23, 42, 0.92)",
+        borderColor: "rgba(148, 163, 184, 0.25)",
+        textStyle: { color: "#e5e7eb", fontSize: 12 },
+        formatter: (params: unknown) => {
+          const arr = params as Array<{ axisValueLabel: string; value: number; dataIndex: number }>
+          if (!arr || !arr.length) return ""
+          const p = arr[0]
+          const score = Number(p.value).toFixed(2)
+          const level = data[p.dataIndex]?.level ?? "—"
+          const moodLabel =
+            level === "hot" ? "火热"
+            : level === "active" ? "活跃"
+            : level === "normal" ? "中性"
+            : level === "weak" ? "弱势"
+            : "冰点"
+          const moodColor =
+            level === "hot" ? "#f87171"
+            : level === "active" ? "#fb923c"
+            : level === "normal" ? "#94a3b8"
+            : level === "weak" ? "#60a5fa"
+            : "#cbd5e1"
+          return `
+            <div style="font-weight:600;margin-bottom:4px;">${p.axisValueLabel}</div>
+            <div>情绪分: <b style="color:${moodColor}">${score}</b></div>
+            <div>情绪状态: <span style="color:${moodColor}">${moodLabel}</span></div>
+          `
+        },
+      },
+      xAxis: {
+        type: "category",
+        boundaryGap: false,
+        data: dates,
+        axisLine: { lineStyle: { color: axisLine } },
+        axisTick: { show: false },
+        axisLabel: { color: fg, fontSize: 10 },
+      },
+      yAxis: {
+        type: "value",
+        min: 0,
+        max: 100,
+        splitNumber: 5,
+        axisLabel: { color: fg, fontSize: 10, formatter: "{value}" },
+        splitLine: { lineStyle: { color: splitLine } },
+        axisLine: { show: false },
+        axisTick: { show: false },
+      },
+      visualMap: {
+        show: false,
+        type: "piecewise",
+        dimension: 1,
+        pieces: [
+          { gt: 70, lte: 100, color: "#ef4444" }, // 火热
+          { gt: 55, lte: 70, color: "#f97316" },  // 活跃
+          { gt: 45, lte: 55, color: "#eab308" },  // 中性
+          { gt: 30, lte: 45, color: "#3b82f6" },  // 弱势
+          { gt: 0,  lte: 30, color: "#94a3b8" },  // 冰点
+        ],
+      },
+      dataZoom: [
+        { type: "inside", zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
+      ],
+      series: [
+        {
+          name: "情绪分",
+          type: "line",
+          data: values,
+          smooth: true,
+          symbol: "circle",
+          showSymbol: false,
+          symbolSize: 7,
+          lineStyle: { width: 3, shadowBlur: 10, shadowColor: "rgba(59, 130, 246, 0.45)" },
+          emphasis: { focus: "series", scale: true },
+          areaStyle: {
+            opacity: 0.22,
+            color: {
+              type: "linear",
+              x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [
+                { offset: 0, color: "rgba(239, 68, 68, 0.40)" },
+                { offset: 0.4, color: "rgba(234, 179, 8, 0.20)" },
+                { offset: 1, color: "rgba(148, 163, 184, 0.05)" },
+              ],
+            },
+          },
+          markLine: {
+            symbol: "none",
+            silent: true,
+            label: { color: fgStrong, fontSize: 10, formatter: "{b}" },
+            lineStyle: { type: "dashed", color: axisLine, width: 1 },
+            data: [
+              { yAxis: 70, name: "火热" },
+              { yAxis: 55, name: "活跃" },
+              { yAxis: 45, name: "中性" },
+              { yAxis: 30, name: "弱势" },
+            ],
+          },
+        },
+      ],
+    }
+  }, [data, light])
+
+  useEffect(() => {
+    if (!ref.current) return
+    if (!chartRef.current) {
+      chartRef.current = echarts.init(ref.current, undefined, { renderer: "canvas" })
+    }
+    chartRef.current.setOption(option, { notMerge: true })
+    const onWinResize = () => chartRef.current?.resize()
+    window.addEventListener("resize", onWinResize)
+    // 监听容器尺寸变化 (grid/flex 调整父宽时也会触发)
+    const ro = new ResizeObserver(() => chartRef.current?.resize())
+    ro.observe(ref.current)
+    return () => {
+      window.removeEventListener("resize", onWinResize)
+      ro.disconnect()
+    }
+  }, [option])
+
+  useEffect(() => {
+    return () => {
+      chartRef.current?.dispose()
+      chartRef.current = null
+    }
+  }, [])
+
+  if (!data || data.length < 2) {
+    return (
+      <div
+        style={{ height }}
+        className="flex items-center justify-center text-xs text-slate-300"
+      >
+        暂无趋势数据
+      </div>
+    )
+  }
+
+  return <div ref={ref} style={{ width: "100%", height }} />
 }
 
 // ---------------------------------------------------------------------------
@@ -1345,7 +1536,7 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -90)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -1389,7 +1580,15 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
               ? "text-blue-600"
               : "text-slate-400"
 
-  const sparkData = toSparkData(history, (it) => it.compositeScore ?? 50)
+  // ECharts 折线: 完整 ISO 日期 + value, visualMap 按 value 自动上色
+  const sentimentPoints = (history ?? [])
+    .slice()
+    .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))
+    .map((it) => ({
+      date: it.tradeDate.slice(5),
+      value: it.compositeScore ?? 50,
+      level: it.level,
+    }))
 
   return (
     <Card className="border-0 shadow-none bg-muted/50">
@@ -1399,7 +1598,7 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
           市场情绪指数
         </CardTitle>
         <CardDescription>
-          9 张卡加权合成: 15%×波动率 + 15%×成交活跃度 + 15%×市场广度 + 15%×涨跌停 + 10%×价格强度 + 10%×风险偏好 + 10%×赚钱效应 + 5%×板块扩散 + 5%×风格风险
+          9 张卡加权合成的市场情绪指数
           {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
         </CardDescription>
       </CardHeader>
@@ -1409,8 +1608,8 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
         ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-[1fr_1.4fr]">
-            {/* 左侧: 合成得分 + sparkline */}
+          <div className="grid gap-4 md:grid-cols-[3fr_1fr]">
+            {/* 左侧: 合成得分 + ECharts 趋势折线 (含视觉分区 + 阈值线) */}
             <div className="space-y-2">
               <div className="flex items-baseline gap-3">
                 <span className={`text-5xl font-semibold tabular-nums ${tone}`}>
@@ -1432,47 +1631,33 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
                   {data.componentCount < 9 && " (部分子卡尚未落盘, 缺失按 50 中性)"}
                 </div>
               )}
-              <div className="-mx-1">
-                <Sparkline
-                  data={sparkData}
-                  height={60}
-                  color="auto"
-                  formatter={(v) => v.toFixed(1)}
-                />
-                <div className="mt-1 text-[10px] text-muted-foreground">
-                  近 30 日 composite_score
-                </div>
-              </div>
+              <SentimentLine data={sentimentPoints} height={340} />
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
                 <span className="text-red-600/70">≥70 火热</span>
                 <span className="text-orange-600/70">55-70 活跃</span>
-                <span className="text-slate-500">45-55 中性</span>
+                <span className="text-amber-600/70">45-55 中性</span>
                 <span className="text-blue-600/70">30-45 弱势</span>
                 <span className="text-slate-400">＜30 冰点</span>
               </div>
             </div>
 
-            {/* 右侧: 9 个 component 明细 (进度条) */}
-            <div className="grid grid-cols-3 gap-x-3 gap-y-2">
+            {/* 右侧: 9 个 component 明细 (等距竖排, 字号可读) */}
+            <div className="flex flex-1 flex-col justify-around text-xs">
               {MSI_COMPONENT_META.map((c) => {
                 const v = components[c.key]
                 return (
-                  <div key={c.key} className="space-y-1">
-                    <div className="flex items-center justify-between text-[10px]">
-                      <span className="text-muted-foreground">{c.label}</span>
-                      <span className="text-muted-foreground/70">{(c.weight * 100).toFixed(0)}%</span>
+                  <div key={c.key} className="flex items-center gap-1.5">
+                    <span className="w-12 shrink-0 truncate text-muted-foreground">{c.label}</span>
+                    <span className={`w-7 shrink-0 text-right font-semibold tabular-nums ${v == null ? "text-slate-300" : tone}`}>
+                      {v == null ? "—" : v.toFixed(0)}
+                    </span>
+                    <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-foreground/30 transition-all"
+                        style={{ width: `${v == null ? 0 : Math.min(v, 100)}%` }}
+                      />
                     </div>
-                    <div className="flex items-baseline gap-1.5">
-                      <span className={`text-sm font-semibold tabular-nums ${v == null ? "text-slate-300" : tone}`}>
-                        {v == null ? "—" : v.toFixed(1)}
-                      </span>
-                      <div className="flex-1 h-1.5 rounded-full bg-muted/30 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-foreground/25 transition-all"
-                          style={{ width: `${v == null ? 0 : Math.min(v, 100)}%` }}
-                        />
-                      </div>
-                    </div>
+                    <span className="w-6 shrink-0 text-right text-muted-foreground/80">{(c.weight * 100).toFixed(0)}%</span>
                   </div>
                 )
               })}
