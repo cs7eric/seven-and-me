@@ -54,7 +54,9 @@ import type { EChartsOption } from "echarts"
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DatePicker } from "@/components/ui/date-picker"
-import { toLocalIso } from "@/lib/date-utils"
+import { Calendar as CalendarUi } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { toLocalDate, toLocalIso } from "@/lib/date-utils"
 import { cn } from "@/lib/utils"
 import {
   fetchMarketSentimentRiskAppetite,
@@ -1746,7 +1748,17 @@ const MSI_COMPONENT_META: Array<{
   { key: "style_risk",     label: "风格风险",     weight: 0.05 },
 ]
 
-function MarketSentimentIndexCard({ date }: { date: string | null }) {
+function MarketSentimentIndexCard({
+  date,
+  onDateChange,
+  onReset,
+  maxDate,
+}: {
+  date: string | null
+  onDateChange: (d: string | null) => void
+  onReset: () => void
+  maxDate: Date
+}) {
   const [data, setData] = useState<MarketSentimentIndexResponse | null>(null)
   const [history, setHistory] = useState<MarketSentimentIndexHistoryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -1882,10 +1894,15 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
         ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
-          <div className="grid gap-4 md:grid-cols-[3fr_1fr]">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">
+              <Smile className="size-3.5" />
+              Market Sentiment
+            </div>
+            <div className="grid gap-4 md:grid-cols-[3fr_1fr]">
             {/* 左侧: 合成得分 + ECharts 趋势折线 (含视觉分区 + 阈值线) */}
             <div className="space-y-2">
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-end gap-3">
                 <span className={`text-5xl font-semibold tabular-nums ${tone}`}>
                   {score.toFixed(1)}
                 </span>
@@ -1899,10 +1916,51 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
                   {meta.label}
                 </span>
                 {data?.tradeDate && (
-                  <span className="text-xs text-muted-foreground tabular-nums">
-                    {data.tradeDate}
+                  <span className="ml-1 inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label="选择历史日期"
+                          className="inline-flex items-center text-xs text-muted-foreground tabular-nums underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
+                        >
+                          {date ?? data.tradeDate}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <CalendarUi
+                          mode="single"
+                          selected={toLocalDate(date ?? data.tradeDate)}
+                          onSelect={(d) => onDateChange(d ? toLocalIso(d) : null)}
+                          disabled={[
+                            { after: maxDate },
+                            (day) => {
+                              const dow = day.getDay()
+                              return dow === 0 || dow === 6
+                            },
+                          ]}
+                          autoFocus
+                        />
+                      </PopoverContent>
+                    </Popover>
+                    {date && (
+                      <button
+                        type="button"
+                        onClick={onReset}
+                        aria-label="重置为最近交易日"
+                        className="inline-flex items-center text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
+                      >
+                        重置
+                      </button>
+                    )}
                   </span>
                 )}
+              </div>
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <Activity className="size-3.5" />
+                <span>实时情绪指标</span>
+                <span className="text-border">·</span>
+                <span className="text-[10px]">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
               </div>
               <SentimentLine data={sentimentPoints} height={440} />
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
@@ -1943,6 +2001,7 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
               })}
             </div>
           </div>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -1963,55 +2022,9 @@ export default function MarketSentimentPage() {
   return (
     <WorkspaceShell sectionLabel="Market Sentiment" pageTitle="Mock Workspace">
       <div className="space-y-4">
-        {/* Header: chip + 标题 + 简介 + 日期选择器 (右对齐) */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-              <Smile className="size-3.5" />
-              Mock Workspace
-            </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-              Market Sentiment
-            </h1>
-          </div>
-          <div className="flex flex-col items-start gap-1.5 sm:items-end">
-            <div className="flex items-center gap-2">
-              <Calendar className="size-3.5 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">回看日期</span>
-              <DatePicker
-                value={date}
-                onChange={(d) => setDate(d ? toLocalIso(d) : null)}
-                maxDate={maxDate}
-                placeholder="选择日期"
-                clearable
-                aria-label="选择历史日期"
-              />
-              {date && (
-                <button
-                  type="button"
-                  onClick={reset}
-                  className="ml-1 inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  <RotateCcw className="size-3" />
-                  重置
-                </button>
-              )}
-            </div>
-            <div className="text-[10px] text-muted-foreground">
-              {date ? `已选: ${date}` : "未选 (默认上一交易日)"}
-            </div>
-          </div>
-        </div>
-
-        {/* Section 1: 实时情绪指标 — 顶部 1 张 composite 大卡 + 9 张子卡 (3 行) */}
+        {/* Section 1: 实时情绪指标 — composite 大卡 + 9 张子卡 (3 行). chip 和描述行已并入 composite 大卡内部 */}
         <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <Activity className="size-3.5" />
-            <span>实时情绪指标</span>
-            <span className="text-border">·</span>
-            <span className="text-[10px]">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
-          </div>
-          <MarketSentimentIndexCard date={date} />
+          <MarketSentimentIndexCard date={date} onDateChange={setDate} onReset={reset} maxDate={maxDate} />
           <div className="grid gap-4 md:grid-cols-3">
             <RiskAppetiteCard date={date} />
             <MarketBreadthCard date={date} />

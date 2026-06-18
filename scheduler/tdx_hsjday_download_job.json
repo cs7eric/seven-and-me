@@ -19,7 +19,7 @@
   "lastDurationSeconds": 54.9,
   "totalRuns": 2,
   "totalFailures": 0,
-  "schedulerStartedAt": "2026-06-18T20:18:49",
+  "schedulerStartedAt": "2026-06-18T20:28:08",
   "running": true,
   "stoppedAt": "2026-06-17T21:51:58",
   "job_name": "tdx_hsjday_download",
