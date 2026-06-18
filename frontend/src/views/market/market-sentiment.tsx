@@ -40,7 +40,7 @@ import {
 } from "lucide-react"
 import { Area, AreaChart, ResponsiveContainer, Tooltip, type TooltipContentProps } from "recharts"
 import * as echarts from "echarts/core"
-import { LineChart } from "echarts/charts"
+import { CustomChart, LineChart } from "echarts/charts"
 import {
   GridComponent,
   TooltipComponent,
@@ -53,6 +53,8 @@ import type { EChartsOption } from "echarts"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Skeleton } from "@/components/ui/skeleton"
+import DogLoader from "@/components/loader/dog-loader"
 import { DatePicker } from "@/components/ui/date-picker"
 import { Calendar as CalendarUi } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -94,7 +96,6 @@ import {
   type ProfitEffectResponse,
   type ProfitEffectHistoryItem,
   type MarketSentimentIndexResponse,
-  type MarketSentimentIndexComponents,
   type MarketSentimentIndexHistoryItem,
 } from "@/lib/api"
 
@@ -210,12 +211,91 @@ function toSparkData<T extends { tradeDate: string }>(
 // ---------------------------------------------------------------------------
 echarts.use([
   LineChart,
+  CustomChart,
   GridComponent,
   TooltipComponent,
   DataZoomComponent,
   MarkLineComponent,
   CanvasRenderer,
 ])
+
+// 6 档情绪色 (与 tooltip / 阈值图例对齐)
+const MOOD_PALETTE = {
+  hot: "#ef4444",        // >=70 极热
+  warm: "#f97316",       // >=60 偏热
+  mild: "#f59e0b",       // >=50 偏多
+  cool: "#38bdf8",       // >=40 偏弱
+  cold: "#60a5fa",       // >=30 低迷
+  ice: "#94a3b8",        // <30 冰点
+} as const
+type MoodBucket = keyof typeof MOOD_PALETTE
+
+function moodBucketOf(value: number): MoodBucket {
+  if (value >= 70) return "hot"
+  if (value >= 60) return "warm"
+  if (value >= 50) return "mild"
+  if (value >= 40) return "cool"
+  if (value >= 30) return "cold"
+  return "ice"
+}
+
+// 分段: [{ x1, y1, x2, y2, bucket }], y = value - 50, 中性线 = 0.
+// 每个 segment 在 6 档阈值 [30,40,50,60,70] 上的 bucket 内, 不跨档.
+type SliceSegment = {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  bucket: MoodBucket
+}
+
+function buildSliceSegments(values: number[], reference = 50): SliceSegment[] {
+  const segments: SliceSegment[] = []
+  if (values.length < 2) return segments
+
+  const cut = (a: number, b: number, t: number) => a + (b - a) * t
+
+  // 按阈值分桶, 一对相邻点 (vA, vB) 可能跨越多个阈值 (例如 28 -> 72).
+  // 思路: 沿 [vA, vB] 列出去重后的所有阈值点, 相邻两个阈值点之间就是一段稳定 bucket.
+  const thresholds = [30, 40, 50, 60, 70]
+
+  for (let i = 1; i < values.length; i++) {
+    const xA = i - 1
+    const xB = i
+    const vA = values[i - 1]
+    const vB = values[i]
+
+    // 收集本段内的所有切点 (含端点): 端点 + 穿过的阈值
+    const points: Array<{ x: number; v: number }> = [
+      { x: xA, v: vA },
+      { x: xB, v: vB },
+    ]
+    for (const t of thresholds) {
+      // 严格落在 (vA, vB] 或 [vB, vA) 之间, 排除端点本身
+      if ((vA < t && t <= vB) || (vB <= t && t < vA)) {
+        const ratio = (t - vA) / (vB - vA)
+        points.push({ x: cut(xA, xB, ratio), v: t })
+      }
+    }
+    points.sort((a, b) => a.x - b.x)
+
+    for (let k = 1; k < points.length; k++) {
+      const p1 = points[k - 1]
+      const p2 = points[k]
+      // 端点颜色按中点 bucket 定, 内部纯阈值段按该阈值定
+      const midV = (p1.v + p2.v) / 2
+      segments.push({
+        x1: p1.x,
+        y1: p1.v - reference,
+        x2: p2.x,
+        y2: p2.v - reference,
+        bucket: moodBucketOf(midV),
+      })
+    }
+  }
+
+  return segments
+}
 
 interface SentimentLinePoint { date: string; value: number; level?: string }
 interface SentimentLineProps {
@@ -655,7 +735,7 @@ function RiskAppetiteCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : (
           <>
             <div className="flex items-baseline gap-2">
@@ -791,7 +871,7 @@ function MarketBreadthCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : data == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
@@ -910,7 +990,7 @@ function NewHigh252dCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
@@ -1022,7 +1102,7 @@ function SectorBreadthCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : (
           <>
             <div className="flex items-baseline gap-2">
@@ -1128,7 +1208,7 @@ function LimitEmotionCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : (
           <>
             <div className="flex items-baseline gap-2">
@@ -1299,7 +1379,7 @@ function TurnoverActivityCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : (
           <>
             <div className="flex items-baseline gap-2">
@@ -1420,7 +1500,7 @@ function VolatilitySentimentCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : (
           <>
             <div className="flex items-baseline gap-2">
@@ -1539,7 +1619,7 @@ function StyleRiskAppetiteCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
@@ -1662,7 +1742,7 @@ function ProfitEffectCard({ date }: { date: string | null }) {
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <SubCardSkeleton />
         ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
@@ -1711,42 +1791,74 @@ const MSI_LEVEL_META: Record<string, { label: string; tone: string; chip: string
   ice:    { label: "冰点",   tone: "text-slate-400",  chip: "border-slate-300 bg-slate-100 text-slate-500" },
 }
 
-// 单项 component 得分配色 (数字 + 进度条统一调子, 不跟总分)
-function scoreTone(v: number | null | undefined) {
-  if (v == null) return "text-slate-300"
-  if (v >= 70) return "text-red-600"
-  if (v >= 60) return "text-orange-600"
-  if (v >= 50) return "text-amber-600"
-  if (v >= 40) return "text-sky-500"
-  if (v >= 30) return "text-blue-600"
-  return "text-slate-400"
+// 9 张子卡 loading 占位: 标题/描述保留 (静态), 内容用 skeleton 摆出真实布局轮廓
+function SubCardSkeleton() {
+  return (
+    <div className="space-y-3">
+      {/* 大数字 + 分母 */}
+      <div className="flex items-baseline gap-2">
+        <Skeleton className="h-9 w-16 bg-foreground/10" />
+        <Skeleton className="h-3.5 w-24 bg-foreground/10" />
+      </div>
+      {/* 副标题 (raw value / spread 等) */}
+      <Skeleton className="h-3.5 w-3/4 bg-foreground/10" />
+      {/* sparkline */}
+      <Skeleton className="h-[60px] w-full bg-foreground/10" />
+      {/* 阈值说明 */}
+      <Skeleton className="h-3 w-2/3 bg-foreground/10" />
+    </div>
+  )
 }
 
-function scoreBar(v: number | null | undefined) {
-  if (v == null) return "bg-slate-200"
-  if (v >= 70) return "bg-red-500/70"
-  if (v >= 60) return "bg-orange-500/70"
-  if (v >= 50) return "bg-amber-500/70"
-  if (v >= 40) return "bg-sky-500/70"
-  if (v >= 30) return "bg-blue-500/70"
-  return "bg-slate-400/60"
+// 合成指数大卡 loading 占位: 静态文字直接渲染, 折线区中央 DogLoader
+function CompositeCardSkeleton() {
+  return (
+    <div className="grid h-full grid-rows-[3fr_1fr] gap-3">
+      <div className="flex min-h-0 flex-col gap-3">
+        {/* chip: Market Sentiment */}
+        <div className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground self-start">
+          <Smile className="size-3.5" />
+          Market Sentiment
+        </div>
+        {/* score 行: 大数字 + /100 + 中性 chip + 日期 (静态文字, 数字位置用 skeleton) */}
+        <div className="flex items-end gap-3">
+          <span className="text-5xl font-semibold tabular-nums text-muted-foreground/40">—</span>
+          <span className="text-xs text-muted-foreground">/ 100</span>
+          <span className="ml-1 rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            —
+          </span>
+          <span className="ml-1 inline-flex items-center text-xs text-muted-foreground tabular-nums">
+            —
+          </span>
+        </div>
+        {/* 描述行 */}
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <Activity className="size-3.5" />
+          <span>实时情绪指标</span>
+          <span className="text-border">·</span>
+          <span className="text-[10px]">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
+        </div>
+        {/* 折线区: DogLoader 居中 */}
+        <div className="relative min-h-0 flex-1 rounded-md border border-border/30 bg-background overflow-hidden">
+          <div className="absolute inset-0 flex items-center justify-center">
+            <DogLoader size={50} label="loading" />
+          </div>
+        </div>
+        {/* 阈值图例 */}
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+          <span className="text-red-600/70">≥70 极热</span>
+          <span className="text-orange-600/70">60-70 偏热</span>
+          <span className="text-amber-600/70">50-60 偏多</span>
+          <span className="text-sky-500/80">40-50 偏弱</span>
+          <span className="text-blue-600/70">30-40 低迷</span>
+          <span className="text-slate-400">＜30 冰点</span>
+        </div>
+      </div>
+      {/* 下方 1/4 占位 */}
+      <Skeleton className="min-h-0 rounded-xl bg-foreground/10" />
+    </div>
+  )
 }
-
-const MSI_COMPONENT_META: Array<{
-  key: keyof MarketSentimentIndexComponents
-  label: string
-  weight: number
-}> = [
-  { key: "vol",            label: "波动率情绪",   weight: 0.15 },
-  { key: "turnover",       label: "成交活跃度",   weight: 0.15 },
-  { key: "breadth",        label: "市场广度",     weight: 0.15 },
-  { key: "limit_emotion",  label: "涨跌停情绪",   weight: 0.15 },
-  { key: "price_strength", label: "价格强度",     weight: 0.10 },
-  { key: "risk_appetite",  label: "风险偏好",     weight: 0.10 },
-  { key: "profit_effect",  label: "赚钱效应",     weight: 0.10 },
-  { key: "sector_breadth", label: "板块扩散",     weight: 0.05 },
-  { key: "style_risk",     label: "风格风险",     weight: 0.05 },
-]
 
 function MarketSentimentIndexCard({
   date,
@@ -1857,11 +1969,6 @@ function MarketSentimentIndexCard({
   const score = data?.compositeScore ?? null
   const level = data?.level ?? "normal"
   const meta = MSI_LEVEL_META[level] ?? MSI_LEVEL_META.normal
-  const components: MarketSentimentIndexComponents = data?.components ?? {
-    vol: null, turnover: null, price_strength: null, risk_appetite: null,
-    breadth: null, limit_emotion: null, profit_effect: null,
-    sector_breadth: null, style_risk: null,
-  }
 
   const tone =
     score == null
@@ -1887,21 +1994,20 @@ function MarketSentimentIndexCard({
     }))
 
   return (
-    <Card className="border-0 shadow-none bg-muted/50">
-      <CardContent>
+    <Card className="border-0 shadow-none bg-muted/50 h-full">
+      <CardContent className="h-full">
         {loading ? (
-          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+          <CompositeCardSkeleton />
         ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground">
-              <Smile className="size-3.5" />
-              Market Sentiment
-            </div>
-            <div className="grid gap-4 md:grid-cols-[3fr_1fr]">
-            {/* 左侧: 合成得分 + ECharts 趋势折线 (含视觉分区 + 阈值线) */}
-            <div className="space-y-2">
+          <div className="grid h-full grid-rows-[3fr_1fr] gap-3">
+            {/* 上 3/4: 折线图区 */}
+            <div className="flex min-h-0 flex-col gap-2">
+              <div className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground self-start">
+                <Smile className="size-3.5" />
+                Market Sentiment
+              </div>
               <div className="flex items-end gap-3">
                 <span className={`text-5xl font-semibold tabular-nums ${tone}`}>
                   {score.toFixed(1)}
@@ -1962,7 +2068,9 @@ function MarketSentimentIndexCard({
                 <span className="text-border">·</span>
                 <span className="text-[10px]">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
               </div>
-              <SentimentLine data={sentimentPoints} height={440} />
+              <div className="min-h-0 flex-1">
+                <SentimentLine data={sentimentPoints} height="100%" />
+              </div>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
                 <span className="text-red-600/70">≥70 极热</span>
                 <span className="text-orange-600/70">60-70 偏热</span>
@@ -1973,34 +2081,10 @@ function MarketSentimentIndexCard({
               </div>
             </div>
 
-            {/* 右侧: 9 个 component 明细 (等距竖排, 字号可读) */}
-            <div className="flex flex-1 flex-col justify-around text-xs">
-              {data && (
-                <div className="text-[10px] text-muted-foreground mb-2">
-                  实际参与合成的 component: {data.componentCount} / 9
-                  {data.componentCount < 9 && " (部分子卡尚未落盘, 缺失按 50 中性)"}
-                </div>
-              )}
-              {MSI_COMPONENT_META.map((c) => {
-                const v = components[c.key]
-                return (
-                  <div key={c.key} className="flex items-center gap-1.5">
-                    <span className="w-12 shrink-0 truncate text-muted-foreground">{c.label}</span>
-                    <span className={`w-7 shrink-0 text-right font-semibold tabular-nums ${scoreTone(v)}`}>
-                      {v == null ? "—" : v.toFixed(0)}
-                    </span>
-                    <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${scoreBar(v)}`}
-                        style={{ width: `${v == null ? 0 : Math.min(v, 100)}%` }}
-                      />
-                    </div>
-                    <span className="w-6 shrink-0 text-right text-muted-foreground/80">{(c.weight * 100).toFixed(0)}%</span>
-                  </div>
-                )
-              })}
+            {/* 下 1/4: 预留区 (后续接入) */}
+            <div className="min-h-0 rounded-xl border border-dashed border-border/40 bg-background/40 flex items-center justify-center text-xs text-muted-foreground">
+              预留区 · 下方 1/4
             </div>
-          </div>
           </div>
         )}
       </CardContent>
@@ -2021,51 +2105,23 @@ export default function MarketSentimentPage() {
 
   return (
     <WorkspaceShell sectionLabel="Market Sentiment" pageTitle="Mock Workspace">
-      <div className="space-y-4">
-        {/* Section 1: 实时情绪指标 — composite 大卡 + 9 张子卡 (3 行). chip 和描述行已并入 composite 大卡内部 */}
-        <div className="space-y-2">
+      <div className="grid gap-4 md:grid-cols-[5fr_2fr] md:h-[calc(100vh-7rem)]">
+        {/* 左侧 5/6: 合成指数折线大卡 (撑满高度) */}
+        <div className="min-w-0 min-h-0">
           <MarketSentimentIndexCard date={date} onDateChange={setDate} onReset={reset} maxDate={maxDate} />
-          <div className="grid gap-4 md:grid-cols-3">
-            <RiskAppetiteCard date={date} />
-            <MarketBreadthCard date={date} />
-            <NewHigh252dCard date={date} />
-            <SectorBreadthCard date={date} />
-            <TurnoverActivityCard date={date} />
-            <LimitEmotionCard date={date} />
-            <VolatilitySentimentCard date={date} />
-            <StyleRiskAppetiteCard date={date} />
-            <ProfitEffectCard date={date} />
-          </div>
         </div>
 
-        {/* Section 2: 规划中 — 4 张占位卡折叠成 1 行 chip */}
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <Heart className="size-3.5" />
-            <span>规划中</span>
-            <span className="text-border">·</span>
-            <span className="text-[10px]">4 张占位 / 待接入</span>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {PLACEHOLDER_CHIPS.map((c) => (
-              <div
-                key={c.title}
-                className="rounded-xl border border-dashed border-border/60 bg-muted/20 px-3 py-2.5"
-              >
-                <div className="text-xs font-medium text-foreground">{c.title}</div>
-                <div className="mt-0.5 text-[10px] text-muted-foreground">{c.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Roadmap note */}
-        <div className="rounded-2xl border border-dashed border-border/40 bg-muted/20 p-5 text-sm text-muted-foreground">
-          <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
-            <MessageSquareQuote className="size-4" />
-            路线
-          </div>
-          后续接入 backend/services/stock/market_overview/sentiment.py,以及情绪相关调度任务,提供分钟级 / 日级的情绪分位曲线。
+        {/* 右侧 1/6: 9 张子卡竖列 (滚动) */}
+        <div className="grid gap-3 grid-cols-1 min-w-0 min-h-0 overflow-y-auto pr-1">
+          <RiskAppetiteCard date={date} />
+          <MarketBreadthCard date={date} />
+          <NewHigh252dCard date={date} />
+          <SectorBreadthCard date={date} />
+          <TurnoverActivityCard date={date} />
+          <LimitEmotionCard date={date} />
+          <VolatilitySentimentCard date={date} />
+          <StyleRiskAppetiteCard date={date} />
+          <ProfitEffectCard date={date} />
         </div>
       </div>
     </WorkspaceShell>
