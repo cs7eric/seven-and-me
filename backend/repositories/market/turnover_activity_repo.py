@@ -105,22 +105,26 @@ def calc_turnover_activity(
 # ---------------------------------------------------------------------------
 
 def save_turnover_activity(payload: dict) -> None:
-    """把 calc_turnover_activity 的 dict 落盘 (INSERT OR REPLACE by trade_date)."""
+    """把 calc_turnover_activity 的 dict 落盘 (INSERT OR REPLACE by trade_date).
+
+    同时把 score (历史分位) 一起落, 避免下游 composite 大卡重复现算.
+    """
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
     con = get_conn()
     con.execute("""
         INSERT OR REPLACE INTO turnover_activity_daily
-            (trade_date, total_amount, avg_20d_amount, ratio,
+            (trade_date, total_amount, avg_20d_amount, ratio, score,
              elapsed_ms, source, ingested_at)
-        VALUES (?, ?, ?, ?,
+        VALUES (?, ?, ?, ?, ?,
                 ?, ?, current_timestamp)
     """, [
         td,
         float(payload.get("totalAmount") or 0),
         float(payload.get("avg20dAmount") or 0),
         float(payload.get("ratio") or 0),
+        float(payload.get("score")) if payload.get("score") is not None else None,
         int(payload.get("elapsedMs") or 0),
         str(payload.get("source") or "duckdb.market_overview_daily"),
     ])
@@ -131,7 +135,7 @@ def save_turnover_activity(payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 _TA_COLS = (
-    "trade_date", "total_amount", "avg_20d_amount", "ratio",
+    "trade_date", "total_amount", "avg_20d_amount", "ratio", "score",
     "elapsed_ms", "source",
 )
 _TA_SELECT = ", ".join(_TA_COLS)
@@ -143,8 +147,9 @@ def _row_to_payload(row: tuple) -> dict:
         "totalAmount": float(row[1]) if row[1] is not None else None,
         "avg20dAmount": float(row[2]) if row[2] is not None else None,
         "ratio": float(row[3]) if row[3] is not None else None,
-        "elapsedMs": int(row[4]) if row[4] is not None else None,
-        "source": str(row[5]),
+        "score": float(row[4]) if row[4] is not None else None,
+        "elapsedMs": int(row[5]) if row[5] is not None else None,
+        "source": str(row[6]),
         "fromCache": True,
     }
 
@@ -225,17 +230,37 @@ def calc_turnover_activity_cached(
     if not force:
         cached = get_turnover_activity(trade_date)
         if cached is not None:
-            _add_score(cached, trade_date)
+            # score 字段可能 NULL (旧数据没回填), 现补算
+            if cached.get("score") is None:
+                _add_score(cached, trade_date)
+                # 把补算结果写回表 (不重算 ratio)
+                try:
+                    con = get_conn()
+                    con.execute(
+                        "UPDATE turnover_activity_daily SET score = ? WHERE trade_date = ?",
+                        [float(cached["score"]), _to_date(trade_date)],
+                    )
+                except Exception:
+                    logger.debug("backfill score for %s failed (non-fatal)", trade_date)
+            else:
+                _add_score_payload_only(cached)
             return cached
     payload = calc_turnover_activity(trade_date, window=window)
     if payload is None:
         return None
+    # 先算 score, 再 save (save 包含 score)
+    _add_score(payload, trade_date)
     try:
         save_turnover_activity(payload)
     except Exception:
         logger.debug("save_turnover_activity failed (non-fatal): %s", payload.get("tradeDate"))
-    _add_score(payload, trade_date)
     return payload
+
+
+def _add_score_payload_only(payload: dict) -> None:
+    """已有 score 时, 只补 rawValue 字段 (前端用)."""
+    if payload.get("ratio") is not None and "rawValue" not in payload:
+        payload["rawValue"] = payload["ratio"]
 
 
 # ---------------------------------------------------------------------------

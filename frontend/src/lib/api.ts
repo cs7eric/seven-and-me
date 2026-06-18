@@ -1677,6 +1677,8 @@ export interface SectorBreadthItem {
   flat: number             // 平盘行业数
   total: number            // 有效行业数
   advancePct: number       // 0-1, 上涨占比
+  /** 0-100 情绪得分 = advancePct × 100 (天然百分比, 不需要百分位) */
+  score?: number | null
   source: string | null
   elapsedMs: number | null
   fromCache?: boolean
@@ -1690,6 +1692,7 @@ export interface SectorBreadthResponse {
   flat: number
   total: number
   advancePct: number
+  score?: number | null
   source: string | null
   elapsedMs: number | null
   fromCache?: boolean
@@ -1717,6 +1720,7 @@ export async function fetchMarketSentimentSectorBreadth(
       ok: false,
       tradeDate: date ?? "",
       advancing: 0, declining: 0, flat: 0, total: 0, advancePct: 0,
+      score: 0,
       source: null, elapsedMs: null, error: `HTTP ${res.status}`,
     }
   }
@@ -1728,6 +1732,7 @@ export async function fetchMarketSentimentSectorBreadth(
     flat: Number(data.flat ?? 0),
     total: Number(data.total ?? 0),
     advancePct: Number(data.advancePct ?? 0),
+    score: (data.score as number) ?? Number(data.advancePct ?? 0) * 100,
     source: (data.source as string) ?? null,
     elapsedMs: (data.elapsedMs as number) ?? null,
     fromCache: Boolean(data.fromCache),
@@ -1762,6 +1767,7 @@ export async function fetchMarketSentimentSectorBreadthHistory(
       flat: Number(it.flat ?? 0),
       total: Number(it.total ?? 0),
       advancePct: Number(it.advancePct ?? 0),
+      score: (it.score as number) ?? Number(it.advancePct ?? 0) * 100,
       source: (it.source as string) ?? null,
       elapsedMs: (it.elapsedMs as number) ?? null,
       fromCache: Boolean(it.fromCache),
@@ -2537,6 +2543,186 @@ export async function fetchMarketSentimentProfitEffectHistory(
       fromCache: Boolean(it.fromCache),
     })),
     error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Market Sentiment · 市场情绪指数 (9 张卡加权 composite, 顶部大卡)
+// 数据源: duckdb.market_sentiment_index_daily (持久化, cache-aside)
+//   公式: 15%×vol + 15%×turnover + 10%×priceStrength + 10%×riskAppetite
+//       + 15%×breadth + 15%×limitEmotion + 10%×profitEffect
+//       +  5%×sectorBreadth +  5%×styleRisk
+// 归属: /market/sentiment 页面 (顶部 1 张大卡)
+// ---------------------------------------------------------------------------
+export interface MarketSentimentIndexComponents {
+  vol: number | null
+  turnover: number | null
+  price_strength: number | null
+  risk_appetite: number | null
+  breadth: number | null
+  limit_emotion: number | null
+  profit_effect: number | null
+  sector_breadth: number | null
+  style_risk: number | null
+}
+
+export interface MarketSentimentIndexWeights {
+  vol: number
+  turnover: number
+  price_strength: number
+  risk_appetite: number
+  breadth: number
+  limit_emotion: number
+  profit_effect: number
+  sector_breadth: number
+  style_risk: number
+}
+
+export interface MarketSentimentIndexResponse {
+  ok: boolean
+  tradeDate: string
+  /** 9 个 component score, 缺失为 null (calc 内部视为 50 中性) */
+  components: MarketSentimentIndexComponents
+  /** 9 个权重, 合计 1.0 */
+  weights: MarketSentimentIndexWeights
+  /** 0-100 合成得分 */
+  compositeScore: number | null
+  /** 实际有数据的 component 数 (1-9), 9 = 全部 sub-card 都有 */
+  componentCount: number
+  /** 等级: hot / active / normal / weak / ice */
+  level: string
+  elapsedMs: number | null
+  source: string | null
+  fromCache?: boolean
+  error?: string
+}
+
+export interface MarketSentimentIndexHistoryItem {
+  tradeDate: string
+  compositeScore: number | null
+  level: string
+  componentCount: number
+  components: MarketSentimentIndexComponents
+  fromCache?: boolean
+}
+
+export interface MarketSentimentIndexHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: MarketSentimentIndexHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentIndex(
+  date?: string,
+): Promise<MarketSentimentIndexResponse> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : ""
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-sentiment/index${q}`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return {
+      ok: false,
+      tradeDate: date ?? "",
+      components: emptyMsiComponents(),
+      weights: emptyMsiWeights(),
+      compositeScore: null,
+      componentCount: 0,
+      level: "normal",
+      elapsedMs: null,
+      source: null,
+      error: `HTTP ${res.status}`,
+    }
+  }
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? date ?? ""),
+    components: parseMsiComponents(data.components),
+    weights: parseMsiWeights(data.weights),
+    compositeScore: (data.compositeScore as number | null) ?? null,
+    componentCount: Number(data.componentCount ?? 0),
+    level: String(data.level ?? "normal"),
+    elapsedMs: (data.elapsedMs as number) ?? null,
+    source: (data.source as string) ?? null,
+    fromCache: Boolean(data.fromCache),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export async function fetchMarketSentimentIndexHistory(
+  start: string,
+  end: string,
+): Promise<MarketSentimentIndexHistoryResponse> {
+  const params = new URLSearchParams({ start, end })
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/index/history?${params.toString()}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      compositeScore: (it.compositeScore as number | null) ?? null,
+      level: String(it.level ?? "normal"),
+      componentCount: Number(it.componentCount ?? 0),
+      components: parseMsiComponents(it.components),
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+function emptyMsiComponents(): MarketSentimentIndexComponents {
+  return {
+    vol: null, turnover: null, price_strength: null, risk_appetite: null,
+    breadth: null, limit_emotion: null, profit_effect: null,
+    sector_breadth: null, style_risk: null,
+  }
+}
+
+function emptyMsiWeights(): MarketSentimentIndexWeights {
+  return {
+    vol: 0.15, turnover: 0.15, price_strength: 0.10, risk_appetite: 0.10,
+    breadth: 0.15, limit_emotion: 0.15, profit_effect: 0.10,
+    sector_breadth: 0.05, style_risk: 0.05,
+  }
+}
+
+function parseMsiComponents(raw: unknown): MarketSentimentIndexComponents {
+  const c = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
+  return {
+    vol: (c.vol as number | null) ?? null,
+    turnover: (c.turnover as number | null) ?? null,
+    price_strength: (c.price_strength as number | null) ?? null,
+    risk_appetite: (c.risk_appetite as number | null) ?? null,
+    breadth: (c.breadth as number | null) ?? null,
+    limit_emotion: (c.limit_emotion as number | null) ?? null,
+    profit_effect: (c.profit_effect as number | null) ?? null,
+    sector_breadth: (c.sector_breadth as number | null) ?? null,
+    style_risk: (c.style_risk as number | null) ?? null,
+  }
+}
+
+function parseMsiWeights(raw: unknown): MarketSentimentIndexWeights {
+  const w = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
+  return {
+    vol: Number(w.vol ?? 0.15),
+    turnover: Number(w.turnover ?? 0.15),
+    price_strength: Number(w.price_strength ?? 0.10),
+    risk_appetite: Number(w.risk_appetite ?? 0.10),
+    breadth: Number(w.breadth ?? 0.15),
+    limit_emotion: Number(w.limit_emotion ?? 0.15),
+    profit_effect: Number(w.profit_effect ?? 0.10),
+    sector_breadth: Number(w.sector_breadth ?? 0.05),
+    style_risk: Number(w.style_risk ?? 0.05),
   }
 }
 

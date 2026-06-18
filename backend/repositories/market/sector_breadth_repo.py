@@ -96,13 +96,17 @@ _COL_SELECT = ", ".join(_COLS)
 
 
 def _row_to_payload(row: tuple) -> dict[str, Any]:
+    advance_pct = float(row[5]) if row[5] is not None else 0.0
     return {
         "tradeDate": row[0].isoformat(),
         "advancing": int(row[1]) if row[1] is not None else 0,
         "declining": int(row[2]) if row[2] is not None else 0,
         "flat": int(row[3]) if row[3] is not None else 0,
         "total": int(row[4]) if row[4] is not None else 0,
-        "advancePct": float(row[5]) if row[5] is not None else 0.0,
+        "advancePct": advance_pct,
+        # score: 板块扩散天然百分比 → ×100 直接得 0-100 情绪得分
+        # (上涨行业占比 0~1, 跟 ma_count 上涨占比同口径, 不需要百分位)
+        "score": round(advance_pct * 100, 2),
         "source": str(row[6]) if row[6] is not None else None,
         "elapsedMs": int(row[7]) if row[7] is not None else None,
         "fromCache": True,

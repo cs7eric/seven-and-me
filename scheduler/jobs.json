@@ -220,6 +220,16 @@
       "service_class": "profit_effect_scheduler",
       "enabled": true,
       "registered_at": "2026-06-18T13:45:00+08:00"
+    },
+    {
+      "id": "market_sentiment_index_refresh",
+      "name": "市场情绪指数 composite duckdb 回填 (17:10 工作日)",
+      "description": "工作日 17:10 收盘后, 增量合成市场情绪指数 (9 张卡加权) 到 duckdb.market_sentiment_index_daily. 数据源: volatility / turnover / ma_count / risk_appetite / limit_emotion_summary / profit_effect / sector_breadth / style_risk_appetite (8 张 sub-card *_daily). 17:10 = 它们全部完成 1 分钟后跑",
+      "config_file": "market_sentiment_index_job.json",
+      "service_module": "backend.services.scheduler.market_sentiment_index_scheduler",
+      "service_class": "market_sentiment_index_scheduler",
+      "enabled": true,
+      "registered_at": "2026-06-18T14:00:00+08:00"
     }
   ]
 }

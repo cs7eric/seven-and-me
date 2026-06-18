@@ -1,0 +1,13 @@
+{
+  "job_name": "market_sentiment_index_refresh",
+  "description": "工作日 17:10 收盘后, 增量合成市场情绪指数 (9 张卡加权) 到 duckdb.market_sentiment_index_daily. 数据源: 各 *_daily 子表 (由 daily_eod 17:00 + ma_count 17:06 + style_risk 17:08 + profit_effect 17:09 落盘). 17:10 = 它们完成 1 分钟后跑",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "run_time": "17:10",
+    "run_once_per_day": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "command": "python -u scripts/backfill_market_sentiment_index.py --days=2 --force"
+}

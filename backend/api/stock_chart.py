@@ -1991,6 +1991,78 @@ def market_sentiment_profit_effect_history():
         return jsonify({"ok": False, "error": str(exc), "items": []}), 200
 
 
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/index')
+def market_sentiment_index():
+    """市场情绪指数 composite (9 张卡加权合成).
+
+    URL: ?date=YYYY-MM-DD (默认上一交易日) &force=1 (强制重算)
+
+    权重: vol 15% + turnover 15% + breadth 15% + limit_emotion 15% +
+          price_strength 10% + risk_appetite 10% + profit_effect 10% +
+          sector_breadth 5% + style_risk 5% = 100%
+
+    数据源: cache-aside
+      1. 优先查 duckdb.market_sentiment_index_daily
+      2. 没记录才现算 (从 8 张 sub-card *_daily 拿 component) + 自动落盘
+    """
+    from datetime import date as _date
+    from backend.services.stock.trading_calendar import previous_trading_day
+    from backend.repositories.market.market_sentiment_index_repo import (
+        calc_market_sentiment_index_cached,
+    )
+    date_str = (request.args.get("date") or "").strip()
+    force = request.args.get("force") in ("1", "true", "yes")
+    if not date_str:
+        try:
+            date_str = previous_trading_day().isoformat()
+        except Exception:
+            date_str = _date.today().isoformat()
+    try:
+        payload = calc_market_sentiment_index_cached(date_str, force=force)
+        if payload is None:
+            return jsonify({
+                "ok": False,
+                "error": f"no sub-card data for {date_str}",
+                "tradeDate": date_str,
+            }), 404
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        logger.exception("market-sentiment-index failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "tradeDate": date_str}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/index/history')
+def market_sentiment_index_history():
+    """市场情绪指数历史序列 (顶部大卡 sparkline 用).
+
+    URL: ?start=YYYY-MM-DD (默认 end - 30d) &end=YYYY-MM-DD (默认 start + 30d)
+    """
+    from datetime import date as _date, timedelta
+    from backend.repositories.market.market_sentiment_index_repo import (
+        get_market_sentiment_index_history,
+    )
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+        start = _date.fromisoformat(start_str) if start_str else end - timedelta(days=30)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "start > end"}), 400
+    if (end - start).days > 365:
+        start = end - timedelta(days=365)
+    try:
+        items = get_market_sentiment_index_history(start, end)
+        return jsonify({
+            "ok": True, "start": start.isoformat(), "end": end.isoformat(),
+            "count": len(items), "items": items,
+        })
+    except Exception as exc:
+        logger.exception("market-sentiment-index history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
 @stock_chart_bp.route('/api/stock-chart/market-pulse/strong')
 def market_pulse_strong():
     """强势板块: TDX 56 行业指数, 按当日 change_pct 排序. URL: ?topN=10"""

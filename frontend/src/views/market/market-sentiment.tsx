@@ -1,7 +1,8 @@
 /**
  * Market Sentiment 页面
  *
- * 9 张正式卡 (md:grid-cols-3, 3 行):
+ * 顶部 1 张 composite 大卡 + 9 张子卡 (md:grid-cols-3, 3 行):
+ *   Top:   Market Sentiment Index (9 张卡加权, composite_score 0-100)
  *   Row 1: Risk Appetite | Market Breadth (合成) | 252 日新高
  *   Row 2: Sector Breadth | Turnover Activity | Limit Emotion
  *   Row 3: Volatility Sentiment | Style Risk Appetite | Profit Effect
@@ -9,6 +10,7 @@
  * + 4 张占位卡 (规划中: Bull-Bear / Social Buzz / Margin / Regime)
  *
  * 数据源:
+ *   - 合成指数:  duckdb.market_sentiment_index_daily    (cache-aside, 9 子卡加权)
  *   - 风险偏好:    duckdb.risk_appetite_daily           (cache-aside)
  *   - 市场广度:    duckdb.ma_count_daily                (cache-aside, 合成得分)
  *   - 252 日新高:  duckdb.ma_count_daily                (cache-aside, 价强)
@@ -27,6 +29,7 @@ import {
   Activity,
   Calendar,
   Flame,
+  Gauge,
   Heart,
   Layers,
   MessageSquareQuote,
@@ -59,6 +62,8 @@ import {
   fetchMarketSentimentStyleRiskAppetiteHistory,
   fetchMarketSentimentProfitEffect,
   fetchMarketSentimentProfitEffectHistory,
+  fetchMarketSentimentIndex,
+  fetchMarketSentimentIndexHistory,
   type RiskAppetiteResponse,
   type RiskAppetiteHistoryItem,
   type MaCountResponse,
@@ -75,6 +80,9 @@ import {
   type StyleRiskAppetiteHistoryItem,
   type ProfitEffectResponse,
   type ProfitEffectHistoryItem,
+  type MarketSentimentIndexResponse,
+  type MarketSentimentIndexComponents,
+  type MarketSentimentIndexHistoryItem,
 } from "@/lib/api"
 
 const PLACEHOLDER_CHIPS = [
@@ -244,7 +252,7 @@ function RiskAppetiteCard({ date }: { date: string | null }) {
   const sparkData = toSparkData(history, (it) => it.score ?? 50)
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <TrendingUp className="size-4 text-muted-foreground" />
@@ -380,7 +388,7 @@ function MarketBreadthCard({ date }: { date: string | null }) {
   ]
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Layers className="size-4 text-muted-foreground" />
@@ -499,7 +507,7 @@ function NewHigh252dCard({ date }: { date: string | null }) {
   const sparkData = toSparkData(history, (it) => it.newHigh252dScore ?? 50)
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <TrendingUp className="size-4 text-muted-foreground" />
@@ -595,18 +603,23 @@ function SectorBreadthCard({ date }: { date: string | null }) {
   }, [date])
 
   const advPct = data ? data.advancePct * 100 : null
+  // score 优先用后端返回的 0-100 (advancePct × 100), fallback 同样算法
+  const score100 = data?.score ?? advPct
   const tone =
-    advPct == null
+    score100 == null
       ? "text-slate-700"
-      : advPct >= 50
+      : score100 >= 50
         ? "text-red-600"
-        : advPct >= 30
+        : score100 >= 30
           ? "text-amber-600"
           : "text-emerald-600"
-  const sparkData = toSparkData(history, (it) => it.advancePct * 100)
+  const sparkData = toSparkData(
+    history,
+    (it) => it.score ?? it.advancePct * 100,
+  )
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Layers className="size-4 text-muted-foreground" />
@@ -712,7 +725,7 @@ function LimitEmotionCard({ date }: { date: string | null }) {
   const composite = data?.compositeScore ?? null
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Flame className="size-4 text-muted-foreground" />
@@ -883,7 +896,7 @@ function TurnoverActivityCard({ date }: { date: string | null }) {
   const sparkData = toSparkData(history, (it) => it.score ?? 50)
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Activity className="size-4 text-muted-foreground" />
@@ -1004,7 +1017,7 @@ function VolatilitySentimentCard({ date }: { date: string | null }) {
           : "text-foreground"
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Activity className="size-4 text-muted-foreground" />
@@ -1123,7 +1136,7 @@ function StyleRiskAppetiteCard({ date }: { date: string | null }) {
   const sparkData = toSparkData(history, (it) => it.score ?? 50)
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Scale className="size-4 text-muted-foreground" />
@@ -1246,7 +1259,7 @@ function ProfitEffectCard({ date }: { date: string | null }) {
   const sparkData = toSparkData(history, (it) => it.score)
 
   return (
-    <Card>
+    <Card className="border-0 shadow-none bg-muted/50">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Activity className="size-4 text-muted-foreground" />
@@ -1291,6 +1304,180 @@ function ProfitEffectCard({ date }: { date: string | null }) {
               <span className="text-emerald-600/70">＜40 亏钱效应</span>
             </div>
           </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Top Card: Market Sentiment Index (composite, 9 张卡加权合成)
+// ---------------------------------------------------------------------------
+const MSI_LEVEL_META: Record<string, { label: string; tone: string; chip: string }> = {
+  hot:    { label: "火热",   tone: "text-red-600",    chip: "border-red-200 bg-red-50 text-red-700" },
+  active: { label: "活跃",   tone: "text-orange-600", chip: "border-orange-200 bg-orange-50 text-orange-700" },
+  normal: { label: "中性",   tone: "text-slate-700",  chip: "border-slate-200 bg-slate-50 text-slate-700" },
+  weak:   { label: "弱势",   tone: "text-blue-600",   chip: "border-blue-200 bg-blue-50 text-blue-700" },
+  ice:    { label: "冰点",   tone: "text-slate-400",  chip: "border-slate-300 bg-slate-100 text-slate-500" },
+}
+
+const MSI_COMPONENT_META: Array<{
+  key: keyof MarketSentimentIndexComponents
+  label: string
+  weight: number
+}> = [
+  { key: "vol",            label: "波动率情绪",   weight: 0.15 },
+  { key: "turnover",       label: "成交活跃度",   weight: 0.15 },
+  { key: "breadth",        label: "市场广度",     weight: 0.15 },
+  { key: "limit_emotion",  label: "涨跌停情绪",   weight: 0.15 },
+  { key: "price_strength", label: "价格强度",     weight: 0.10 },
+  { key: "risk_appetite",  label: "风险偏好",     weight: 0.10 },
+  { key: "profit_effect",  label: "赚钱效应",     weight: 0.10 },
+  { key: "sector_breadth", label: "板块扩散",     weight: 0.05 },
+  { key: "style_risk",     label: "风格风险",     weight: 0.05 },
+]
+
+function MarketSentimentIndexCard({ date }: { date: string | null }) {
+  const [data, setData] = useState<MarketSentimentIndexResponse | null>(null)
+  const [history, setHistory] = useState<MarketSentimentIndexHistoryItem[] | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    const end = date ?? isoDateNDaysAgo(0)
+    const start = shiftIsoDays(end, -30)
+    void (async () => {
+      try {
+        const [snap, hist] = await Promise.all([
+          fetchMarketSentimentIndex(date ?? undefined),
+          fetchMarketSentimentIndexHistory(start, end),
+        ])
+        if (cancelled) return
+        setData(snap)
+        setHistory(hist.items ?? [])
+      } catch {
+        if (!cancelled) {
+          setData(null)
+          setHistory(null)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [date])
+
+  const score = data?.compositeScore ?? null
+  const level = data?.level ?? "normal"
+  const meta = MSI_LEVEL_META[level] ?? MSI_LEVEL_META.normal
+  const components: MarketSentimentIndexComponents = data?.components ?? {
+    vol: null, turnover: null, price_strength: null, risk_appetite: null,
+    breadth: null, limit_emotion: null, profit_effect: null,
+    sector_breadth: null, style_risk: null,
+  }
+
+  const tone =
+    score == null
+      ? "text-slate-700"
+      : score >= 70
+        ? "text-red-600"
+        : score >= 55
+          ? "text-orange-600"
+          : score >= 45
+            ? "text-slate-700"
+            : score >= 30
+              ? "text-blue-600"
+              : "text-slate-400"
+
+  const sparkData = toSparkData(history, (it) => it.compositeScore ?? 50)
+
+  return (
+    <Card className="border-0 shadow-none bg-muted/50">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Gauge className="size-4 text-muted-foreground" />
+          市场情绪指数
+        </CardTitle>
+        <CardDescription>
+          9 张卡加权合成: 15%×波动率 + 15%×成交活跃度 + 15%×市场广度 + 15%×涨跌停 + 10%×价格强度 + 10%×风险偏好 + 10%×赚钱效应 + 5%×板块扩散 + 5%×风格风险
+          {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+        ) : score == null ? (
+          <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-[1fr_1.4fr]">
+            {/* 左侧: 合成得分 + sparkline */}
+            <div className="space-y-2">
+              <div className="flex items-baseline gap-3">
+                <span className={`text-5xl font-semibold tabular-nums ${tone}`}>
+                  {score.toFixed(1)}
+                </span>
+                <span className="text-xs text-muted-foreground">/ 100</span>
+                <span
+                  className={cn(
+                    "ml-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
+                    meta.chip
+                  )}
+                >
+                  {meta.label}
+                </span>
+              </div>
+              {data && (
+                <div className="text-[10px] text-muted-foreground">
+                  实际参与合成的 component: {data.componentCount} / 9
+                  {data.componentCount < 9 && " (部分子卡尚未落盘, 缺失按 50 中性)"}
+                </div>
+              )}
+              <div className="-mx-1">
+                <Sparkline
+                  data={sparkData}
+                  height={60}
+                  color="auto"
+                  formatter={(v) => v.toFixed(1)}
+                />
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  近 30 日 composite_score
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                <span className="text-red-600/70">≥70 火热</span>
+                <span className="text-orange-600/70">55-70 活跃</span>
+                <span className="text-slate-500">45-55 中性</span>
+                <span className="text-blue-600/70">30-45 弱势</span>
+                <span className="text-slate-400">＜30 冰点</span>
+              </div>
+            </div>
+
+            {/* 右侧: 9 个 component 明细 (进度条) */}
+            <div className="grid grid-cols-3 gap-x-3 gap-y-2">
+              {MSI_COMPONENT_META.map((c) => {
+                const v = components[c.key]
+                return (
+                  <div key={c.key} className="space-y-1">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-muted-foreground">{c.label}</span>
+                      <span className="text-muted-foreground/70">{(c.weight * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className={`text-sm font-semibold tabular-nums ${v == null ? "text-slate-300" : tone}`}>
+                        {v == null ? "—" : v.toFixed(1)}
+                      </span>
+                      <div className="flex-1 h-1.5 rounded-full bg-muted/30 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-foreground/25 transition-all"
+                          style={{ width: `${v == null ? 0 : Math.min(v, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -1354,14 +1541,15 @@ export default function MarketSentimentPage() {
           </div>
         </div>
 
-        {/* Section 1: 实时情绪指标 — 6 张正式卡 / 2 行布局 (row1: 1/3+2/3, row2: 3×1/3, row3: 1/3+rest) */}
+        {/* Section 1: 实时情绪指标 — 顶部 1 张 composite 大卡 + 9 张子卡 (3 行) */}
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <Activity className="size-3.5" />
             <span>实时情绪指标</span>
             <span className="text-border">·</span>
-            <span className="text-[10px]">9 张正式卡 / duckdb 持久化 / 工作日自动更新</span>
+            <span className="text-[10px]">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
           </div>
+          <MarketSentimentIndexCard date={date} />
           <div className="grid gap-4 md:grid-cols-3">
             <RiskAppetiteCard date={date} />
             <MarketBreadthCard date={date} />
