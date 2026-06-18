@@ -1475,6 +1475,64 @@ def market_pulse_sector_daily():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/sector-breadth')
+def market_sentiment_sector_breadth():
+    """板块扩散: 上涨行业数 / 下跌 / 平盘 / 有效行业数 + advance_pct.
+
+    URL: ?date=YYYY-MM-DD (默认今天)
+         &days=N (1-365, 默认 0=单日模式; >0 走区间模式)
+
+    数据源: duckdb.market_pulse_sector_breadth_daily
+            (由 ths_industry_fund_flow_daily 聚合, 工作日 17:15 收盘后算)
+
+    cache-aside: 优先查表, 没记录自动算 + 落盘 (依赖 ths_industry_fund_flow_daily 当天数据齐)
+
+    归属: market-sentiment 命名空间 (跟 ma-count / risk-appetite / limit-emotion-summary 同空间),
+    不是 market-pulse (数据来源是 ths 90 行业, 跟 PulseStats 的 6 张大盘宽度卡不同维度).
+    """
+    from datetime import date as _date
+    from backend.repositories.market.sector_breadth_repo import (
+        calc_sector_breadth_cached, get_sector_breadth_history,
+    )
+    date_str = (request.args.get("date") or "").strip()
+    try:
+        days = int(request.args.get("days") or 0)
+    except (TypeError, ValueError):
+        days = 0
+    days = max(0, min(days, 365))
+    try:
+        td = _date.fromisoformat(date_str) if date_str else _date.today()
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+
+    if days > 0:
+        # 区间模式
+        end_d = td
+        start_d = _date.fromordinal(end_d.toordinal() - days)  # 简单减天数
+        items = get_sector_breadth_history(start_d.isoformat(), end_d.isoformat(), limit=days)
+        return jsonify({
+            "ok": True,
+            "start": start_d.isoformat(),
+            "end": end_d.isoformat(),
+            "days": days,
+            "count": len(items),
+            "items": items,
+        })
+    # 单日模式: cache-aside
+    try:
+        payload = calc_sector_breadth_cached(td)
+    except Exception as exc:
+        logger.exception("sector-breadth cache-aside failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    if payload is None:
+        return jsonify({
+            "ok": False,
+            "error": f"no ths_industry_fund_flow data for {td.isoformat()}",
+            "tradeDate": td.isoformat(),
+        }), 404
+    return jsonify({"ok": True, **payload})
+
+
 @stock_chart_bp.route('/api/stock-chart/market-sentiment/risk-appetite')
 def market_sentiment_risk_appetite():
     """风险偏好: 沪深300 20日累计收益 - (511010 + 511090) / 2 加权国债 ETF 20日收益.
@@ -1601,6 +1659,83 @@ def market_sentiment_limit_emotion_summary_history():
         })
     except Exception as exc:
         logger.exception("limit-emotion-summary history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/volatility-sentiment')
+def market_sentiment_volatility_sentiment():
+    """波动率情绪 (情绪分项 ⑤): 沪深300 20 日年化波动率 → 1 年历史分位 → 反向情绪得分.
+
+    URL: ?date=YYYY-MM-DD (默认上一交易日) &force=1 (强制重算)
+
+    公式 (v1.0):
+      realized_vol_20d = std(近 20 日日收益率) × √252 × 100  (%, 年化)
+      percentile_1y    = rank(近 252 个交易日的 vol, 含等于) / 252  ∈ [0, 1]
+      sentiment_score  = (1 - percentile_1y) × 100  ∈ [0, 100]   (反向, 高分=情绪好)
+
+    数据源: cache-aside
+      1. 优先查 duckdb.volatility_sentiment_daily (持久化)
+      2. 没记录才现算 (从 index_daily_raw LAG) + 自动落盘
+
+    归属: market-sentiment 命名空间 (跟 ma-count / risk-appetite / limit-emotion-summary 同空间).
+    """
+    from datetime import date as _date
+    from backend.services.stock.trading_calendar import previous_trading_day
+    from backend.repositories.market.volatility_sentiment_repo import (
+        calc_volatility_sentiment_cached,
+    )
+    date_str = (request.args.get("date") or "").strip()
+    force = request.args.get("force") in ("1", "true", "yes")
+    if not date_str:
+        try:
+            date_str = previous_trading_day().isoformat()
+        except Exception:
+            date_str = _date.today().isoformat()
+    try:
+        payload = calc_volatility_sentiment_cached(date_str, force=force)
+        if payload is None:
+            return jsonify({
+                "ok": False,
+                "error": f"no index data / not enough history for {date_str}",
+                "tradeDate": date_str,
+            }), 200
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        logger.exception("volatility-sentiment failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "tradeDate": date_str}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/volatility-sentiment/history')
+def market_sentiment_volatility_sentiment_history():
+    """波动率情绪历史序列 (sparkline 用, 按日期范围查).
+
+    URL: ?start=YYYY-MM-DD (默认 end - 30d) &end=YYYY-MM-DD (默认 start + 30d)
+
+    数据源: duckdb.volatility_sentiment_daily (持久化)
+    """
+    from datetime import date as _date, timedelta
+    from backend.repositories.market.volatility_sentiment_repo import (
+        get_volatility_sentiment_history,
+    )
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+        start = _date.fromisoformat(start_str) if start_str else end - timedelta(days=30)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "start > end"}), 400
+    if (end - start).days > 365:
+        start = end - timedelta(days=365)
+    try:
+        items = get_volatility_sentiment_history(start, end)
+        return jsonify({
+            "ok": True, "start": start.isoformat(), "end": end.isoformat(),
+            "count": len(items), "items": items,
+        })
+    except Exception as exc:
+        logger.exception("volatility-sentiment history failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc), "items": []}), 200
 
 
@@ -2116,6 +2251,101 @@ def ths_industry_fund_flow_history():
         "ok": True,
         "dates": list_history_dates(),
     })
+
+
+# ---------------------------------------------------------------------------
+# 同花顺 90 行业资金流 · duckdb 历史序列
+# 数据源: duckdb.ths_industry_fund_flow_daily (由 ths_fund_flow_service 写穿 + backfill 脚本回填)
+# 跟原 /fund-flow (读 JSON latest) + /fund-flow/history (读 JSON history) 独立, 不冲突
+# ---------------------------------------------------------------------------
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow/db-history')
+def ths_industry_fund_flow_db_history():
+    """读 duckdb 的近 N 天 历史序列 (新增, 不动原 /fund-flow 和 /fund-flow/history).
+
+    URL: ?days=10 (1-120, 默认 10) &topN=20 (None=全量 90) &date=YYYY-MM-DD
+         (date 优先: 给定 date 时, 只返该日的 top/bottom)
+    """
+    from backend.repositories.market.ths_industry_fund_flow_repo import (
+        get_fund_flow_daily_topn, get_fund_flow_history,
+    )
+    date_str = (request.args.get("date") or "").strip()
+    try:
+        top_n_arg = request.args.get("topN")
+        top_n = int(top_n_arg) if top_n_arg else 10
+    except (TypeError, ValueError):
+        top_n = 10
+    top_n = max(1, min(top_n, 90))
+
+    try:
+        if date_str:
+            payload = get_fund_flow_daily_topn(date_str, top_n=top_n)
+            return jsonify({"ok": True, **payload})
+        # 没给 date: 走 days
+        try:
+            days = int(request.args.get("days") or 10)
+        except (TypeError, ValueError):
+            days = 10
+        days = max(1, min(days, 120))
+        rows = get_fund_flow_history(days=days, top_n=top_n)
+        return jsonify({
+            "ok": True,
+            "days": days,
+            "topN": top_n,
+            "count": len(rows),
+            "items": rows,
+        })
+    except Exception as exc:
+        logger.exception("ths-industry fund-flow db-history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow/industry-series')
+def ths_industry_fund_flow_industry_series():
+    """单行业跨日资金流序列 (新增, 跟原 /fund-flow + /fund-flow/history + /db-history 独立).
+
+    URL: ?industry=半导体 (URL encode 即可) &days=30 (1-365, 默认 30) &end=YYYY-MM-DD
+    """
+    from backend.repositories.market.ths_industry_fund_flow_repo import (
+        get_fund_flow_for_industry, list_industries_with_data,
+    )
+    industry = (request.args.get("industry") or "").strip()
+    if not industry:
+        # 没传 industry: 列所有行业, 给前端"行业选择器"用
+        try:
+            days = int(request.args.get("days") or 30)
+        except (TypeError, ValueError):
+            days = 30
+        days = max(1, min(days, 365))
+        try:
+            items = list_industries_with_data(days=days)
+            return jsonify({
+                "ok": True,
+                "days": days,
+                "count": len(items),
+                "items": items,
+            })
+        except Exception as exc:
+            logger.exception("industry list failed: %s", exc)
+            return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+    try:
+        days = int(request.args.get("days") or 30)
+    except (TypeError, ValueError):
+        days = 30
+    days = max(1, min(days, 365))
+    end_str = (request.args.get("end") or "").strip()
+    try:
+        rows = get_fund_flow_for_industry(industry, days=days, end=end_str or None)
+        return jsonify({
+            "ok": True,
+            "industry": industry,
+            "days": days,
+            "count": len(rows),
+            "items": rows,
+        })
+    except Exception as exc:
+        logger.exception("industry-series failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
 
 
 # ---------------------------------------------------------------------------

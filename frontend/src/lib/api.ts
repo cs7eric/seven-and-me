@@ -1641,6 +1641,112 @@ export async function fetchMarketPulseIndexReturnsHistory(
 }
 
 // ---------------------------------------------------------------------------
+// Market Sentiment · 板块扩散 (上涨行业数 / 有效行业数)
+// 数据源: duckdb.market_pulse_sector_breadth_daily
+//        (由 ths_industry_fund_flow_daily 聚合, 工作日 17:15 收盘后算)
+// 归属: /market/sentiment 页面 (跟 ma-count / risk-appetite / limit-emotion-summary 同空间)
+// ---------------------------------------------------------------------------
+export interface SectorBreadthItem {
+  tradeDate: string
+  advancing: number        // 上涨行业数
+  declining: number        // 下跌行业数
+  flat: number             // 平盘行业数
+  total: number            // 有效行业数
+  advancePct: number       // 0-1, 上涨占比
+  source: string | null
+  elapsedMs: number | null
+  fromCache?: boolean
+}
+
+export interface SectorBreadthResponse {
+  ok: boolean
+  tradeDate: string
+  advancing: number
+  declining: number
+  flat: number
+  total: number
+  advancePct: number
+  source: string | null
+  elapsedMs: number | null
+  fromCache?: boolean
+  error?: string
+}
+
+export interface SectorBreadthHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  days: number
+  count: number
+  items: SectorBreadthItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentSectorBreadth(
+  date?: string,
+): Promise<SectorBreadthResponse> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : ""
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-sentiment/sector-breadth${q}`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return {
+      ok: false,
+      tradeDate: date ?? "",
+      advancing: 0, declining: 0, flat: 0, total: 0, advancePct: 0,
+      source: null, elapsedMs: null, error: `HTTP ${res.status}`,
+    }
+  }
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? date ?? ""),
+    advancing: Number(data.advancing ?? 0),
+    declining: Number(data.declining ?? 0),
+    flat: Number(data.flat ?? 0),
+    total: Number(data.total ?? 0),
+    advancePct: Number(data.advancePct ?? 0),
+    source: (data.source as string) ?? null,
+    elapsedMs: (data.elapsedMs as number) ?? null,
+    fromCache: Boolean(data.fromCache),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export async function fetchMarketSentimentSectorBreadthHistory(
+  days: number = 30,
+  end?: string,
+): Promise<SectorBreadthHistoryResponse> {
+  const params = new URLSearchParams({ days: String(days) })
+  if (end) params.set("end", end)
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/sector-breadth?${params.toString()}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start: "", end: "", days, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? "",
+    end: (data.end as string) ?? end ?? "",
+    days: (data.days as number) ?? days,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      advancing: Number(it.advancing ?? 0),
+      declining: Number(it.declining ?? 0),
+      flat: Number(it.flat ?? 0),
+      total: Number(it.total ?? 0),
+      advancePct: Number(it.advancePct ?? 0),
+      source: (it.source as string) ?? null,
+      elapsedMs: (it.elapsedMs as number) ?? null,
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Market Sentiment · 风险偏好 (沪深300 20日 - (511010 + 511090)/2 国债 ETF 20日)
 // 数据源: duckdb.risk_appetite_daily (持久化, cache-aside)
 // 归属: /market/sentiment 页面 (Market Sentiment 路由), 不是 market-pulse
@@ -1937,6 +2043,152 @@ export async function fetchMarketSentimentLimitEmotionSummaryHistory(
       yesterdayLimitUpAvgReturn: (it.yesterdayLimitUpAvgReturn as number | null) ?? null,
       compositeScore: (it.compositeScore as number) ?? 0,
       level: (it.level as LimitEmotionLevel) ?? "weak",
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Market Sentiment · 波动率情绪 (情绪分项 ⑤)
+//
+// 公式 (跟 backend/repositories/market/volatility_sentiment_repo 一致):
+//   realized_vol_20d = std(近 20 日日收益率) × √252 × 100   (%, 年化)
+//   percentile_1y    = rank(近 252 个交易日的 vol, 含等于) / 252  ∈ [0, 1]
+//   sentiment_score  = (1 - percentile_1y) × 100              ∈ [0, 100]
+//                     高分=平静 (低波, 情绪好)  低分=波动 (高波, 情绪差)
+//
+// 数据源: duckdb.volatility_sentiment_daily (cache-aside, /api/.../volatility-sentiment)
+// 归属: /market/sentiment 页面, 不是 market-pulse
+// ---------------------------------------------------------------------------
+export interface VolatilitySentimentItem {
+  tradeDate: string
+  /** 6 位 code (有 sh/sz/bj 前缀), 例 "sh000300" */
+  underlyingCode: string
+  /** 中文名, 例 "沪深300" */
+  underlyingName: string
+  /** 沪深300 当日收盘价 */
+  close: number | null
+  /** 当日日收益率 % */
+  dailyReturnPct: number | null
+  /** 20 日年化波动率 % */
+  realizedVol20d: number | null
+  volWindowDays: number
+  volLookbackDays: number
+  /** 历史分位 0-1, 越小=越平静 */
+  percentile1y: number | null
+  /** 情绪得分 0-100, 反向 (高分=情绪好) */
+  sentimentScore: number | null
+  sampleCount: number
+  elapsedMs?: number
+  source?: string
+  fromCache?: boolean
+}
+
+export interface VolatilitySentimentResponse {
+  ok: boolean
+  tradeDate: string
+  underlyingCode: string
+  underlyingName: string
+  close: number | null
+  dailyReturnPct: number | null
+  realizedVol20d: number | null
+  volWindowDays: number
+  volLookbackDays: number
+  percentile1y: number | null
+  sentimentScore: number | null
+  sampleCount: number
+  elapsedMs?: number
+  source?: string
+  fromCache?: boolean
+  error?: string
+}
+
+export async function fetchMarketSentimentVolatilitySentiment(
+  date?: string,
+): Promise<VolatilitySentimentResponse> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : ""
+  const res = await fetchWithRetry(`${API_BASE}/api/stock-chart/market-sentiment/volatility-sentiment${q}`)
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return {
+      ok: false,
+      tradeDate: date ?? "",
+      underlyingCode: "sh000300",
+      underlyingName: "沪深300",
+      close: null,
+      dailyReturnPct: null,
+      realizedVol20d: null,
+      volWindowDays: 20,
+      volLookbackDays: 252,
+      percentile1y: null,
+      sentimentScore: null,
+      sampleCount: 0,
+      elapsedMs: null,
+      source: null,
+      error: `HTTP ${res.status}`,
+    }
+  }
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? date ?? ""),
+    underlyingCode: String(data.underlyingCode ?? "sh000300"),
+    underlyingName: String(data.underlyingName ?? "沪深300"),
+    close: (data.close as number | null) ?? null,
+    dailyReturnPct: (data.dailyReturnPct as number | null) ?? null,
+    realizedVol20d: (data.realizedVol20d as number | null) ?? null,
+    volWindowDays: Number(data.volWindowDays ?? 20),
+    volLookbackDays: Number(data.volLookbackDays ?? 252),
+    percentile1y: (data.percentile1y as number | null) ?? null,
+    sentimentScore: (data.sentimentScore as number | null) ?? null,
+    sampleCount: Number(data.sampleCount ?? 0),
+    elapsedMs: (data.elapsedMs as number) ?? null,
+    source: (data.source as string) ?? null,
+    fromCache: Boolean(data.fromCache),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export interface VolatilitySentimentHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: VolatilitySentimentItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentVolatilitySentimentHistory(
+  start: string,
+  end: string,
+): Promise<VolatilitySentimentHistoryResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/volatility-sentiment/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      underlyingCode: String(it.underlyingCode ?? "sh000300"),
+      underlyingName: String(it.underlyingName ?? "沪深300"),
+      close: (it.close as number | null) ?? null,
+      dailyReturnPct: (it.dailyReturnPct as number | null) ?? null,
+      realizedVol20d: (it.realizedVol20d as number | null) ?? null,
+      volWindowDays: Number(it.volWindowDays ?? 20),
+      volLookbackDays: Number(it.volLookbackDays ?? 252),
+      percentile1y: (it.percentile1y as number | null) ?? null,
+      sentimentScore: (it.sentimentScore as number | null) ?? null,
+      sampleCount: Number(it.sampleCount ?? 0),
+      elapsedMs: (it.elapsedMs as number) ?? null,
+      source: (it.source as string) ?? null,
       fromCache: Boolean(it.fromCache),
     })),
     error: (data.error as string) ?? undefined,

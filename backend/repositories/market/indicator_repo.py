@@ -709,3 +709,232 @@ def calc_ma_count_cached(
         # 落盘失败不影响返回 (calc 结果照样可用)
         pass
     return payload
+
+
+# ---------------------------------------------------------------------------
+# 8. 批量算 MA 计数 (1 次 SQL 算区间内所有 trade_date, 给 backfill 用)
+# ---------------------------------------------------------------------------
+# 优化: calc_ma_count 单日 SQL 走全表扫 daily_qfq (28M 行 × 5500 只), 250 天回填
+# 需要 250 次独立扫 = 30-60 min. bulk 版把整区间一次性进窗口函数, DuckDB 内部
+# 共享一次扫描, 输出 ~ 250 行 (每 trade_date 1 行), 耗时 ~ 5-10 秒.
+# ---------------------------------------------------------------------------
+
+_BOARD_CASE_SQL = """
+  CASE
+    WHEN w.code LIKE '600%' OR w.code LIKE '601%' OR w.code LIKE '603%' OR w.code LIKE '605%' THEN 'main_sh'
+    WHEN w.code LIKE '688%' OR w.code LIKE '689%' THEN 'star'
+    WHEN w.code LIKE '300%' OR w.code LIKE '301%' THEN 'chinext'
+    WHEN w.code LIKE '000%' OR w.code LIKE '001%' OR w.code LIKE '002%' OR w.code LIKE '003%' THEN 'main_sz'
+    WHEN w.code LIKE '8%' OR w.code LIKE '4%' OR w.code LIKE '920%' THEN 'bse'
+    ELSE 'unknown'
+  END
+"""
+
+_ST_NAME_FILTER_SQL = """
+  AND (u.name IS NULL
+       OR (UPPER(u.name) NOT LIKE 'ST%%'
+           AND UPPER(u.name) NOT LIKE '*ST%%'
+           AND u.name NOT LIKE '%%退%%'))
+"""
+
+
+def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
+    """一次性 SQL 算 [start..end] 区间内所有 trade_date 的 MA 计数 + 板块分布.
+
+    把 calc_ma_count 单日的全部 Python 逻辑下沉到 SQL:
+      1. windowed CTE: 一次性扫 daily_qfq (trade_date <= end), 算 MA20/MA60/5d LAG/60d MIN/252d MAX
+      2. INNER JOIN TEMP TABLE active_codes (来自 stock_meta_repo._codes_json 兜底, 5530 只 A股全集)
+         过滤 universe (跟 calc_ma_count Python 端走 get_stock_meta → _codes.json 兜底对齐)
+      3. LEFT JOIN stock_universe 过滤 is_active=false + ST
+      4. group by trade_date (及 trade_date + board): 算 6 个 count + 板块分布
+
+    Args:
+        start: 区间起点 (含)
+        end: 区间终点 (含)
+
+    Returns:
+        {trade_date: {tradeDate, totalEligible, aboveMa20, aboveMa60, aboveBoth,
+                      pctAboveMa20, pctAboveMa60, pctAboveBoth,
+                      up5dCount, pctUp5d, newLow60dCount, pctNewLow60d,
+                      newHigh252dCount, pctNewHigh252d,
+                      byBoard: {board: {...同字段...}}, elapsedMs, source}}
+    """
+    import time
+    from backend.repositories.market.stock_meta_repo import _codes_json
+
+    s = _to_date(start)
+    e = _to_date(end)
+    assert s is not None and e is not None
+    if s > e:
+        return {}
+
+    t0 = time.time()
+    con = get_conn()
+
+    # 1. 建 TEMP active_codes 表, 装 _codes.json 的 5530 只 (跟 calc_ma_count 兜底口径一致)
+    #    TEMP TABLE session-scoped, 自动 drop, 不污染 schema
+    codes_json = _codes_json()
+    if not codes_json:
+        # _codes.json 不存在: 降级用 daily_qfq 全部 (会有 ~9000 只, 偏多)
+        active_codes_sql_filter = ""  # 不过滤
+    else:
+        con.execute("""
+            CREATE OR REPLACE TEMP TABLE _bulk_active_codes (code VARCHAR PRIMARY KEY)
+        """)
+        con.executemany(
+            "INSERT INTO _bulk_active_codes VALUES (?)",
+            [(c,) for c in codes_json.keys()],
+        )
+        active_codes_sql_filter = "INNER JOIN _bulk_active_codes a ON w.code = a.code"
+
+    # 2. 总览聚合: 每个 (trade_date, board) 一行
+    rows = con.execute(f"""
+        WITH windowed AS (
+          SELECT code, trade_date, close,
+                 AVG(close) OVER (PARTITION BY code ORDER BY trade_date
+                                  ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS ma20,
+                 AVG(close) OVER (PARTITION BY code ORDER BY trade_date
+                                  ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
+                 LAG(close, 5)   OVER (PARTITION BY code ORDER BY trade_date) AS close_5d_ago,
+                 LAG(close, 59)  OVER (PARTITION BY code ORDER BY trade_date) AS close_59d_ago,
+                 MIN(close)      OVER (PARTITION BY code ORDER BY trade_date
+                                       ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS min_60d,
+                 LAG(close, 251) OVER (PARTITION BY code ORDER BY trade_date) AS close_251d_ago,
+                 MAX(close)      OVER (PARTITION BY code ORDER BY trade_date
+                                       ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS max_252d
+            FROM daily_qfq
+           WHERE trade_date <= ?
+        ),
+        filtered AS (
+          SELECT w.code, w.trade_date, w.close, w.ma20, w.ma60,
+                 w.close_5d_ago, w.close_59d_ago, w.min_60d,
+                 w.close_251d_ago, w.max_252d,
+                 {_BOARD_CASE_SQL} AS board
+            FROM windowed w
+            {active_codes_sql_filter}
+            LEFT JOIN stock_universe u ON w.code = u.code
+           WHERE w.ma20 IS NOT NULL AND w.ma60 IS NOT NULL
+             AND (u.is_active IS NULL OR u.is_active = TRUE)
+             {_ST_NAME_FILTER_SQL}
+             AND w.trade_date BETWEEN ? AND ?
+        )
+        SELECT trade_date, board,
+               COUNT(*) AS total,
+               SUM(CASE WHEN close > ma20 THEN 1 ELSE 0 END) AS above_ma20,
+               SUM(CASE WHEN close > ma60 THEN 1 ELSE 0 END) AS above_ma60,
+               SUM(CASE WHEN close > ma20 AND close > ma60 THEN 1 ELSE 0 END) AS above_both,
+               SUM(CASE WHEN close_5d_ago IS NOT NULL AND close > close_5d_ago THEN 1 ELSE 0 END) AS up_5d,
+               SUM(CASE WHEN close_59d_ago IS NOT NULL AND min_60d IS NOT NULL AND close <= min_60d THEN 1 ELSE 0 END) AS new_low_60d,
+               SUM(CASE WHEN close_251d_ago IS NOT NULL AND max_252d IS NOT NULL AND close >= max_252d THEN 1 ELSE 0 END) AS new_high_252d
+          FROM filtered
+         GROUP BY trade_date, board
+         ORDER BY trade_date ASC, board ASC
+    """, [e, s, e]).fetchall()
+
+    # 聚合 by_board / total: 按 trade_date 合并 6 个 board
+    by_td: dict[date, dict[str, Any]] = {}
+    for (td, board, total, am20, am60, aboth, u5d, nl60d, nh252d) in rows:
+        d = td.date() if hasattr(td, "date") else td
+        slot = by_td.setdefault(d, {
+            "totalEligible": 0,
+            "aboveMa20": 0, "aboveMa60": 0, "aboveBoth": 0,
+            "up5dCount": 0, "newLow60dCount": 0, "newHigh252dCount": 0,
+            "byBoard": {},
+        })
+        slot["totalEligible"] += int(total or 0)
+        slot["aboveMa20"] += int(am20 or 0)
+        slot["aboveMa60"] += int(am60 or 0)
+        slot["aboveBoth"] += int(aboth or 0)
+        slot["up5dCount"] += int(u5d or 0)
+        slot["newLow60dCount"] += int(nl60d or 0)
+        slot["newHigh252dCount"] += int(nh252d or 0)
+
+        t = int(total or 0)
+        slot["byBoard"][board] = {
+            "total": t,
+            "aboveMa20": int(am20 or 0),
+            "aboveMa60": int(am60 or 0),
+            "aboveBoth": int(aboth or 0),
+            "pctMa20": round(int(am20 or 0) / t * 100, 2) if t > 0 else 0.0,
+            "pctMa60": round(int(am60 or 0) / t * 100, 2) if t > 0 else 0.0,
+            "pctBoth": round(int(aboth or 0) / t * 100, 2) if t > 0 else 0.0,
+            "up5d": int(u5d or 0),
+            "pctUp5d": round(int(u5d or 0) / t * 100, 2) if t > 0 else 0.0,
+            "newLow60d": int(nl60d or 0),
+            "pctNewLow60d": round(int(nl60d or 0) / t * 100, 2) if t > 0 else 0.0,
+            "newHigh252d": int(nh252d or 0),
+            "pctNewHigh252d": round(int(nh252d or 0) / t * 100, 2) if t > 0 else 0.0,
+        }
+
+    def pct(num: int, den: int) -> float:
+        return round(num / den * 100, 2) if den > 0 else 0.0
+
+    elapsed_ms = int((time.time() - t0) * 1000)
+    out: dict[date, dict[str, Any]] = {}
+    for td, slot in by_td.items():
+        e_total = slot["totalEligible"]
+        out[td] = {
+            "tradeDate": td.isoformat(),
+            "totalEligible": e_total,
+            "aboveMa20": slot["aboveMa20"],
+            "aboveMa60": slot["aboveMa60"],
+            "aboveBoth": slot["aboveBoth"],
+            "pctAboveMa20": pct(slot["aboveMa20"], e_total),
+            "pctAboveMa60": pct(slot["aboveMa60"], e_total),
+            "pctAboveBoth": pct(slot["aboveBoth"], e_total),
+            "up5dCount": slot["up5dCount"],
+            "pctUp5d": pct(slot["up5dCount"], e_total),
+            "newLow60dCount": slot["newLow60dCount"],
+            "pctNewLow60d": pct(slot["newLow60dCount"], e_total),
+            "newHigh252dCount": slot["newHigh252dCount"],
+            "pctNewHigh252d": pct(slot["newHigh252dCount"], e_total),
+            "byBoard": slot["byBoard"],
+            "elapsedMs": elapsed_ms,
+            "source": "duckdb.daily_qfq",
+        }
+    return out
+
+
+def bulk_save_ma_count(payloads: dict[date, dict[str, Any]]) -> int:
+    """bulk 落盘: 把 bulk_calc_ma_count 返回的 {trade_date: payload} 一次 INSERT.
+    走 INSERT OR REPLACE by trade_date, 重复日期会被覆盖.
+    """
+    import json as _json
+    if not payloads:
+        return 0
+    con = get_conn()
+    n = 0
+    for td, payload in payloads.items():
+        by_board_json = _json.dumps(payload.get("byBoard") or {}, ensure_ascii=False)
+        con.execute("""
+            INSERT OR REPLACE INTO ma_count_daily
+                (trade_date, total_eligible, above_ma20, above_ma60, above_both,
+                 pct_ma20, pct_ma60, pct_both,
+                 up_5d_count, up_5d_pct, new_low_60d_count, new_low_60d_pct,
+                 new_high_252d_count, new_high_252d_pct,
+                 by_board_json, elapsed_ms, source, ingested_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?,
+                    ?, ?, ?, current_timestamp)
+        """, [
+            td,
+            int(payload.get("totalEligible") or 0),
+            int(payload.get("aboveMa20") or 0),
+            int(payload.get("aboveMa60") or 0),
+            int(payload.get("aboveBoth") or 0),
+            float(payload.get("pctAboveMa20") or 0),
+            float(payload.get("pctAboveMa60") or 0),
+            float(payload.get("pctAboveBoth") or 0),
+            int(payload.get("up5dCount") or 0),
+            float(payload.get("pctUp5d") or 0),
+            int(payload.get("newLow60dCount") or 0),
+            float(payload.get("pctNewLow60d") or 0),
+            int(payload.get("newHigh252dCount") or 0),
+            float(payload.get("pctNewHigh252d") or 0),
+            by_board_json,
+            int(payload.get("elapsedMs") or 0),
+            str(payload.get("source") or "duckdb.daily_qfq"),
+        ])
+        n += 1
+    return n

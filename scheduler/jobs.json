@@ -182,6 +182,16 @@
       "registered_at": "2026-06-17T22:00:00"
     },
     {
+      "id": "ths_industry_fund_flow_daily",
+      "name": "同花顺 90 行业资金流回填 duckdb (17:15 工作日)",
+      "description": "ths_industry_fund_flow_daily_scheduler 调度, 工作日 17:15 (cron 15 17 * * mon-fri + is_trading_day 二次过滤) 调 scripts/backfill_ths_industry_fund_flow.py, 扫 reference/ths-fund-flow/history/YYYY-MM-DD.json (中文 key), 拆 key 后 upsert 到 duckdb.ths_industry_fund_flow_daily (rank/industry/industry_code/change_pct/inflow/outflow/net/company_count/leader_stock/leader_change/leader_price). 跟 17:10 market_overview_daily (akshare 源, market_pulse_sector_daily) 解耦, 数据源不同 (hexin-v 同花顺直接爬), 字段一致但口径略不同, 两表并存不覆盖; INSERT OR REPLACE 幂等; 预计耗时 < 5s",
+      "config_file": "ths_industry_fund_flow_daily_job.json",
+      "service_module": "backend.services.scheduler.ths_industry_fund_flow_daily_scheduler",
+      "service_class": "ThsIndustryFundFlowDailyScheduler",
+      "enabled": true,
+      "registered_at": "2026-06-17T22:50:00"
+    },
+    {
       "id": "test_scheduler_demo",
       "name": "[测试] scheduler 删除演示",
       "description": "测试用 job, 没有对应的 scheduler 模块, 不会在 bootstrap 里自动启动. 用来演示 \"在 UI 上删除后重启 Flask 不会再自动回来\" 的完整流程, 验证 jobs.json 注册表的 CRUD 接口是否正确. 验证完可直接在 UI 上删除",

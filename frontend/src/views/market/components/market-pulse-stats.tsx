@@ -4,17 +4,20 @@
  * 5 个小卡片 (3 前端算 + 1 宽基 + 1 数据源):
  *   1. 20日均成交额       (前端从 MarketHistoryPoint[] 算)
  *   2. 主力连续流入天数   (前端从 MarketHistoryPoint[] 算)
- *   3. 20日上涨占比均值   (前端从 MarketHistoryPoint[] 算)
+ *   3. 20日上涨占比均值   (前端从 MarketHistoryPoint[] 算, 全 A 口径)
  *   4. 宽基 5日收益        (后端 duckdb.index_returns_daily 持久化, sparkline 用 history)
  *   5. 数据源             (固定文案)
  *
- * 注: MA 计数 / 5日上涨 / 60日新低 / 252日新高 这 4 张市场宽度卡已迁到
- *   /market/sentiment 页面 (Market Sentiment), 不在 market-pulse 链路里.
+ * 注:
+ *   - MA 计数 / 5日上涨 / 60日新低 / 252日新高 这 4 张市场宽度卡 已迁到
+ *     /market/sentiment 页面 (Market Sentiment), 不在 market-pulse 链路里.
+ *   - 板块扩散 (同花顺 90 行业) 也已迁到 /market/sentiment 页面,
+ *     跟市场宽度 4 张卡同空间, 跟 PulseStats 的大盘宽度卡不同维度.
  *
  * 颜色逻辑:
  *   - 20日均成交额: 中性色 (slate)
  *   - 主力连续流入天数: 红 (流入方向, A股习惯)
- *   - 20日上涨占比均值: 50% 上下红/绿
+ *   - 20日上涨占比均值: 50% 上下红/绿 (全 A 口径)
  *   - 宽基 5日: 涨红跌绿
  *   - 数据源: 中性
  */
@@ -174,7 +177,7 @@ export function PulseStats({
         </div>
       </div>
 
-      {/* 20日上涨占比 */}
+      {/* 20日上涨占比 (全 A 口径, 前端从 history 算) */}
       <div className="rounded-2xl bg-slate-50 px-3 py-2">
         <div className="text-[11px] text-slate-500">20日上涨占比</div>
         <div className={`mt-1 text-sm font-semibold tabular-nums ${upRatioTone}`}>

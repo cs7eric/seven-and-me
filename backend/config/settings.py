@@ -107,6 +107,10 @@ SCHEDULER_MARKET_OVERVIEW_JOB_FILE = SCHEDULER_DIR / 'market_overview_job.json'
 SCHEDULER_DAILY_EOD_INCREMENTAL_JOB_FILE = SCHEDULER_DIR / 'daily_eod_incremental_job.json'
 SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE = SCHEDULER_DIR / 'tdx_hsjday_download_job.json'
 SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE = SCHEDULER_DIR / 'market_overview_daily_job.json'
+SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE = SCHEDULER_DIR / 'ths_industry_fund_flow_daily_job.json'
+SCHEDULER_RISK_APPETITE_JOB_FILE = SCHEDULER_DIR / 'risk_appetite_job.json'
+SCHEDULER_MA_COUNT_JOB_FILE = SCHEDULER_DIR / 'ma_count_job.json'
+SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE = SCHEDULER_DIR / 'volatility_sentiment_job.json'
 
 # ---- 大盘资金 / 成交额 落地 (按天归档) ----
 MARKET_OVERVIEW_FOLDER = REFERENCE_FOLDER / 'market-overview'

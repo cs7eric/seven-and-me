@@ -1,0 +1,340 @@
+"""市场宽度 (Market Breadth · MA 计数) + 宽基指数收益 duckdb 回填 scheduler.
+
+单 job:
+  - 工作日 17:06 触发 (cron ``6 17 * * mon-fri``, is_trading_day 二次过滤)
+  - 调 ``scripts/backfill_ma_count_and_returns.py --days=2 --force``:
+    1. 对 duckdb.daily_qfq 算全市场 close > MA20/MA60 计数 + 5d 上涨/60d 新低/252d 新高
+       → 落 duckdb.ma_count_daily
+    2. 对 duckdb.index_daily_raw (沪深300/中证1000) 算 5/10/20/60 日累计收益
+       → 落 duckdb.index_returns_daily
+  - 强制 --force: MA 计数受新日插入影响, 必须重算; 指数收益同
+
+依赖: daily_eod_incremental (17:00) 必须先把 daily_raw + qfq 落库.
+
+启动: :mod:`backend.bootstrap` 调 :func:`start_ma_count_scheduler`.
+关闭: ``MINIMAX_MA_COUNT_SCHEDULER_ENABLED=0``.
+
+状态文件: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\ma_count_job.json``
+Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+import traceback
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+from backend.config.settings import (
+    SCHEDULER_DIR,
+    SCHEDULER_JOBS_FILE,
+    SCHEDULER_MA_COUNT_JOB_FILE,
+)
+from backend.services.stock.trading_calendar import is_trading_day
+from backend.utils.json_io import read_json_file
+
+logger = logging.getLogger(__name__)
+
+MA_COUNT_CRON = "6 17 * * mon-fri"  # 工作日 17:06 (北京时间, 跟 17:05 risk_appetite 错开 1 min)
+_JOB_ID = "ma_count_refresh"
+_SCRIPT_PATH_KEY = "ma_count_script"  # 状态文件可覆盖脚本路径 (测试用)
+# 全市场 MA 计数 (5500 只 × 60 日窗口) 单日 < 1s; 给 5 min 上限足够
+_JOB_TIMEOUT_SECONDS = 5 * 60
+
+_scheduler: BackgroundScheduler | None = None
+_scheduler_lock = threading.Lock()
+
+
+def is_ma_count_scheduler_enabled() -> bool:
+    return os.environ.get("MINIMAX_MA_COUNT_SCHEDULER_ENABLED", "1") != "0"
+
+
+def _beijing_now() -> datetime:
+    return datetime.utcnow() + timedelta(hours=8)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _default_script_path() -> str:
+    return str(_repo_root() / "scripts" / "backfill_ma_count_and_returns.py")
+
+
+# ---------------------------------------------------------------------------
+# Job 状态
+# ---------------------------------------------------------------------------
+def _load_job_status() -> dict[str, Any]:
+    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
+    if not SCHEDULER_MA_COUNT_JOB_FILE.exists():
+        return {
+            "name": _JOB_ID,
+            "lastRunAt": None,
+            "lastRunOk": None,
+            "lastRunError": None,
+            "lastDurationSeconds": None,
+            "lastDaysRequested": None,
+            "lastMaUpserted": None,
+            "lastIrUpserted": None,
+            "lastCoverage": None,
+            "totalRuns": 0,
+            "totalFailures": 0,
+            "schedulerStartedAt": None,
+        }
+    try:
+        return json.loads(SCHEDULER_MA_COUNT_JOB_FILE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("ma_count job status read failed: %s", exc)
+        return {}
+
+
+def _save_job_status(status: dict[str, Any]) -> None:
+    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = SCHEDULER_MA_COUNT_JOB_FILE.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(status, f, ensure_ascii=False, indent=2)
+    tmp.replace(SCHEDULER_MA_COUNT_JOB_FILE)
+
+
+# ---------------------------------------------------------------------------
+# Jobs.json 注册
+# ---------------------------------------------------------------------------
+def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
+    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
+    if SCHEDULER_JOBS_FILE.exists():
+        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
+    else:
+        data = {"version": 1, "jobs": []}
+    if isinstance(data, list):
+        data = {"version": 1, "jobs": data}
+    if not isinstance(data, dict):
+        data = {"version": 1, "jobs": []}
+    jobs = data.setdefault("jobs", [])
+    jobs = [j for j in jobs if j.get("id") != job_id]
+    now_iso = _beijing_now().isoformat(timespec="seconds")
+    payload = {
+        "id": job_id,
+        "name": name,
+        "description": (
+            "工作日 17:06 触发, 调 scripts/backfill_ma_count_and_returns.py --days=2 --force, "
+            "对 duckdb.daily_qfq 算全市场 close > MA20/MA60 + 双多头 + 5d 上涨/60d 新低/252d 新高 "
+            "→ 落 duckdb.ma_count_daily (1 日 1 行); 同时算沪深300/中证1000 5/10/20/60 日累计收益 "
+            "→ 落 duckdb.index_returns_daily. --force 强制重算 (MA 计数受新日插入影响). "
+            "依赖 daily_raw + qfq 必须先落库. INSERT OR REPLACE 幂等; "
+            "周末 / 节假日由 is_trading_day 二次过滤. 预计耗时 < 2s."
+        ),
+        "config_file": SCHEDULER_MA_COUNT_JOB_FILE.name,
+        "service_module": "backend.services.scheduler.ma_count_scheduler",
+        "service_class": "MaCountScheduler",
+        "enabled": True,
+        "registered_at": now_iso,
+        "module": "backend.services.scheduler.ma_count_scheduler",
+        "nextRunTime": next_run_time,
+        "updatedAt": now_iso,
+    }
+    jobs.append(payload)
+    from backend.utils.json_io import write_json_file
+    write_json_file(SCHEDULER_JOBS_FILE, data)
+
+
+# ---------------------------------------------------------------------------
+# Job 函数
+# ---------------------------------------------------------------------------
+def _job_run_backfill() -> None:
+    """17:06 跑 backfill_ma_count_and_returns.py --days=2 --force (subprocess)."""
+    now = _beijing_now()
+    if not is_trading_day(now.date()):
+        logger.info("ma_count skipped: %s not trading day", now.date())
+        return
+
+    status = _load_job_status()
+    t0 = time.time()
+    status["lastRunAt"] = now.isoformat(timespec="seconds")
+
+    script_path = status.get(_SCRIPT_PATH_KEY) or _default_script_path()
+    script = Path(script_path)
+    if not script.is_absolute():
+        script = _repo_root() / script
+    if not script.exists():
+        msg = f"script not found: {script}"
+        logger.error("ma_count: %s", msg)
+        status["lastRunOk"] = False
+        status["lastRunError"] = msg
+        status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+        status["lastDurationSeconds"] = round(time.time() - t0, 1)
+        _save_job_status(status)
+        return
+
+    try:
+        r = subprocess.run(
+            [sys.executable, "-u", str(script), "--days=2", "--force"],
+            cwd=str(_repo_root()),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=_JOB_TIMEOUT_SECONDS,
+        )
+        elapsed = time.time() - t0
+        status["lastDurationSeconds"] = round(elapsed, 1)
+        status["lastDaysRequested"] = 2
+
+        stdout = r.stdout or ""
+        # 抓脚本 stdout: "完成: MA 写入 X 跳过 Y 失败 M | 指数 写入 I 跳过 J 失败 K"
+        m = re.search(r"MA\s*写入\s*(\d+)\s*跳过\s*(\d+)\s*失败\s*(\d+)", stdout)
+        if m:
+            status["lastMaUpserted"] = int(m.group(1))
+            status["lastMaSkipped"] = int(m.group(2))
+            status["lastMaFailed"] = int(m.group(3))
+        m2 = re.search(r"指数\s*写入\s*(\d+)\s*跳过\s*(\d+)\s*失败\s*(\d+)", stdout)
+        if m2:
+            status["lastIrUpserted"] = int(m2.group(1))
+            status["lastIrSkipped"] = int(m2.group(2))
+            status["lastIrFailed"] = int(m2.group(3))
+
+        if r.returncode == 0:
+            status["lastRunOk"] = True
+            status["lastRunError"] = None
+            status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
+            logger.info(
+                "ma_count ok in %.1fs: ma_upserted=%s ir_upserted=%s",
+                elapsed, status.get("lastMaUpserted"), status.get("lastIrUpserted"),
+            )
+            _refresh_coverage(status)
+        else:
+            err_tail = (r.stderr or r.stdout or "")[-500:].strip()
+            status["lastRunOk"] = False
+            status["lastRunError"] = err_tail or f"exit={r.returncode}"
+            status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+            logger.warning(
+                "ma_count failed in %.1fs: exit=%d\n%s",
+                elapsed, r.returncode, err_tail,
+            )
+    except subprocess.TimeoutExpired:
+        status["lastRunOk"] = False
+        status["lastRunError"] = f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
+        status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+        status["lastDurationSeconds"] = round(time.time() - t0, 1)
+        logger.warning("ma_count timeout after %.1fs", time.time() - t0)
+    except Exception as exc:
+        status["lastRunOk"] = False
+        status["lastRunError"] = f"{type(exc).__name__}: {exc}"[:300]
+        status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+        status["lastDurationSeconds"] = round(time.time() - t0, 1)
+        logger.warning("ma_count crashed: %s\n%s", exc, traceback.format_exc())
+
+    _save_job_status(status)
+
+
+def _refresh_coverage(status: dict[str, Any]) -> None:
+    try:
+        from backend.adapters.market.duckdb_store import get_conn
+        with get_conn() as c:
+            r = c.execute(
+                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
+                "FROM ma_count_daily"
+            ).fetchone()
+            r2 = c.execute(
+                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
+                "FROM index_returns_daily"
+            ).fetchone()
+        status["lastCoverage"] = {
+            "maCount": {
+                "firstDate": r[0].isoformat() if r[0] else None,
+                "lastDate": r[1].isoformat() if r[1] else None,
+                "rowCount": int(r[2]) if r[2] else 0,
+            },
+            "indexReturns": {
+                "firstDate": r2[0].isoformat() if r2[0] else None,
+                "lastDate": r2[1].isoformat() if r2[1] else None,
+                "rowCount": int(r2[2]) if r2[2] else 0,
+            },
+        }
+    except Exception as exc:
+        logger.debug("refresh_coverage failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# 启动 / 停止 / 状态 / 手动触发
+# ---------------------------------------------------------------------------
+def start_ma_count_scheduler() -> None:
+    global _scheduler
+    if _scheduler is not None:
+        return
+    with _scheduler_lock:
+        if _scheduler is not None:
+            return
+        status = _load_job_status()
+        if not status.get("enabled", True):
+            logger.info(
+                "[MaCountScheduler] disabled by config (enabled=false), not started"
+            )
+            return
+
+        sched = BackgroundScheduler(timezone="Asia/Shanghai")
+        sched.add_job(
+            _job_run_backfill,
+            CronTrigger.from_crontab(MA_COUNT_CRON),
+            id=_JOB_ID,
+            max_instances=1,
+            coalesce=True,
+        )
+        sched.start()
+        _scheduler = sched
+
+        status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
+        _save_job_status(status)
+        _register_job(
+            _JOB_ID,
+            "ma_count_refresh (17:06 工作日, MA 计数 + 宽基指数收益回填 duckdb)",
+            None,
+        )
+        logger.info(
+            "ma_count_scheduler started: cron=%s (workday only via is_trading_day)",
+            MA_COUNT_CRON,
+        )
+
+    status = _load_job_status()
+    status["running"] = True
+    _save_job_status(status)
+
+
+def stop_ma_count_scheduler() -> None:
+    global _scheduler
+    with _scheduler_lock:
+        if _scheduler is not None:
+            _scheduler.shutdown(wait=False)
+            _scheduler = None
+            logger.info("ma_count_scheduler stopped")
+
+    status = _load_job_status()
+    status["running"] = False
+    status["stoppedAt"] = _beijing_now().isoformat(timespec="seconds")
+    _save_job_status(status)
+
+
+def get_ma_count_scheduler_status() -> dict[str, Any]:
+    status = _load_job_status()
+    status["running"] = _scheduler is not None
+    return status
+
+
+def run_ma_count_now() -> dict[str, Any]:
+    """手动触发一次 (供 API 测试 / 前端按钮用)."""
+    _job_run_backfill()
+    status = get_ma_count_scheduler_status()
+    return {
+        "ok": bool(status.get("lastRunOk")),
+        "items": [status],
+        "count": 1,
+        "failed_count": 0 if status.get("lastRunOk") else 1,
+    }

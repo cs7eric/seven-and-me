@@ -1,15 +1,19 @@
 /**
  * Market Sentiment 页面
  *
- * 4 张占位 + 3 张正式卡:
+ * 4 张占位 + 5 张正式卡:
  *   1. Risk Appetite Spread    (跨资产, 替换原 Fear & Greed Index 占位)
  *   2. Market Breadth Grid     (4 张子卡: MA双多头 / 5日上涨 / 60日新低 / 252日新高, A股宽度)
- *   3. Limit Emotion Summary   (涨跌停情绪综合分, 替换原 News Sentiment 占位)
+ *   3. Sector Breadth          (同花顺 90 行业 advancing / total)
+ *   4. Limit Emotion Summary   (涨跌停情绪综合分, 替换原 News Sentiment 占位)
+ *   5. Volatility Sentiment    (波动率情绪, 沪深300 20 日年化波动率 → 反向得分)
  *
  * 数据源:
  *   - 风险偏好:    duckdb.risk_appetite_daily  (cache-aside, /api/stock-chart/market-sentiment/risk-appetite)
  *   - 市场宽度:    duckdb.ma_count_daily       (cache-aside, /api/stock-chart/market-sentiment/ma-count)
+ *   - 板块扩散:    duckdb.market_pulse_sector_breadth_daily (cache-aside, /market-sentiment/sector-breadth)
  *   - 涨跌停情绪:  duckdb.limit_emotion_summary_daily (cache-aside, /market-sentiment/limit-emotion-summary)
+ *   - 波动率情绪:  duckdb.volatility_sentiment_daily (cache-aside, /market-sentiment/volatility-sentiment)
  *
  * 后续接入: Bull-Bear Spread / Social Buzz / Margin & Leverage / Regime Tag 等。
  */
@@ -34,6 +38,10 @@ import {
   fetchMarketSentimentMaCountHistory,
   fetchMarketSentimentLimitEmotionSummary,
   fetchMarketSentimentLimitEmotionSummaryHistory,
+  fetchMarketSentimentSectorBreadth,
+  fetchMarketSentimentSectorBreadthHistory,
+  fetchMarketSentimentVolatilitySentiment,
+  fetchMarketSentimentVolatilitySentimentHistory,
   type RiskAppetiteResponse,
   type RiskAppetiteHistoryItem,
   type MaCountResponse,
@@ -41,6 +49,9 @@ import {
   type LimitEmotionSummary,
   type LimitEmotionSummaryHistoryItem,
   type LimitEmotionLevel,
+  type SectorBreadthItem,
+  type VolatilitySentimentResponse,
+  type VolatilitySentimentItem,
 } from "@/lib/api"
 
 const PLACEHOLDER_CARDS = [
@@ -600,6 +611,288 @@ function SubMetric({
   )
 }
 
+/**
+ * 板块扩散 (Market Sentiment · Sector Breadth)
+ * - 公式: advancing / total (上涨行业数 / 有效行业数)
+ * - 数据源: duckdb.market_pulse_sector_breadth_daily
+ *          (由 ths_industry_fund_flow_daily 聚合, 同花顺 90 行业, 工作日 17:15 收盘后算)
+ * - 颗粒度: 90 行业 (跟 ma_count 5500 只股票不同, 这是"行业级别赚钱效应")
+ * - sparkline: 近 30 日 advance_pct 序列
+ * - 颜色: 涨红跌绿 (>=50% 红, 30-50% amber, <30% 绿)
+ */
+function SectorBreadthCard({ date }: { date: string | null }) {
+  const [data, setData] = useState<SectorBreadthItem | null>(null)
+  const [history, setHistory] = useState<SectorBreadthItem[] | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    const end = date ?? isoDateNDaysAgo(0)
+    const start = shiftIsoDays(end, -30)
+    void (async () => {
+      try {
+        const [snap, hist] = await Promise.all([
+          fetchMarketSentimentSectorBreadth(date ?? undefined),
+          fetchMarketSentimentSectorBreadthHistory(30, end),
+        ])
+        if (cancelled) return
+        if (snap.ok && snap.total > 0) {
+          setData({
+            tradeDate: snap.tradeDate,
+            advancing: snap.advancing,
+            declining: snap.declining,
+            flat: snap.flat,
+            total: snap.total,
+            advancePct: snap.advancePct,
+            source: snap.source,
+            elapsedMs: snap.elapsedMs,
+            fromCache: snap.fromCache,
+          })
+        } else {
+          setData(null)
+        }
+        setHistory(hist.items ?? [])
+      } catch {
+        if (!cancelled) {
+          setData(null)
+          setHistory(null)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [date])
+
+  // 涨红跌绿: >= 50% 红, 30-50% amber, < 30% 绿
+  const advPct = data ? data.advancePct * 100 : null
+  const tone =
+    advPct == null
+      ? "text-slate-700"
+      : advPct >= 50
+        ? "text-red-600"
+        : advPct >= 30
+          ? "text-amber-600"
+          : "text-emerald-600"
+
+  // sparkline 序列 (按 tradeDate ASC, 限 30 天) — advance_pct 0-1 → 转 %
+  const sparkValues: number[] = (history ?? [])
+    .slice()
+    .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))
+    .map((it) => it.advancePct * 100)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Layers className="size-4 text-muted-foreground" />
+          Sector Breadth
+        </CardTitle>
+        <CardDescription>
+          同花顺 90 行业 上涨行业数 / 有效行业数 (advancing / total)
+          {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+        ) : (
+          <>
+            <div className="flex items-baseline gap-2">
+              <span className={`text-2xl font-semibold tabular-nums ${tone}`}>
+                {advPct == null ? "—" : `${advPct.toFixed(1)}%`}
+              </span>
+              {data && (
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {data.advancing}/{data.total}
+                </span>
+              )}
+            </div>
+
+            {data && (
+              <div className="mt-2 flex gap-3 text-xs tabular-nums text-muted-foreground">
+                <span>
+                  上涨
+                  <span className="ml-1 text-red-600">{data.advancing}</span>
+                </span>
+                <span>
+                  下跌
+                  <span className="ml-1 text-emerald-600">{data.declining}</span>
+                </span>
+                {data.flat > 0 && (
+                  <span>
+                    平盘
+                    <span className="ml-1 text-foreground">{data.flat}</span>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {sparkValues.length >= 2 && (
+              <div className="mt-3">
+                <Sparkline values={sparkValues} />
+                <div className="mt-1 text-[10px] text-muted-foreground">近 30 日</div>
+              </div>
+            )}
+
+            <div className="mt-3 text-[10px] leading-4 text-muted-foreground">
+              阈值: ≥ 50% 普涨 (红) · 30-50% 中性 (amber) · &lt; 30% 普跌 (绿)
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * 波动率情绪 (Market Sentiment · Volatility Sentiment · 情绪分项 ⑤)
+ * - 主指标: 沪深300 20 日年化波动率 (realized_vol_20d) → 1 年历史分位 → 反向情绪得分 0-100
+ * - 颜色阈值 (跟限仓情绪综合分 / 风险偏好同套):
+ *     score >= 70  平静  (绿, 情绪好, "安全" 心态)
+ *     score >= 40  正常  (slate)
+ *     score < 40   波动  (红, 情绪差, 分歧大 / 恐慌)
+ * - sparkline: 近 30 日 sentiment_score 序列
+ * - 副数: vol + percentile + 当日日收益率 (跟标的 close 配合看)
+ */
+function VolatilitySentimentCard({ date }: { date: string | null }) {
+  const [data, setData] = useState<VolatilitySentimentResponse | null>(null)
+  const [history, setHistory] = useState<VolatilitySentimentItem[] | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    const end = date ?? isoDateNDaysAgo(0)
+    const start = shiftIsoDays(end, -30)
+    void (async () => {
+      try {
+        const [snap, hist] = await Promise.all([
+          fetchMarketSentimentVolatilitySentiment(date ?? undefined),
+          fetchMarketSentimentVolatilitySentimentHistory(start, end),
+        ])
+        if (cancelled) return
+        setData(snap.ok ? snap : null)
+        setHistory(hist.items ?? [])
+      } catch {
+        if (!cancelled) {
+          setData(null)
+          setHistory(null)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [date])
+
+  // 颜色: score 越大越平静 (绿), 越小越波动 (红)
+  const score = data?.sentimentScore ?? null
+  const tone =
+    score == null
+      ? "text-slate-700"
+      : score >= 70
+        ? "text-emerald-600"
+        : score >= 40
+          ? "text-slate-700"
+          : "text-red-600"
+
+  // sparkline: 近 30 日 sentimentScore 序列 (按 tradeDate ASC)
+  const sparkValues: number[] = (history ?? [])
+    .slice()
+    .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))
+    .map((it) => it.sentimentScore ?? 0)
+
+  // 副数: vol (年化 %) + percentile (0-1 → %) + 当日日收益率 %
+  const vol = data?.realizedVol20d ?? null
+  const pct = data?.percentile1y ?? null
+  const dailyRet = data?.dailyReturnPct ?? null
+  const dailyRetText =
+    dailyRet == null
+      ? null
+      : `${dailyRet > 0 ? "+" : ""}${dailyRet.toFixed(2)}%`
+  const dailyRetTone =
+    dailyRet == null
+      ? "text-foreground"
+      : dailyRet > 0
+        ? "text-red-600"
+        : dailyRet < 0
+          ? "text-emerald-600"
+          : "text-foreground"
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Activity className="size-4 text-muted-foreground" />
+          Volatility Sentiment
+        </CardTitle>
+        <CardDescription>
+          沪深300 20 日年化波动率 → 1 年历史分位 → 反向情绪得分 (高分=平静)
+          {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
+        ) : (
+          <>
+            <div className="flex items-baseline gap-2">
+              <span className={`text-2xl font-semibold tabular-nums ${tone}`}>
+                {score == null ? "—" : score.toFixed(1)}
+              </span>
+              <span className="text-xs text-muted-foreground">情绪得分</span>
+            </div>
+
+            {(vol != null || pct != null || dailyRet != null) && (
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
+                {vol != null && (
+                  <span>
+                    vol
+                    <span className="ml-1 text-foreground">
+                      {vol.toFixed(2)}%
+                    </span>
+                  </span>
+                )}
+                {pct != null && (
+                  <span>
+                    pct
+                    <span className="ml-1 text-foreground">
+                      {(pct * 100).toFixed(0)}%
+                    </span>
+                  </span>
+                )}
+                {dailyRetText && (
+                  <span>
+                    当日
+                    <span className={`ml-1 ${dailyRetTone}`}>
+                      {dailyRetText}
+                    </span>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {sparkValues.length >= 2 && (
+              <div className="mt-3">
+                <Sparkline values={sparkValues} />
+                <div className="mt-1 text-[10px] text-muted-foreground">近 30 日情绪得分</div>
+              </div>
+            )}
+
+            <div className="mt-3 text-[10px] leading-4 text-muted-foreground">
+              阈值: ≥ 70 平静 (绿) · 40-70 正常 (slate) · &lt; 40 波动 (红)
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function isoDateNDaysAgo(n: number): string {
   const d = new Date()
   d.setDate(d.getDate() - n)
@@ -669,8 +962,14 @@ export default function MarketSentimentPage() {
         {/* 市场宽度 — 4 张子卡 (MA双多头 / 5日上涨 / 60日新低 / 252日新高) */}
         <MarketBreadthGrid date={date} />
 
+        {/* 板块扩散 — 同花顺 90 行业 (advancing / total), 落 duckdb.market_pulse_sector_breadth_daily */}
+        <SectorBreadthCard date={date} />
+
         {/* 涨跌停情绪综合分 — 已落地 (替换原 News Sentiment 占位) */}
         <LimitEmotionCard date={date} />
+
+        {/* 波动率情绪 — 沪深300 20 日年化波动率 → 反向得分, 落 duckdb.volatility_sentiment_daily */}
+        <VolatilitySentimentCard date={date} />
 
         {/* 其余占位卡 (4 张) */}
         {PLACEHOLDER_CARDS.map((item) => (

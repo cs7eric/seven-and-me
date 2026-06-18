@@ -94,6 +94,12 @@ from backend.services.scheduler.market_overview_daily_scheduler import (
     start_market_overview_daily_scheduler,
     stop_market_overview_daily_scheduler,
 )
+from backend.services.scheduler.ths_industry_fund_flow_daily_scheduler import (
+    get_ths_industry_fund_flow_daily_scheduler_status,
+    run_ths_industry_fund_flow_daily_now,
+    start_ths_industry_fund_flow_daily_scheduler,
+    stop_ths_industry_fund_flow_daily_scheduler,
+)
 from backend.services.stock.market_overview_eltdx_service import capture_overview
 from backend.utils.json_io import read_json_file, write_json_file
 
@@ -117,6 +123,8 @@ _KNOWN_JOB_IDS = {
     'tdx_hsjday_download',
     # 工作日 17:10 把大盘成交额 / 主力净流入 / 90 行业 回填 duckdb (market_overview_daily + market_pulse_sector_daily)
     'market_overview_daily',
+    # 工作日 17:15 把同花顺 90 行业资金流回填 duckdb (ths_industry_fund_flow_daily)
+    'ths_industry_fund_flow_daily',
     # 测试用 job: 无对应 scheduler 模块, 用来演示"删除后重启不自动恢复"
     'test_scheduler_demo',
 }
@@ -190,6 +198,7 @@ def _supports_enable(job_id: str) -> bool:
         'daily_eod_incremental',
         'tdx_hsjday_download',
         'market_overview_daily',
+        'ths_industry_fund_flow_daily',
         'test_scheduler_demo',
     }
 
@@ -222,6 +231,8 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         return get_tdx_hsjday_download_scheduler_status()
     if job_id == 'market_overview_daily':
         return get_market_overview_daily_scheduler_status()
+    if job_id == 'ths_industry_fund_flow_daily':
+        return get_ths_industry_fund_flow_daily_scheduler_status()
     return {}
 
 
@@ -253,6 +264,8 @@ def _start_scheduler(job_id: str) -> None:
         start_tdx_hsjday_download_scheduler()
     elif job_id == 'market_overview_daily':
         start_market_overview_daily_scheduler()
+    elif job_id == 'ths_industry_fund_flow_daily':
+        start_ths_industry_fund_flow_daily_scheduler()
 
 
 def _stop_scheduler(job_id: str) -> None:
@@ -282,6 +295,8 @@ def _stop_scheduler(job_id: str) -> None:
         stop_tdx_hsjday_download_scheduler()
     elif job_id == 'market_overview_daily':
         stop_market_overview_daily_scheduler()
+    elif job_id == 'ths_industry_fund_flow_daily':
+        stop_ths_industry_fund_flow_daily_scheduler()
 
 
 def _trigger_scheduler(job_id: str) -> dict[str, Any]:
@@ -373,6 +388,8 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
         return run_tdx_hsjday_download_now()
     if job_id == 'market_overview_daily':
         return run_market_overview_daily_now()
+    if job_id == 'ths_industry_fund_flow_daily':
+        return run_ths_industry_fund_flow_daily_now()
     # test_scheduler_demo: 测试 entry, 没有对应 scheduler, trigger / start / stop 都返回错误
     if job_id == 'test_scheduler_demo':
         return {'ok': False, 'error': 'test_scheduler_demo 是测试 entry, 没有对应 scheduler 模块; 用来演示 jobs.json 注册表 CRUD'}

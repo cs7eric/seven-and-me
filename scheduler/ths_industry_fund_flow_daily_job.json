@@ -1,0 +1,24 @@
+{
+  "name": "ths_industry_fund_flow_daily",
+  "description": "工作日 17:15 触发, 调 scripts/backfill_ths_industry_fund_flow.py 扫 reference/ths-fund-flow/history/*.json, 把同花顺 90 行业资金流 (rank/industry/change_pct/inflow/outflow/net/company_count/leader_stock/leader_change/leader_price) 全部 upsert 到 duckdb (ths_industry_fund_flow_daily 表). 跟 17:10 market_overview_daily / 17:00 daily_eod_incremental 解耦; 全部走 INSERT OR REPLACE 幂等; 周末 / 节假日由 is_trading_day 二次过滤; 预计耗时 < 5s (扫 60 天 history, 实测 7 天 / 630 行 < 3s).",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "run_time": "17:15",
+    "run_once_per_day": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "lastRunAt": null,
+  "lastRunOk": null,
+  "lastRunError": null,
+  "lastDurationSeconds": null,
+  "lastDaysRequested": null,
+  "lastDaysUpserted": null,
+  "lastRowsUpserted": null,
+  "lastCoverage": null,
+  "totalRuns": 0,
+  "totalFailures": 0,
+  "schedulerStartedAt": "2026-06-18T10:30:16",
+  "running": true
+}

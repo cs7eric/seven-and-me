@@ -22,7 +22,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.adapters.market.duckdb_store import get_conn
-from backend.repositories.market.indicator_repo import calc_ma_count, save_ma_count
+from backend.repositories.market.indicator_repo import (
+    bulk_calc_ma_count, bulk_save_ma_count,
+)
 from backend.repositories.market.index_repo import (
     get_index_returns_as_of, save_index_returns,
 )
@@ -108,48 +110,64 @@ def main() -> int:
     ma_done = ma_skip = ma_fail = 0
     ir_done = ir_skip = ir_fail = 0
 
-    for i, td in enumerate(dates):
-        # ----- MA 计数 -----
-        if not args.skip_ma and _has_daily_qfq_data(td):
-            if not args.force and _ma_exists(td):
-                ma_skip += 1
+    # ----- MA 计数 (bulk: 一次 SQL 算整个区间) -----
+    if not args.skip_ma:
+        # 过滤有数据的交易日 (避免无 daily_qfq 的周末/节假日拉低指标)
+        candidate_dates = [td for td in dates if _has_daily_qfq_data(td)]
+        if not candidate_dates:
+            log.info("MA: 无候选交易日, 跳过")
+        else:
+            if args.force:
+                # --force: 强制重算区间内所有日
+                target_dates = candidate_dates
+            else:
+                # 默认跳过已有, 只算缺失的日
+                target_dates = [td for td in candidate_dates if not _ma_exists(td)]
+                ma_skip = len(candidate_dates) - len(target_dates)
+            if not target_dates:
+                log.info("MA: 所有 %d 个候选日都已存在, 跳过", len(candidate_dates))
             else:
                 try:
-                    payload = calc_ma_count(td)
-                    save_ma_count(payload)
-                    ma_done += 1
-                    log.info("[%d/%d] MA %s 落盘: aboveBoth=%d/%d (%.1f%%)",
-                             i + 1, len(dates), td,
-                             payload["aboveBoth"], payload["totalEligible"],
-                             payload["pctAboveBoth"])
+                    payloads = bulk_calc_ma_count(
+                        min(target_dates), max(target_dates),
+                    )
+                    # 过滤到 target_dates (windowed SQL 会算整个区间, 包括非 target 的日)
+                    payloads = {
+                        td: p for td, p in payloads.items() if td in target_dates
+                    }
+                    bulk_save_ma_count(payloads)
+                    ma_done = len(payloads)
+                    log.info(
+                        "MA: bulk 写入 %d 天 (区间 %s ~ %s, 候选 %d)",
+                        ma_done, min(target_dates), max(target_dates),
+                        len(candidate_dates),
+                    )
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("  MA %s 失败: %s", td, exc)
-                    ma_fail += 1
-        elif not args.skip_ma:
-            log.debug("  MA %s 跳过 (无 daily_qfq 数据)", td)
+                    log.warning("MA bulk 失败: %s", exc)
+                    ma_fail = len(target_dates)
 
-        # ----- 指数收益 -----
-        if not args.skip_index and _has_index_daily_data(td):
-            if not args.force and _index_returns_exist(td):
-                ir_skip += 1
-            else:
+    # ----- 指数收益 (单日循环, index_daily_raw 小表 ~ 660 行, 不需要 bulk) -----
+    if not args.skip_index:
+        candidate_dates = [td for td in dates if _has_index_daily_data(td)]
+        if not candidate_dates:
+            log.info("index: 无候选交易日, 跳过")
+        else:
+            for td in candidate_dates:
+                if not args.force and _index_returns_exist(td):
+                    ir_skip += 1
+                    continue
                 try:
                     for w in windows:
-                        # 用 as_of_date 算: 让每个历史日算的是当时点 N 日累计收益,
-                        # 而不是用最新 close 算的 (那会让所有历史日都长得一样)
                         items = get_index_returns_as_of(w, td)
                         save_index_returns(w, items)
                     ir_done += 1
-                    log.info(
-                        "[%d/%d] index %s 落盘 (windows=%s): %s",
-                        i + 1, len(dates), td, windows,
-                        [(it["name"], it["returnPct"]) for it in items],
-                    )
                 except Exception as exc:  # noqa: BLE001
-                    log.warning("  index %s 失败: %s", td, exc)
+                    log.warning("index %s 失败: %s", td, exc)
                     ir_fail += 1
-        elif not args.skip_index:
-            log.debug("  index %s 跳过 (无 index_daily_raw 数据)", td)
+            log.info(
+                "index: 写入 %d 跳过 %d 失败 %d (候选 %d, windows=%s)",
+                ir_done, ir_skip, ir_fail, len(candidate_dates), windows,
+            )
 
     elapsed = time.time() - t0
     log.info(

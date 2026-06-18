@@ -148,6 +148,19 @@ def refresh_industry_fund_flow() -> dict[str, Any]:
         write_json_file(_history_path(), history_blob)
     except Exception as exc:
         logger.warning("write history failed: %s", exc)
+
+    # 顺手落 duckdb (写穿: 90 行业 当日快照, 字段级 INSERT OR REPLACE 幂等)
+    # 不动 latest.json / history/*.json 现有落盘, 失败不影响主流程
+    try:
+        from backend.repositories.market.ths_industry_fund_flow_repo import upsert_fund_flow
+        upsert_fund_flow(
+            payload.get("rows") or [],
+            trade_date=datetime.now().strftime("%Y-%m-%d"),
+            source="ths.10jqka.com.cn",
+        )
+    except Exception as exc:
+        logger.debug("upsert ths_industry_fund_flow to duckdb failed (non-fatal): %s", exc)
+
     return payload
 
 
