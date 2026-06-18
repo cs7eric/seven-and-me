@@ -449,7 +449,7 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
 
     t0 = time.time()
     con = get_conn()
-    # 单次 SQL: 一次扫 daily_qfq, 算 MA20/MA60 + 5d LAG + 60d MIN/LAG + 252d MAX/LAG
+    # 单次 SQL: 一次扫 daily_qfq, 算 MA20/MA60 + 1d/5d LAG + 60d MIN/LAG + 252d MAX/LAG
     rows = con.execute(
         f"""
         SELECT code, close,
@@ -457,6 +457,7 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
                                 ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS ma20,
                AVG(close) OVER (PARTITION BY code ORDER BY trade_date
                                 ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
+               LAG(close, 1)   OVER (PARTITION BY code ORDER BY trade_date) AS close_1d_ago,
                LAG(close, 5)   OVER (PARTITION BY code ORDER BY trade_date) AS close_5d_ago,
                LAG(close, 59)  OVER (PARTITION BY code ORDER BY trade_date) AS close_59d_ago,
                MIN(close)      OVER (PARTITION BY code ORDER BY trade_date
@@ -472,10 +473,10 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
     ).fetchall()
 
     above_ma20 = above_ma60 = above_both = 0
-    up_5d = new_low_60d = new_high_252d = 0
+    up_5d = new_low_60d = new_high_252d = advancing = 0
     eligible = 0
     by_board: dict[str, dict[str, int]] = {}
-    for (code, close, ma20, ma60, close_5d_ago, close_59d_ago, min_60d,
+    for (code, close, ma20, ma60, close_1d_ago, close_5d_ago, close_59d_ago, min_60d,
          close_251d_ago, max_252d) in rows:
         if ma20 is None or ma60 is None:
             # 次新股 (历史 < 60 天), 排除
@@ -494,7 +495,7 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
         board = meta.get("board") or get_board_type(code_str)
         slot = by_board.setdefault(board, {
             "total": 0, "aboveMa20": 0, "aboveMa60": 0, "aboveBoth": 0,
-            "up5d": 0, "newLow60d": 0, "newHigh252d": 0,
+            "up5d": 0, "newLow60d": 0, "newHigh252d": 0, "advancing": 0,
         })
         slot["total"] += 1
         a20 = close_f > ma20_f
@@ -521,6 +522,10 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
                 and close_f >= float(max_252d)):
             new_high_252d += 1
             slot["newHigh252d"] += 1
+        # 当日上涨: close > 前一日 close (60d 窗口已保证有 2 天历史)
+        if close_1d_ago is not None and close_f > float(close_1d_ago):
+            advancing += 1
+            slot["advancing"] += 1
 
     def pct(num: int, den: int) -> float:
         return round(num / den * 100, 2) if den > 0 else 0.0
@@ -541,6 +546,8 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
             "pctNewLow60d": pct(slot["newLow60d"], slot["total"]),
             "newHigh252d": slot["newHigh252d"],
             "pctNewHigh252d": pct(slot["newHigh252d"], slot["total"]),
+            "advancing": slot["advancing"],
+            "pctAdvancing": pct(slot["advancing"], slot["total"]),
         }
 
     elapsed_ms = int((time.time() - t0) * 1000)
@@ -559,6 +566,8 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
         "pctNewLow60d": pct(new_low_60d, eligible),
         "newHigh252dCount": new_high_252d,
         "pctNewHigh252d": pct(new_high_252d, eligible),
+        "advancingCount": advancing,
+        "pctAdvancing": pct(advancing, eligible),
         "byBoard": by_board_out,
         "elapsedMs": elapsed_ms,
         "source": "duckdb.daily_qfq",
@@ -591,9 +600,11 @@ def save_ma_count(payload: dict) -> None:
              pct_ma20, pct_ma60, pct_both,
              up_5d_count, up_5d_pct, new_low_60d_count, new_low_60d_pct,
              new_high_252d_count, new_high_252d_pct,
+             advancing_count, advancing_pct,
              by_board_json, elapsed_ms, source, ingested_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
+                ?, ?,
                 ?, ?,
                 ?, ?, ?, current_timestamp)
     """, [
@@ -611,18 +622,21 @@ def save_ma_count(payload: dict) -> None:
         float(payload.get("pctNewLow60d") or 0),
         int(payload.get("newHigh252dCount") or 0),
         float(payload.get("pctNewHigh252d") or 0),
+        int(payload.get("advancingCount") or 0),
+        float(payload.get("pctAdvancing") or 0),
         by_board_json,
         int(payload.get("elapsedMs") or 0),
         str(payload.get("source") or "duckdb.daily_qfq"),
     ])
 
 
-# 列顺序: 必须跟 SELECT 列表保持一致 (v1.4 增 252d 两列)
+# 列顺序: 必须跟 SELECT 列表保持一致 (v1.5 增 advancing 两列)
 _MA_COUNT_COLS = (
     "trade_date", "total_eligible", "above_ma20", "above_ma60", "above_both",
     "pct_ma20", "pct_ma60", "pct_both",
     "up_5d_count", "up_5d_pct", "new_low_60d_count", "new_low_60d_pct",
     "new_high_252d_count", "new_high_252d_pct",
+    "advancing_count", "advancing_pct",
     "by_board_json", "elapsed_ms", "source",
 )
 _MA_COUNT_SELECT = ", ".join(_MA_COUNT_COLS)
@@ -631,7 +645,7 @@ _MA_COUNT_SELECT = ", ".join(_MA_COUNT_COLS)
 def _row_to_ma_payload(row: tuple) -> dict:
     """duckdb 行 → calc_ma_count 同 shape dict."""
     import json as _json
-    by_board = _json.loads(row[14]) if row[14] else {}
+    by_board = _json.loads(row[16]) if row[16] else {}          # was row[14]
     return {
         "tradeDate": row[0].isoformat(),
         "totalEligible": int(row[1]),
@@ -647,9 +661,11 @@ def _row_to_ma_payload(row: tuple) -> dict:
         "pctNewLow60d": float(row[11]) if row[11] is not None else 0.0,
         "newHigh252dCount": int(row[12]) if row[12] is not None else 0,
         "pctNewHigh252d": float(row[13]) if row[13] is not None else 0.0,
+        "advancingCount": int(row[14]) if row[14] is not None else 0,
+        "pctAdvancing": float(row[15]) if row[15] is not None else 0.0,
         "byBoard": by_board,
-        "elapsedMs": int(row[15]) if row[15] is not None else None,
-        "source": str(row[16]),
+        "elapsedMs": int(row[17]) if row[17] is not None else None,   # was row[15]
+        "source": str(row[18]),                                        # was row[16]
         "fromCache": True,
     }
 
@@ -795,6 +811,7 @@ def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
                                   ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS ma20,
                  AVG(close) OVER (PARTITION BY code ORDER BY trade_date
                                   ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
+                 LAG(close, 1)   OVER (PARTITION BY code ORDER BY trade_date) AS close_1d_ago,
                  LAG(close, 5)   OVER (PARTITION BY code ORDER BY trade_date) AS close_5d_ago,
                  LAG(close, 59)  OVER (PARTITION BY code ORDER BY trade_date) AS close_59d_ago,
                  MIN(close)      OVER (PARTITION BY code ORDER BY trade_date
@@ -807,6 +824,7 @@ def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
         ),
         filtered AS (
           SELECT w.code, w.trade_date, w.close, w.ma20, w.ma60,
+                 w.close_1d_ago,
                  w.close_5d_ago, w.close_59d_ago, w.min_60d,
                  w.close_251d_ago, w.max_252d,
                  {_BOARD_CASE_SQL} AS board
@@ -825,20 +843,22 @@ def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
                SUM(CASE WHEN close > ma20 AND close > ma60 THEN 1 ELSE 0 END) AS above_both,
                SUM(CASE WHEN close_5d_ago IS NOT NULL AND close > close_5d_ago THEN 1 ELSE 0 END) AS up_5d,
                SUM(CASE WHEN close_59d_ago IS NOT NULL AND min_60d IS NOT NULL AND close <= min_60d THEN 1 ELSE 0 END) AS new_low_60d,
-               SUM(CASE WHEN close_251d_ago IS NOT NULL AND max_252d IS NOT NULL AND close >= max_252d THEN 1 ELSE 0 END) AS new_high_252d
+               SUM(CASE WHEN close_251d_ago IS NOT NULL AND max_252d IS NOT NULL AND close >= max_252d THEN 1 ELSE 0 END) AS new_high_252d,
+               SUM(CASE WHEN close_1d_ago IS NOT NULL AND close > close_1d_ago THEN 1 ELSE 0 END) AS advancing
           FROM filtered
          GROUP BY trade_date, board
          ORDER BY trade_date ASC, board ASC
     """, [e, s, e]).fetchall()
 
-    # 聚合 by_board / total: 按 trade_date 合并 6 个 board
+    # 聚合 by_board / total: 按 trade_date 合并 7 个 board
     by_td: dict[date, dict[str, Any]] = {}
-    for (td, board, total, am20, am60, aboth, u5d, nl60d, nh252d) in rows:
+    for (td, board, total, am20, am60, aboth, u5d, nl60d, nh252d, adv) in rows:
         d = td.date() if hasattr(td, "date") else td
         slot = by_td.setdefault(d, {
             "totalEligible": 0,
             "aboveMa20": 0, "aboveMa60": 0, "aboveBoth": 0,
             "up5dCount": 0, "newLow60dCount": 0, "newHigh252dCount": 0,
+            "advancing": 0,
             "byBoard": {},
         })
         slot["totalEligible"] += int(total or 0)
@@ -848,6 +868,7 @@ def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
         slot["up5dCount"] += int(u5d or 0)
         slot["newLow60dCount"] += int(nl60d or 0)
         slot["newHigh252dCount"] += int(nh252d or 0)
+        slot["advancing"] += int(adv or 0)
 
         t = int(total or 0)
         slot["byBoard"][board] = {
@@ -864,6 +885,8 @@ def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
             "pctNewLow60d": round(int(nl60d or 0) / t * 100, 2) if t > 0 else 0.0,
             "newHigh252d": int(nh252d or 0),
             "pctNewHigh252d": round(int(nh252d or 0) / t * 100, 2) if t > 0 else 0.0,
+            "advancing": int(adv or 0),
+            "pctAdvancing": round(int(adv or 0) / t * 100, 2) if t > 0 else 0.0,
         }
 
     def pct(num: int, den: int) -> float:
@@ -888,6 +911,8 @@ def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
             "pctNewLow60d": pct(slot["newLow60dCount"], e_total),
             "newHigh252dCount": slot["newHigh252dCount"],
             "pctNewHigh252d": pct(slot["newHigh252dCount"], e_total),
+            "advancingCount": slot["advancing"],
+            "pctAdvancing": pct(slot["advancing"], e_total),
             "byBoard": slot["byBoard"],
             "elapsedMs": elapsed_ms,
             "source": "duckdb.daily_qfq",
@@ -912,9 +937,11 @@ def bulk_save_ma_count(payloads: dict[date, dict[str, Any]]) -> int:
                  pct_ma20, pct_ma60, pct_both,
                  up_5d_count, up_5d_pct, new_low_60d_count, new_low_60d_pct,
                  new_high_252d_count, new_high_252d_pct,
+                 advancing_count, advancing_pct,
                  by_board_json, elapsed_ms, source, ingested_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
+                    ?, ?,
                     ?, ?,
                     ?, ?, ?, current_timestamp)
         """, [
@@ -932,6 +959,8 @@ def bulk_save_ma_count(payloads: dict[date, dict[str, Any]]) -> int:
             float(payload.get("pctNewLow60d") or 0),
             int(payload.get("newHigh252dCount") or 0),
             float(payload.get("pctNewHigh252d") or 0),
+            int(payload.get("advancingCount") or 0),
+            float(payload.get("pctAdvancing") or 0),
             by_board_json,
             int(payload.get("elapsedMs") or 0),
             str(payload.get("source") or "duckdb.daily_qfq"),

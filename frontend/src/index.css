@@ -126,6 +126,18 @@
     padding: 0;
   }
 
+  /* Tailwind v4 不再自动设置默认 border-color (preflight 移除),
+   * 导致所有 `border` class 不带 `border-XXX` 颜色时回退到 currentColor
+   * (按钮/输入框的文本色, 接近黑色) → 看起来是 "黑 border".
+   * 这里强制所有元素默认 border-color 用项目的浅灰 --border, 跟 shadcn 主题一致.
+   * 显式带颜色 (border-border / border-input / ...) 的会被这条 css 覆盖 (latter wins).
+   */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+
   body {
     font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     background:

@@ -1,0 +1,13 @@
+{
+  "job_name": "style_risk_appetite_refresh",
+  "description": "工作日 17:08 收盘后, 增量回填风格风险偏好(中证1000 5日收益 - 沪深300 5日收益) 到 duckdb",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "run_time": "17:08",
+    "run_once_per_day": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "command": "python -u scripts/backfill_style_risk_appetite.py --days=2 --force"
+}

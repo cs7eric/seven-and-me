@@ -1387,6 +1387,10 @@ export interface MaCountBoardStat {
   newHigh252d?: number
   /** newHigh252d / total * 100 */
   pctNewHigh252d?: number
+  /** 当日上涨 (close > prev close) 数量 */
+  advancing?: number
+  /** advancing / total * 100 */
+  pctAdvancing?: number
 }
 
 export interface MaCountResponse {
@@ -1411,6 +1415,10 @@ export interface MaCountResponse {
   newHigh252dCount: number
   /** newHigh252dCount / totalEligible * 100 */
   pctNewHigh252d: number
+  /** 当日上涨股票数 (close > 前一日 close) */
+  advancingCount: number
+  /** advancingCount / totalEligible * 100 */
+  pctAdvancing: number
   byBoard: Record<string, MaCountBoardStat>
   elapsedMs?: number
   source?: string
@@ -1430,6 +1438,7 @@ export async function fetchMarketSentimentMaCount(date?: string): Promise<MaCoun
              up5dCount: 0, pctUp5d: 0,
              newLow60dCount: 0, pctNewLow60d: 0,
              newHigh252dCount: 0, pctNewHigh252d: 0,
+             advancingCount: 0, pctAdvancing: 0,
              byBoard: {}, error: `HTTP ${res.status}` }
   }
   return {
@@ -1448,6 +1457,8 @@ export async function fetchMarketSentimentMaCount(date?: string): Promise<MaCoun
     pctNewLow60d: (data.pctNewLow60d as number) ?? 0,
     newHigh252dCount: (data.newHigh252dCount as number) ?? 0,
     pctNewHigh252d: (data.pctNewHigh252d as number) ?? 0,
+    advancingCount: (data.advancingCount as number) ?? 0,
+    pctAdvancing: (data.pctAdvancing as number) ?? 0,
     byBoard: (data.byBoard as Record<string, MaCountBoardStat>) ?? {},
     elapsedMs: (data.elapsedMs as number) ?? undefined,
     source: (data.source as string) ?? undefined,
@@ -1536,6 +1547,8 @@ export interface MaCountHistoryItem {
   pctNewLow60d: number
   newHigh252dCount: number
   pctNewHigh252d: number
+  advancingCount: number
+  pctAdvancing: number
   fromCache?: boolean
 }
 
@@ -1580,6 +1593,8 @@ export async function fetchMarketSentimentMaCountHistory(
       pctNewLow60d: (it.pctNewLow60d as number) ?? 0,
       newHigh252dCount: (it.newHigh252dCount as number) ?? 0,
       pctNewHigh252d: (it.pctNewHigh252d as number) ?? 0,
+      advancingCount: (it.advancingCount as number) ?? 0,
+      pctAdvancing: (it.pctAdvancing as number) ?? 0,
       fromCache: Boolean(it.fromCache),
     })),
     error: (data.error as string) ?? undefined,
@@ -2189,6 +2204,300 @@ export async function fetchMarketSentimentVolatilitySentimentHistory(
       sampleCount: Number(it.sampleCount ?? 0),
       elapsedMs: (it.elapsedMs as number) ?? null,
       source: (it.source as string) ?? null,
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 成交活跃度 (Turnover Activity · Market Sentiment)
+// ---------------------------------------------------------------------------
+export interface TurnoverActivityResponse {
+  ok: boolean
+  tradeDate: string
+  totalAmount: number | null
+  avg20dAmount: number | null
+  ratio: number | null
+  elapsedMs: number | null
+  source: string
+  error?: string
+}
+
+export interface TurnoverActivityHistoryItem {
+  tradeDate: string
+  totalAmount: number | null
+  avg20dAmount: number | null
+  ratio: number | null
+  elapsedMs: number | null
+  source: string
+  fromCache: boolean
+}
+
+export interface TurnoverActivityHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: TurnoverActivityHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentTurnoverActivity(
+  date?: string,
+): Promise<TurnoverActivityResponse> {
+  const params = new URLSearchParams()
+  if (date) params.set("date", date)
+  const qs = params.toString()
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/turnover-activity${qs ? "?" + qs : ""}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, tradeDate: date ?? "", totalAmount: null, avg20dAmount: null, ratio: null, elapsedMs: null, source: "", error: `HTTP ${res.status}` }
+  }
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? ""),
+    totalAmount: (data.totalAmount as number | null) ?? null,
+    avg20dAmount: (data.avg20dAmount as number | null) ?? null,
+    ratio: (data.ratio as number | null) ?? null,
+    elapsedMs: (data.elapsedMs as number | null) ?? null,
+    source: (data.source as string) ?? "",
+    error: data.error as string | undefined,
+  }
+}
+
+export async function fetchMarketSentimentTurnoverActivityHistory(
+  start: string,
+  end: string,
+): Promise<TurnoverActivityHistoryResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/turnover-activity/history?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      totalAmount: (it.totalAmount as number | null) ?? null,
+      avg20dAmount: (it.avg20dAmount as number | null) ?? null,
+      ratio: (it.ratio as number | null) ?? null,
+      elapsedMs: (it.elapsedMs as number) ?? null,
+      source: (it.source as string) ?? "",
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 风格风险偏好 (Style Risk Appetite) — Market Sentiment
+// ---------------------------------------------------------------------------
+// 风格强弱 = 中证1000 近5日收益率 - 沪深300 近5日收益率
+// spread > 0: 小盘更强 (市场风险偏好积极)
+// spread < 0: 大盘更强 (避险倾向)
+// ---------------------------------------------------------------------------
+
+export interface StyleRiskAppetiteIndex {
+  name: string
+  code: string
+  returnPct: number | null
+  current?: number | null
+  baseClose?: number | null
+}
+
+export interface StyleRiskAppetiteResponse {
+  ok: boolean
+  tradeDate: string
+  windowDays: number
+  hs300: StyleRiskAppetiteIndex
+  csi1000: StyleRiskAppetiteIndex
+  spread: number | null
+  elapsedMs?: number
+  source?: string
+  fromCache?: boolean
+  error?: string
+}
+
+export async function fetchMarketSentimentStyleRiskAppetite(
+  date?: string,
+): Promise<StyleRiskAppetiteResponse> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : ""
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/style-risk-appetite${q}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return {
+      ok: false,
+      tradeDate: date ?? "",
+      windowDays: 5,
+      hs300: { name: "沪深300", code: "sh000300", returnPct: null },
+      csi1000: { name: "中证1000", code: "sh000852", returnPct: null },
+      spread: null,
+      error: `HTTP ${res.status}`,
+    }
+  }
+  const hs300Raw = (data.hs300 as Record<string, unknown>) ?? {}
+  const csi1000Raw = (data.csi1000 as Record<string, unknown>) ?? {}
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? date ?? ""),
+    windowDays: (data.windowDays as number) ?? 5,
+    hs300: {
+      name: String(hs300Raw.name ?? "沪深300"),
+      code: String(hs300Raw.code ?? "sh000300"),
+      returnPct: (hs300Raw.returnPct as number | null) ?? null,
+    },
+    csi1000: {
+      name: String(csi1000Raw.name ?? "中证1000"),
+      code: String(csi1000Raw.code ?? "sh000852"),
+      returnPct: (csi1000Raw.returnPct as number | null) ?? null,
+    },
+    spread: (data.spread as number | null) ?? null,
+    elapsedMs: (data.elapsedMs as number) ?? undefined,
+    source: (data.source as string) ?? undefined,
+    fromCache: Boolean(data.fromCache),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export interface StyleRiskAppetiteHistoryItem {
+  tradeDate: string
+  spread: number | null
+  fromCache?: boolean
+}
+
+export interface StyleRiskAppetiteHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: StyleRiskAppetiteHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentStyleRiskAppetiteHistory(
+  start: string,
+  end: string,
+): Promise<StyleRiskAppetiteHistoryResponse> {
+  const params = new URLSearchParams({ start, end })
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/style-risk-appetite/history?${params.toString()}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      spread: (it.spread as number | null) ?? null,
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 赚钱效应 (Profit Effect) — Market Sentiment 分项④
+// ---------------------------------------------------------------------------
+// score = 60% × 近5日上涨占比 + 40% × (100 - 60日新低占比)
+// score ≥ 60 → 赚钱面宽 (积极), ≥ 40 → 中性, < 40 → 亏钱效应
+// ---------------------------------------------------------------------------
+
+export interface ProfitEffectResponse {
+  ok: boolean
+  tradeDate: string
+  up5dPct: number | null
+  newLow60dPct: number | null
+  score: number | null
+  elapsedMs?: number
+  source?: string
+  fromCache?: boolean
+  error?: string
+}
+
+export async function fetchMarketSentimentProfitEffect(
+  date?: string,
+): Promise<ProfitEffectResponse> {
+  const q = date ? `?date=${encodeURIComponent(date)}` : ""
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/profit-effect${q}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return {
+      ok: false,
+      tradeDate: date ?? "",
+      up5dPct: null,
+      newLow60dPct: null,
+      score: null,
+      error: `HTTP ${res.status}`,
+    }
+  }
+  return {
+    ok: Boolean(data.ok),
+    tradeDate: String(data.tradeDate ?? date ?? ""),
+    up5dPct: (data.up5dPct as number | null) ?? null,
+    newLow60dPct: (data.newLow60dPct as number | null) ?? null,
+    score: (data.score as number | null) ?? null,
+    elapsedMs: (data.elapsedMs as number) ?? undefined,
+    source: (data.source as string) ?? undefined,
+    fromCache: Boolean(data.fromCache),
+    error: (data.error as string) ?? undefined,
+  }
+}
+
+export interface ProfitEffectHistoryItem {
+  tradeDate: string
+  score: number | null
+  fromCache?: boolean
+}
+
+export interface ProfitEffectHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: ProfitEffectHistoryItem[]
+  error?: string
+}
+
+export async function fetchMarketSentimentProfitEffectHistory(
+  start: string,
+  end: string,
+): Promise<ProfitEffectHistoryResponse> {
+  const params = new URLSearchParams({ start, end })
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-sentiment/profit-effect/history?${params.toString()}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start, end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: (data.start as string) ?? start,
+    end: (data.end as string) ?? end,
+    count: (data.count as number) ?? raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      score: (it.score as number | null) ?? null,
       fromCache: Boolean(it.fromCache),
     })),
     error: (data.error as string) ?? undefined,

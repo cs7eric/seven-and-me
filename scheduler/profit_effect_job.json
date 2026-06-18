@@ -1,0 +1,13 @@
+{
+  "job_name": "profit_effect_refresh",
+  "description": "工作日 17:09 收盘后, 增量回填赚钱效应(近5日上涨占比+60日新低反向合成) 到 duckdb",
+  "enabled": true,
+  "schedule": {
+    "workday_only": true,
+    "run_time": "17:09",
+    "run_once_per_day": true
+  },
+  "timezone_offset_hours": 8,
+  "tick_seconds": 60,
+  "command": "python -u scripts/backfill_profit_effect.py --days=2 --force"
+}

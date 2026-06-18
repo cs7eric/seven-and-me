@@ -200,6 +200,26 @@
       "service_class": "TestSchedulerDemo",
       "enabled": true,
       "registered_at": "2026-06-15T11:00:00+08:00"
+    },
+    {
+      "id": "style_risk_appetite_refresh",
+      "name": "风格风险偏好 duckdb 回填 (17:08 工作日)",
+      "description": "工作日 17:08 收盘后, 增量回填风格风险偏好(中证1000 5日收益 - 沪深300 5日收益) 到 duckdb.style_risk_appetite_daily. 数据源: index_returns_daily (由 ma_count_scheduler 17:06 更新). 17:08 跑 = ma_count 完成 2 分钟后, 数据已就绪",
+      "config_file": "style_risk_appetite_job.json",
+      "service_module": "backend.services.scheduler.style_risk_appetite_scheduler",
+      "service_class": "style_risk_appetite_scheduler",
+      "enabled": true,
+      "registered_at": "2026-06-18T13:30:00+08:00"
+    },
+    {
+      "id": "profit_effect_refresh",
+      "name": "赚钱效应 duckdb 回填 (17:09 工作日)",
+      "description": "工作日 17:09 收盘后, 增量回填赚钱效应(近5日上涨占比+60日新低反向合成) 到 duckdb.profit_effect_daily. 数据源: ma_count_daily (由 ma_count_scheduler 17:06 更新). 17:09 跑 = ma_count + style_risk_appetite 完成后 1 分钟",
+      "config_file": "profit_effect_job.json",
+      "service_module": "backend.services.scheduler.profit_effect_scheduler",
+      "service_class": "profit_effect_scheduler",
+      "enabled": true,
+      "registered_at": "2026-06-18T13:45:00+08:00"
     }
   ]
 }

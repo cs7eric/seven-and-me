@@ -1501,7 +1501,14 @@ def market_sentiment_sector_breadth():
         days = 0
     days = max(0, min(days, 365))
     try:
-        td = _date.fromisoformat(date_str) if date_str else _date.today()
+        if date_str:
+            td = _date.fromisoformat(date_str)
+        else:
+            from backend.services.stock.trading_calendar import previous_trading_day
+            try:
+                td = previous_trading_day()
+            except Exception:
+                td = _date.today()
     except (TypeError, ValueError) as exc:
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
 
@@ -1531,6 +1538,39 @@ def market_sentiment_sector_breadth():
             "tradeDate": td.isoformat(),
         }), 404
     return jsonify({"ok": True, **payload})
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/sector-breadth/history')
+def market_sentiment_sector_breadth_history():
+    """板块扩散历史序列 (sparkline 用, 按日期范围查).
+
+    URL: ?start=YYYY-MM-DD (默认 end - 30d) &end=YYYY-MM-DD (默认 start + 30d)
+
+    数据源: duckdb.market_pulse_sector_breadth_daily (持久化)
+    """
+    from datetime import date as _date, timedelta
+    from backend.repositories.market.sector_breadth_repo import get_sector_breadth_history
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+        start = _date.fromisoformat(start_str) if start_str else end - timedelta(days=30)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "start > end"}), 400
+    # 安全上限: 365 天
+    if (end - start).days > 365:
+        start = end - timedelta(days=365)
+    try:
+        items = get_sector_breadth_history(start, end)
+        return jsonify({
+            "ok": True, "start": start.isoformat(), "end": end.isoformat(),
+            "count": len(items), "items": items,
+        })
+    except Exception as exc:
+        logger.exception("sector-breadth history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
 
 
 @stock_chart_bp.route('/api/stock-chart/market-sentiment/risk-appetite')
@@ -1736,6 +1776,218 @@ def market_sentiment_volatility_sentiment_history():
         })
     except Exception as exc:
         logger.exception("volatility-sentiment history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
+# ---------------------------------------------------------------------------
+# 成交活跃度 (Turnover Activity)
+# ---------------------------------------------------------------------------
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/turnover-activity')
+def market_sentiment_turnover_activity():
+    """成交活跃度: 今日全市场成交额 / 过去 20 日平均成交额.
+
+    URL: ?date=YYYY-MM-DD (默认上一个交易日) &force=1
+
+    数据源:
+      1. 优先查 duckdb.turnover_activity_daily (持久化)
+      2. 没记录则从 duckdb.market_overview_daily 现算 + 自动落盘
+    """
+    from datetime import date as _date
+    from backend.repositories.market.turnover_activity_repo import (
+        calc_turnover_activity_cached,
+    )
+    date_str = (request.args.get("date") or "").strip()
+    if not date_str:
+        from backend.services.stock.trading_calendar import previous_trading_day
+        try:
+            date_str = previous_trading_day().isoformat()
+        except Exception:
+            date_str = _date.today().isoformat()
+    try:
+        _date.fromisoformat(date_str)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    force = bool(request.args.get("force"))
+    try:
+        payload = calc_turnover_activity_cached(date_str, force=force)
+        if payload is None:
+            return jsonify({"ok": True, **{"tradeDate": date_str, "totalAmount": None, "avg20dAmount": None, "ratio": None, "elapsedMs": None, "source": "no_data"}})
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        logger.exception("turnover-activity failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/turnover-activity/history')
+def market_sentiment_turnover_activity_history():
+    """成交活跃度历史序列 (sparkline 用).
+
+    URL: ?start=YYYY-MM-DD (默认 end - 30d) &end=YYYY-MM-DD (默认 start + 30d)
+
+    数据源: duckdb.turnover_activity_daily (持久化)
+    """
+    from datetime import date as _date, timedelta
+    from backend.repositories.market.turnover_activity_repo import (
+        get_turnover_activity_history,
+    )
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+        start = _date.fromisoformat(start_str) if start_str else end - timedelta(days=30)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "start > end"}), 400
+    if (end - start).days > 365:
+        start = end - timedelta(days=365)
+    try:
+        items = get_turnover_activity_history(start, end)
+        return jsonify({
+            "ok": True, "start": start.isoformat(), "end": end.isoformat(),
+            "count": len(items), "items": items,
+        })
+    except Exception as exc:
+        logger.exception("turnover-activity history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/style-risk-appetite')
+def market_sentiment_style_risk_appetite():
+    """风格风险偏好: 中证1000 近5日收益 - 沪深300 近5日收益.
+
+    URL: ?date=YYYY-MM-DD (默认上一交易日) &force=1 (强制重算)
+
+    数据源: cache-aside
+      1. 优先查 duckdb.style_risk_appetite_daily
+      2. 没记录才现算 (读 index_returns_daily) + 自动落盘
+
+    说明: spread > 0 = 小盘强 (风险偏好积极), spread < 0 = 大盘强 (避险).
+    """
+    from datetime import date as _date
+    from backend.services.stock.trading_calendar import previous_trading_day
+    from backend.repositories.market.style_risk_appetite_repo import (
+        calc_style_risk_appetite_cached,
+    )
+    date_str = (request.args.get("date") or "").strip()
+    force = request.args.get("force") in ("1", "true", "yes")
+    if not date_str:
+        try:
+            date_str = previous_trading_day().isoformat()
+        except Exception:
+            date_str = _date.today().isoformat()
+    try:
+        payload = calc_style_risk_appetite_cached(date_str, force=force)
+        if payload is None:
+            return jsonify({
+                "ok": False,
+                "error": f"no index_returns_daily data for {date_str}",
+                "tradeDate": date_str,
+            }), 404
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        logger.exception("style-risk-appetite failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "tradeDate": date_str}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/style-risk-appetite/history')
+def market_sentiment_style_risk_appetite_history():
+    """风格风险偏好历史序列 (sparkline 用, 按日期范围查).
+
+    URL: ?start=YYYY-MM-DD (默认 end - 30d) &end=YYYY-MM-DD (默认 start + 30d)
+
+    数据源: duckdb.style_risk_appetite_daily (持久化)
+    """
+    from datetime import date as _date, timedelta
+    from backend.repositories.market.style_risk_appetite_repo import (
+        get_style_risk_appetite_history,
+    )
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+        start = _date.fromisoformat(start_str) if start_str else end - timedelta(days=30)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "start > end"}), 400
+    if (end - start).days > 365:
+        start = end - timedelta(days=365)
+    try:
+        items = get_style_risk_appetite_history(start, end)
+        return jsonify({
+            "ok": True, "start": start.isoformat(), "end": end.isoformat(),
+            "count": len(items), "items": items,
+        })
+    except Exception as exc:
+        logger.exception("style-risk-appetite history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/profit-effect')
+def market_sentiment_profit_effect():
+    """赚钱效应: 60%×近5日上涨占比 + 40%×(100-60日新低占比).
+
+    URL: ?date=YYYY-MM-DD (默认上一交易日) &force=1 (强制重算)
+
+    数据源: cache-aside
+      1. 优先查 duckdb.profit_effect_daily
+      2. 没记录才现算 (读 ma_count_daily) + 自动落盘
+    """
+    from datetime import date as _date
+    from backend.services.stock.trading_calendar import previous_trading_day
+    from backend.repositories.market.profit_effect_repo import (
+        calc_profit_effect_cached,
+    )
+    date_str = (request.args.get("date") or "").strip()
+    force = request.args.get("force") in ("1", "true", "yes")
+    if not date_str:
+        try:
+            date_str = previous_trading_day().isoformat()
+        except Exception:
+            date_str = _date.today().isoformat()
+    try:
+        payload = calc_profit_effect_cached(date_str, force=force)
+        if payload is None:
+            return jsonify({
+                "ok": False,
+                "error": f"no ma_count_daily data for {date_str}",
+                "tradeDate": date_str,
+            }), 404
+        return jsonify({"ok": True, **payload})
+    except Exception as exc:
+        logger.exception("profit-effect failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "tradeDate": date_str}), 200
+
+
+@stock_chart_bp.route('/api/stock-chart/market-sentiment/profit-effect/history')
+def market_sentiment_profit_effect_history():
+    """赚钱效应历史序列 (sparkline 用, 按日期范围查).
+
+    URL: ?start=YYYY-MM-DD (默认 end - 30d) &end=YYYY-MM-DD (默认 start + 30d)
+    """
+    from datetime import date as _date, timedelta
+    from backend.repositories.market.profit_effect_repo import get_profit_effect_history
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+        start = _date.fromisoformat(start_str) if start_str else end - timedelta(days=30)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "start > end"}), 400
+    if (end - start).days > 365:
+        start = end - timedelta(days=365)
+    try:
+        items = get_profit_effect_history(start, end)
+        return jsonify({
+            "ok": True, "start": start.isoformat(), "end": end.isoformat(),
+            "count": len(items), "items": items,
+        })
+    except Exception as exc:
+        logger.exception("profit-effect history failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc), "items": []}), 200
 
 

@@ -19,7 +19,7 @@
   "lastDurationSeconds": 0.2,
   "totalRuns": 3,
   "totalFailures": 0,
-  "schedulerStartedAt": "2026-06-18T10:30:16",
+  "schedulerStartedAt": "2026-06-18T14:00:25",
   "running": true,
   "stoppedAt": "2026-06-17T21:39:07",
   "job_name": "daily_eod_incremental",
