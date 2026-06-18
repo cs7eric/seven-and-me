@@ -44,7 +44,6 @@ import { CustomChart, LineChart } from "echarts/charts"
 import {
   GridComponent,
   TooltipComponent,
-  VisualMapComponent,
   DataZoomComponent,
   MarkLineComponent,
 } from "echarts/components"
@@ -210,8 +209,8 @@ function toSparkData<T extends { tradeDate: string }>(
 // Y 轴固定 0-100, 主叙事 = 50 上是扩张 / 50 下是收缩.
 // ---------------------------------------------------------------------------
 echarts.use([
-  LineChart,
   CustomChart,
+  LineChart,
   GridComponent,
   TooltipComponent,
   DataZoomComponent,
@@ -219,82 +218,70 @@ echarts.use([
   CanvasRenderer,
 ])
 
-// 6 档情绪色 (与 tooltip / 阈值图例对齐)
-const MOOD_PALETTE = {
-  hot: "#ef4444",        // >=70 极热
-  warm: "#f97316",       // >=60 偏热
-  mild: "#f59e0b",       // >=50 偏多
-  cool: "#38bdf8",       // >=40 偏弱
-  cold: "#60a5fa",       // >=30 低迷
-  ice: "#94a3b8",        // <30 冰点
-} as const
-type MoodBucket = keyof typeof MOOD_PALETTE
-
-function moodBucketOf(value: number): MoodBucket {
-  if (value >= 70) return "hot"
-  if (value >= 60) return "warm"
-  if (value >= 50) return "mild"
-  if (value >= 40) return "cool"
-  if (value >= 30) return "cold"
-  return "ice"
+// "#rrggbb" + alpha → "rgba(r,g,b,a)" 字符串
+function hexToRgba(hex: string, alpha: number): string {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim())
+  if (!m) return `rgba(148, 163, 184, ${alpha})`
+  return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`
 }
 
-// 分段: [{ x1, y1, x2, y2, bucket }], y = value - 50, 中性线 = 0.
-// 每个 segment 在 6 档阈值 [30,40,50,60,70] 上的 bucket 内, 不跨档.
-type SliceSegment = {
-  x1: number
-  y1: number
-  x2: number
-  y2: number
-  bucket: MoodBucket
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
 }
 
-function buildSliceSegments(values: number[], reference = 50): SliceSegment[] {
-  const segments: SliceSegment[] = []
-  if (values.length < 2) return segments
+// ── 蓝→白→红 色阶: sentiment 0~100 ──
+const TEMPERATURE_COLOR_STOPS: [number, number, number, number][] = [
+  // [score, r, g, b]
+  [0,     0,  40, 230], // 深蓝 (去紫调)
+  [10,    0,  70, 242], //
+  [20,   15, 100, 250], //
+  [30,   45, 128, 253], //
+  [40,   85, 158, 255], // 浅蓝
+  [50,  245, 245, 245], // #F5F5F5 中性白
+  [60,  255, 153, 153], // #FF9999 浅红
+  [70,  255, 102, 102], // #FF6666
+  [80,  255,   0,   0], // #FF0000 红
+  [85,  229,   0,   0], // #E50000
+  [90,  203,   0,   0], // #CB0000
+  [95,  178,   0,   0], // #B20000
+  [100, 152,   0,   0], // #980000 深红
+]
 
-  const cut = (a: number, b: number, t: number) => a + (b - a) * t
+/** 根据 sentiment 分数 (0-100) 返回 RGB 颜色, 在色阶之间线性插值 */
+function scoreToRgb(score: number): [number, number, number] {
+  const s = clamp(score, 0, 100)
+  const stops = TEMPERATURE_COLOR_STOPS
 
-  // 按阈值分桶, 一对相邻点 (vA, vB) 可能跨越多个阈值 (例如 28 -> 72).
-  // 思路: 沿 [vA, vB] 列出去重后的所有阈值点, 相邻两个阈值点之间就是一段稳定 bucket.
-  const thresholds = [30, 40, 50, 60, 70]
+  // 精确命中
+  for (let i = 0; i < stops.length; i++) {
+    if (s === stops[i][0]) return [stops[i][1], stops[i][2], stops[i][3]]
+  }
 
-  for (let i = 1; i < values.length; i++) {
-    const xA = i - 1
-    const xB = i
-    const vA = values[i - 1]
-    const vB = values[i]
+  // 左侧外推
+  if (s < stops[0][0]) return [stops[0][1], stops[0][2], stops[0][3]]
 
-    // 收集本段内的所有切点 (含端点): 端点 + 穿过的阈值
-    const points: Array<{ x: number; v: number }> = [
-      { x: xA, v: vA },
-      { x: xB, v: vB },
-    ]
-    for (const t of thresholds) {
-      // 严格落在 (vA, vB] 或 [vB, vA) 之间, 排除端点本身
-      if ((vA < t && t <= vB) || (vB <= t && t < vA)) {
-        const ratio = (t - vA) / (vB - vA)
-        points.push({ x: cut(xA, xB, ratio), v: t })
-      }
-    }
-    points.sort((a, b) => a.x - b.x)
-
-    for (let k = 1; k < points.length; k++) {
-      const p1 = points[k - 1]
-      const p2 = points[k]
-      // 端点颜色按中点 bucket 定, 内部纯阈值段按该阈值定
-      const midV = (p1.v + p2.v) / 2
-      segments.push({
-        x1: p1.x,
-        y1: p1.v - reference,
-        x2: p2.x,
-        y2: p2.v - reference,
-        bucket: moodBucketOf(midV),
-      })
+  // 区间插值
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [v0, r0, g0, b0] = stops[i]
+    const [v1, r1, g1, b1] = stops[i + 1]
+    if (s >= v0 && s <= v1) {
+      const t = (s - v0) / (v1 - v0)
+      return [
+        Math.round(r0 + (r1 - r0) * t),
+        Math.round(g0 + (g1 - g0) * t),
+        Math.round(b0 + (b1 - b0) * t),
+      ]
     }
   }
 
-  return segments
+  // 右侧外推
+  const last = stops[stops.length - 1]
+  return [last[1], last[2], last[3]]
+}
+
+function scoreToColor(score: number): string {
+  const [r, g, b] = scoreToRgb(score)
+  return `rgb(${r},${g},${b})`
 }
 
 interface SentimentLinePoint { date: string; value: number; level?: string }
@@ -312,9 +299,6 @@ function SentimentLine({ data, height = 220, light = false }: SentimentLineProps
   const option = useMemo<EChartsOption>(() => {
     const dates = data.map((d) => d.date)
     const values = data.map((d) => d.value)
-
-    const latestValue = values[values.length - 1] ?? 50
-    const mainLineColor = latestValue >= 50 ? "#f97316" : "#38bdf8"
 
     const minValue = values.length ? Math.min(...values) : 0
     const maxValue = values.length ? Math.max(...values) : 100
@@ -346,6 +330,12 @@ function SentimentLine({ data, height = 220, light = false }: SentimentLineProps
      */
     const bullData = values.map((v) => (v >= 50 ? v : 50))
     const bearData = values.map((v) => (v < 50 ? v : 50))
+
+    // 相邻点线段 (每条线段用温度计色阶渐变着色)
+    const lineSegments: { x1: number; y1: number; x2: number; y2: number }[] = []
+    for (let i = 1; i < values.length; i++) {
+      lineSegments.push({ x1: i - 1, y1: values[i - 1], x2: i, y2: values[i] })
+    }
 
     const fg = light ? "#475569" : "#94a3b8"
     const fgStrong = light ? "#0f172a" : "#e2e8f0"
@@ -491,16 +481,14 @@ function SentimentLine({ data, height = 220, light = false }: SentimentLineProps
       ],
 
       series: [
+        // ── 面积层 (多头 / 空头区域) ──
         {
           name: "多头区域",
           type: "line",
           data: bullData,
           symbol: "none",
-          smooth: 0.2,
-          lineStyle: {
-            width: 0,
-            opacity: 0,
-          },
+          smooth: 0.3,
+          lineStyle: { width: 0, opacity: 0 },
           areaStyle: {
             origin: 50,
             opacity: 0.34,
@@ -510,82 +498,9 @@ function SentimentLine({ data, height = 220, light = false }: SentimentLineProps
               { offset: 1, color: "rgba(249, 115, 22, 0.02)" },
             ]),
           },
-          emphasis: {
-            disabled: true,
-          },
-          tooltip: {
-            show: false,
-          },
-          z: 1,
-        },
-
-        {
-          name: "空头区域",
-          type: "line",
-          data: bearData,
-          symbol: "none",
-          smooth: 0.2,
-          lineStyle: {
-            width: 0,
-            opacity: 0,
-          },
-          areaStyle: {
-            origin: 50,
-            opacity: 0.32,
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: "rgba(14, 165, 233, 0.02)" },
-              { offset: 0.45, color: "rgba(14, 165, 233, 0.18)" },
-              { offset: 1, color: "rgba(37, 99, 235, 0.38)" },
-            ]),
-          },
-          emphasis: {
-            disabled: true,
-          },
-          tooltip: {
-            show: false,
-          },
-          z: 1,
-        },
-
-        {
-          name: "市场情绪指数",
-          type: "line",
-          data: values,
-          smooth: 0.2,
-          symbol: "circle",
-          showSymbol: false,
-          symbolSize: 6,
-          sampling: "lttb",
-
-          /**
-           * 主线颜色：
-           * - 最新值 >= 50：橙红；
-           * - 最新值 < 50：蓝色。
-           */
-          lineStyle: {
-            width: 2.8,
-            color: mainLineColor,
-            shadowBlur: 14,
-            shadowColor:
-              latestValue >= 50
-                ? "rgba(249, 115, 22, 0.55)"
-                : "rgba(56, 189, 248, 0.55)",
-          },
-
-          itemStyle: {
-            color: mainLineColor,
-            borderColor: light ? "#ffffff" : "#0f172a",
-            borderWidth: 1,
-          },
-
-          emphasis: {
-            focus: "series",
-            scale: true,
-            lineStyle: {
-              width: 3.4,
-            },
-          },
-
+          emphasis: { disabled: true },
+          tooltip: { show: false },
+          // 中性线 markLine 从原主线移到此面积系列
           markLine: {
             symbol: "none",
             silent: true,
@@ -604,16 +519,109 @@ function SentimentLine({ data, height = 220, light = false }: SentimentLineProps
               color: light ? "rgba(15, 23, 42, 0.65)" : "rgba(226, 232, 240, 0.70)",
               width: 1.6,
             },
-            data: [
-              {
-                yAxis: 50,
-                name: "中性线",
-              },
-            ],
+            data: [{ yAxis: 50, name: "中性线" }],
           },
-
-          z: 3,
+          z: 1,
         },
+
+        {
+          name: "空头区域",
+          type: "line",
+          data: bearData,
+          symbol: "none",
+          smooth: 0.3,
+          lineStyle: { width: 0, opacity: 0 },
+          areaStyle: {
+            origin: 50,
+            opacity: 0.32,
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: "rgba(14, 165, 233, 0.02)" },
+              { offset: 0.45, color: "rgba(14, 165, 233, 0.18)" },
+              { offset: 1, color: "rgba(37, 99, 235, 0.38)" },
+            ]),
+          },
+          emphasis: { disabled: true },
+          tooltip: { show: false },
+          z: 1,
+        },
+
+        // ── 隐形线 (仅给 tooltip 提供 dataIndex / x 映射, 视觉不可见) ──
+        {
+          name: "市场情绪指数",
+          type: "line",
+          data: values,
+          symbol: "none",
+          lineStyle: { width: 0, opacity: 0 },
+          z: 2,
+        },
+
+        // ── 温度计色阶主线 (单个 custom series, 每条线段 stroke 使用渐变) ──
+        ...(lineSegments.length > 0
+          ? [{
+              name: "市场情绪指数",
+              type: "custom" as const,
+              coordinateSystem: "cartesian2d" as const,
+              clip: true,
+              renderItem: (_params: unknown, api: {
+                value: (dim: number) => unknown
+                coord: (data: [number, number]) => [number, number]
+              }) => {
+                const x1 = Number(api.value(0))
+                const y1 = Number(api.value(1))
+                const x2 = Number(api.value(2))
+                const y2 = Number(api.value(3))
+
+                const toPixel = (x: number, y: number): [number, number] => {
+                  const fx = Math.floor(x)
+                  const cx = Math.ceil(x)
+                  if (fx === cx) return api.coord([fx, y])
+                  const frac = x - fx
+                  const [px0, py0] = api.coord([fx, y])
+                  const [px1, py1] = api.coord([cx, y])
+                  return [px0 + (px1 - px0) * frac, py0 + (py1 - py0) * frac]
+                }
+
+                const start = toPixel(x1, y1)
+                const end = toPixel(x2, y2)
+                const c1 = scoreToColor(y1)
+                const c2 = scoreToColor(y2)
+                const midScore = (y1 + y2) / 2
+
+                return {
+                  type: "group",
+                  children: [{
+                    type: "polyline",
+                    shape: { points: [start, end] },
+                    style: {
+                      fill: "none",
+                      stroke: {
+                        type: "linear" as const,
+                        x: start[0], y: 0,
+                        x2: end[0], y2: 0,
+                        global: true,
+                        colorStops: [
+                          { offset: 0, color: c1 },
+                          { offset: 1, color: c2 },
+                        ],
+                      },
+                      lineWidth: 2.8,
+                      lineCap: "butt" as const,
+                      lineJoin: "round" as const,
+                      shadowBlur: 8,
+                      shadowColor: (() => {
+                        const [r, g, b] = scoreToRgb(midScore)
+                        return `rgba(${r},${g},${b},0.35)`
+                      })(),
+                    },
+                    silent: true,
+                  }],
+                }
+              },
+              data: lineSegments.map((s) => ({ value: [s.x1, s.y1, s.x2, s.y2] })),
+              tooltip: { show: false },
+              z: 3,
+            }]
+          : []),
       ],
     }
   }, [data, light])
