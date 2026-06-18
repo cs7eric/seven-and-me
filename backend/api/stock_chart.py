@@ -1041,8 +1041,8 @@ def stock_chart_market_overview_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_overview_history(start, end)
         return jsonify({
@@ -1339,8 +1339,8 @@ def market_sentiment_ma_count_history():
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
     # 安全上限: 365 天
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_ma_count_history(start, end)
         return jsonify({
@@ -1401,8 +1401,8 @@ def market_pulse_index_returns_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_index_returns_history(window, start, end)
         return jsonify({
@@ -1560,8 +1560,8 @@ def market_sentiment_sector_breadth_history():
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
     # 安全上限: 365 天
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_sector_breadth_history(start, end)
         return jsonify({
@@ -1620,8 +1620,8 @@ def market_sentiment_risk_appetite_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_risk_appetite_history(start, end)
         return jsonify({
@@ -1688,8 +1688,8 @@ def market_sentiment_limit_emotion_summary_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_limit_emotion_summary_history(start, end)
         return jsonify({
@@ -1765,8 +1765,8 @@ def market_sentiment_volatility_sentiment_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_volatility_sentiment_history(start, end)
         return jsonify({
@@ -1839,8 +1839,8 @@ def market_sentiment_turnover_activity_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_turnover_activity_history(start, end)
         return jsonify({
@@ -1911,8 +1911,8 @@ def market_sentiment_style_risk_appetite_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_style_risk_appetite_history(start, end)
         return jsonify({
@@ -1977,8 +1977,8 @@ def market_sentiment_profit_effect_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_profit_effect_history(start, end)
         return jsonify({
@@ -2049,8 +2049,8 @@ def market_sentiment_index_history():
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     if start > end:
         return jsonify({"ok": False, "error": "start > end"}), 400
-    if (end - start).days > 365:
-        start = end - timedelta(days=365)
+    if (end - start).days > 1100:
+        start = end - timedelta(days=1100)
     try:
         items = get_market_sentiment_index_history(start, end)
         return jsonify({

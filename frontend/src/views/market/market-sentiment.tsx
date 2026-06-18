@@ -181,10 +181,12 @@ function Sparkline({ data, color = "auto", height = 60, formatter }: SparklinePr
 
 function toSparkData<T extends { tradeDate: string }>(
   history: T[] | null | undefined,
-  pick: (it: T) => number | null | undefined
+  pick: (it: T) => number | null | undefined,
+  recentDays: number = 60
 ): SparkPoint[] {
   if (!history) return []
-  return history
+  // Sparkline 只渲染最近 recentDays 个交易日, 避免 700+ 点挤一起看不清
+  const sorted = history
     .slice()
     .filter((it) => {
       // 防御: 过滤周末 (A 股没交易, history API 理论上不会返回, 但保险起见)
@@ -194,20 +196,20 @@ function toSparkData<T extends { tradeDate: string }>(
       return dow !== 0 && dow !== 6
     })
     .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))
-    .map((it) => ({ date: it.tradeDate.slice(5), value: pick(it) ?? 0 }))
+  const tail = sorted.length > recentDays ? sorted.slice(-recentDays) : sorted
+  return tail.map((it) => ({ date: it.tradeDate.slice(5), value: pick(it) ?? 0 }))
 }
 
 // ---------------------------------------------------------------------------
 // ECharts 情绪分趋势折线 (composite 大卡左侧专用)
-// 视觉: smooth line + 渐变面积 + visualMap 5 档分段着色 + 阈值 markLine +
-//        hover tooltip + inside slider dataZoom.
-// Y 轴固定 0-100, 阈值线 = 冰点(30)/弱势(45)/活跃(55)/火热(70) 分界.
+// 视觉: smooth line + 双面积围绕 50 中性线 (上红橙扩张 / 下蓝绿收缩) +
+//        50 markLine + hover tooltip + inside slider dataZoom.
+// Y 轴固定 0-100, 主叙事 = 50 上是扩张 / 50 下是收缩.
 // ---------------------------------------------------------------------------
 echarts.use([
   LineChart,
   GridComponent,
   TooltipComponent,
-  VisualMapComponent,
   DataZoomComponent,
   MarkLineComponent,
   CanvasRenderer,
@@ -228,112 +230,307 @@ function SentimentLine({ data, height = 220, light = false }: SentimentLineProps
   const option = useMemo<EChartsOption>(() => {
     const dates = data.map((d) => d.date)
     const values = data.map((d) => d.value)
+
+    const latestValue = values[values.length - 1] ?? 50
+    const mainLineColor = latestValue >= 50 ? "#f97316" : "#38bdf8"
+
+    const minValue = values.length ? Math.min(...values) : 0
+    const maxValue = values.length ? Math.max(...values) : 100
+    const valueRange = Math.max(1, maxValue - minValue)
+    // Y 轴 padding 收紧到 10%, 让 18 分差距看起来更剧烈 (不再像 0-100 那么平)
+    const padding = Math.max(3, valueRange * 0.10)
+
+    // 默认 dataZoom 进入最近 ~63 个交易日 (≈ 3 个月); 用户可拖回全量
+    // total=770 时 start≈91.8, total=60 时 start=0 (数据不够也铺满)
+    const recentBars = 63
+    const totalBars = values.length
+    const zoomStart = totalBars > recentBars
+      ? Math.max(0, 100 - (recentBars / totalBars) * 100)
+      : 0
+
+    /**
+     * 动态缩放：
+     * - 始终尽量包含 50 中性线；
+     * - 不再固定 0-100；
+     * - 但上下限仍限制在 0-100。
+     */
+    const yMin = Math.max(0, Math.floor(Math.min(minValue, 50) - padding))
+    const yMax = Math.min(100, Math.ceil(Math.max(maxValue, 50) + padding))
+
+    /**
+     * 上下区域数据：
+     * - bullData：只显示 50 以上区域；
+     * - bearData：只显示 50 以下区域。
+     */
+    const bullData = values.map((v) => (v >= 50 ? v : 50))
+    const bearData = values.map((v) => (v < 50 ? v : 50))
+
     const fg = light ? "#475569" : "#94a3b8"
     const fgStrong = light ? "#0f172a" : "#e2e8f0"
-    const axisLine = light ? "rgba(15, 23, 42, 0.12)" : "rgba(148, 163, 184, 0.35)"
-    const splitLine = light ? "rgba(15, 23, 42, 0.06)" : "rgba(148, 163, 184, 0.12)"
+    const axisLine = light ? "rgba(15, 23, 42, 0.12)" : "rgba(148, 163, 184, 0.28)"
+    const splitLine = light ? "rgba(15, 23, 42, 0.06)" : "rgba(148, 163, 184, 0.10)"
 
     return {
       backgroundColor: "transparent",
-      grid: { left: 36, right: 16, top: 18, bottom: 28, containLabel: false },
+
+      grid: {
+        left: 38,
+        right: 18,
+        top: 18,
+        bottom: 44,
+        containLabel: false,
+      },
+
       tooltip: {
         trigger: "axis",
-        backgroundColor: "rgba(15, 23, 42, 0.92)",
+        axisPointer: {
+          type: "line",
+          lineStyle: {
+            color: "rgba(148, 163, 184, 0.45)",
+            width: 1,
+          },
+        },
+        backgroundColor: "rgba(15, 23, 42, 0.94)",
         borderColor: "rgba(148, 163, 184, 0.25)",
-        textStyle: { color: "#e5e7eb", fontSize: 12 },
+        borderWidth: 1,
+        padding: [8, 10],
+        textStyle: {
+          color: "#e5e7eb",
+          fontSize: 12,
+        },
         formatter: (params: unknown) => {
-          const arr = params as Array<{ axisValueLabel: string; value: number; dataIndex: number }>
+          const arr = params as Array<{
+            axisValueLabel: string
+            value: number
+            dataIndex: number
+            seriesName: string
+          }>
+
           if (!arr || !arr.length) return ""
-          const p = arr[0]
-          const score = Number(p.value).toFixed(2)
-          const level = data[p.dataIndex]?.level ?? "—"
+
+          const realPoint = arr.find((p) => p.seriesName === "市场情绪指数") ?? arr[0]
+          const idx = realPoint.dataIndex
+          const score = Number(values[idx] ?? realPoint.value)
+          const diff = score - 50
+
           const moodLabel =
-            level === "hot" ? "火热"
-            : level === "active" ? "活跃"
-            : level === "normal" ? "中性"
-            : level === "weak" ? "弱势"
+            score >= 70 ? "极热"
+            : score >= 60 ? "偏热"
+            : score >= 50 ? "偏多"
+            : score >= 40 ? "偏弱"
+            : score >= 30 ? "低迷"
             : "冰点"
+
           const moodColor =
-            level === "hot" ? "#f87171"
-            : level === "active" ? "#fb923c"
-            : level === "normal" ? "#94a3b8"
-            : level === "weak" ? "#60a5fa"
-            : "#cbd5e1"
+            score >= 70 ? "#ef4444"
+            : score >= 60 ? "#f97316"
+            : score >= 50 ? "#f59e0b"
+            : score >= 40 ? "#38bdf8"
+            : score >= 30 ? "#60a5fa"
+            : "#94a3b8"
+
           return `
-            <div style="font-weight:600;margin-bottom:4px;">${p.axisValueLabel}</div>
-            <div>情绪分: <b style="color:${moodColor}">${score}</b></div>
-            <div>情绪状态: <span style="color:${moodColor}">${moodLabel}</span></div>
+            <div style="font-weight:600;margin-bottom:6px;">${realPoint.axisValueLabel}</div>
+            <div>情绪分: <b style="color:${moodColor};font-size:14px;">${score.toFixed(1)}</b></div>
+            <div style="margin-top:3px;">状态: <span style="color:${moodColor};">${moodLabel}</span></div>
+            <div style="margin-top:3px;color:#94a3b8;">距离中性线: ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}</div>
           `
         },
       },
+
       xAxis: {
         type: "category",
         boundaryGap: false,
         data: dates,
-        axisLine: { lineStyle: { color: axisLine } },
-        axisTick: { show: false },
-        axisLabel: { color: fg, fontSize: 10 },
+        axisLine: {
+          lineStyle: {
+            color: axisLine,
+          },
+        },
+        axisTick: {
+          show: false,
+        },
+        axisLabel: {
+          color: fg,
+          fontSize: 10,
+          margin: 10,
+        },
       },
+
       yAxis: {
         type: "value",
-        min: 0,
-        max: 100,
-        splitNumber: 5,
-        axisLabel: { color: fg, fontSize: 10, formatter: "{value}" },
-        splitLine: { lineStyle: { color: splitLine } },
-        axisLine: { show: false },
-        axisTick: { show: false },
+        min: yMin,
+        max: yMax,
+        splitNumber: 4,
+        axisLabel: {
+          color: fg,
+          fontSize: 10,
+          formatter: "{value}",
+        },
+        splitLine: {
+          lineStyle: {
+            color: splitLine,
+          },
+        },
+        axisLine: {
+          show: false,
+        },
+        axisTick: {
+          show: false,
+        },
       },
-      visualMap: {
-        show: false,
-        type: "piecewise",
-        dimension: 1,
-        pieces: [
-          { gt: 70, lte: 100, color: "#ef4444" }, // 火热
-          { gt: 55, lte: 70, color: "#f97316" },  // 活跃
-          { gt: 45, lte: 55, color: "#eab308" },  // 中性
-          { gt: 30, lte: 45, color: "#3b82f6" },  // 弱势
-          { gt: 0,  lte: 30, color: "#94a3b8" },  // 冰点
-        ],
-      },
+
       dataZoom: [
-        { type: "inside", zoomOnMouseWheel: true, moveOnMouseMove: true, moveOnMouseWheel: false },
+        {
+          type: "inside",
+          start: zoomStart,
+          end: 100,
+          zoomOnMouseWheel: true,
+          moveOnMouseMove: true,
+          moveOnMouseWheel: false,
+        },
+        {
+          type: "slider",
+          start: zoomStart,
+          end: 100,
+          height: 18,
+          bottom: 6,
+          borderColor: "transparent",
+          backgroundColor: light ? "rgba(15,23,42,0.04)" : "rgba(148,163,184,0.08)",
+          fillerColor: light ? "rgba(15,23,42,0.10)" : "rgba(148,163,184,0.18)",
+          handleStyle: {
+            color: light ? "#94a3b8" : "#64748b",
+          },
+          textStyle: {
+            color: fg,
+            fontSize: 10,
+          },
+        },
       ],
+
       series: [
         {
-          name: "情绪分",
+          name: "多头区域",
+          type: "line",
+          data: bullData,
+          symbol: "none",
+          smooth: 0.2,
+          lineStyle: {
+            width: 0,
+            opacity: 0,
+          },
+          areaStyle: {
+            origin: 50,
+            opacity: 0.34,
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: "rgba(239, 68, 68, 0.42)" },
+              { offset: 0.55, color: "rgba(249, 115, 22, 0.20)" },
+              { offset: 1, color: "rgba(249, 115, 22, 0.02)" },
+            ]),
+          },
+          emphasis: {
+            disabled: true,
+          },
+          tooltip: {
+            show: false,
+          },
+          z: 1,
+        },
+
+        {
+          name: "空头区域",
+          type: "line",
+          data: bearData,
+          symbol: "none",
+          smooth: 0.2,
+          lineStyle: {
+            width: 0,
+            opacity: 0,
+          },
+          areaStyle: {
+            origin: 50,
+            opacity: 0.32,
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: "rgba(14, 165, 233, 0.02)" },
+              { offset: 0.45, color: "rgba(14, 165, 233, 0.18)" },
+              { offset: 1, color: "rgba(37, 99, 235, 0.38)" },
+            ]),
+          },
+          emphasis: {
+            disabled: true,
+          },
+          tooltip: {
+            show: false,
+          },
+          z: 1,
+        },
+
+        {
+          name: "市场情绪指数",
           type: "line",
           data: values,
-          smooth: true,
+          smooth: 0.2,
           symbol: "circle",
           showSymbol: false,
-          symbolSize: 7,
-          lineStyle: { width: 3, shadowBlur: 10, shadowColor: "rgba(59, 130, 246, 0.45)" },
-          emphasis: { focus: "series", scale: true },
-          areaStyle: {
-            opacity: 0.22,
-            color: {
-              type: "linear",
-              x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [
-                { offset: 0, color: "rgba(239, 68, 68, 0.40)" },
-                { offset: 0.4, color: "rgba(234, 179, 8, 0.20)" },
-                { offset: 1, color: "rgba(148, 163, 184, 0.05)" },
-              ],
+          symbolSize: 6,
+          sampling: "lttb",
+
+          /**
+           * 主线颜色：
+           * - 最新值 >= 50：橙红；
+           * - 最新值 < 50：蓝色。
+           */
+          lineStyle: {
+            width: 2.8,
+            color: mainLineColor,
+            shadowBlur: 14,
+            shadowColor:
+              latestValue >= 50
+                ? "rgba(249, 115, 22, 0.55)"
+                : "rgba(56, 189, 248, 0.55)",
+          },
+
+          itemStyle: {
+            color: mainLineColor,
+            borderColor: light ? "#ffffff" : "#0f172a",
+            borderWidth: 1,
+          },
+
+          emphasis: {
+            focus: "series",
+            scale: true,
+            lineStyle: {
+              width: 3.4,
             },
           },
+
           markLine: {
             symbol: "none",
             silent: true,
-            label: { color: fgStrong, fontSize: 10, formatter: "{b}" },
-            lineStyle: { type: "dashed", color: axisLine, width: 1 },
+            label: {
+              color: fgStrong,
+              fontSize: 11,
+              fontWeight: 600,
+              formatter: "中性线 50",
+              position: "insideEndTop",
+              backgroundColor: light ? "rgba(15,23,42,0.04)" : "rgba(226,232,240,0.10)",
+              padding: [2, 5],
+              borderRadius: 3,
+            },
+            lineStyle: {
+              type: "solid",
+              color: light ? "rgba(15, 23, 42, 0.65)" : "rgba(226, 232, 240, 0.70)",
+              width: 1.6,
+            },
             data: [
-              { yAxis: 70, name: "火热" },
-              { yAxis: 55, name: "活跃" },
-              { yAxis: 45, name: "中性" },
-              { yAxis: 30, name: "弱势" },
+              {
+                yAxis: 50,
+                name: "中性线",
+              },
             ],
           },
+
+          z: 3,
         },
       ],
     }
@@ -404,7 +601,7 @@ function RiskAppetiteCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -522,7 +719,7 @@ function MarketBreadthCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -660,7 +857,7 @@ function NewHigh252dCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -886,7 +1083,7 @@ function LimitEmotionCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -1048,7 +1245,7 @@ function TurnoverActivityCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -1159,7 +1356,7 @@ function VolatilitySentimentCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -1283,7 +1480,7 @@ function StyleRiskAppetiteCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -1406,7 +1603,7 @@ function ProfitEffectCard({ date }: { date: string | null }) {
   useEffect(() => {
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -30)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -1512,6 +1709,27 @@ const MSI_LEVEL_META: Record<string, { label: string; tone: string; chip: string
   ice:    { label: "冰点",   tone: "text-slate-400",  chip: "border-slate-300 bg-slate-100 text-slate-500" },
 }
 
+// 单项 component 得分配色 (数字 + 进度条统一调子, 不跟总分)
+function scoreTone(v: number | null | undefined) {
+  if (v == null) return "text-slate-300"
+  if (v >= 70) return "text-red-600"
+  if (v >= 60) return "text-orange-600"
+  if (v >= 50) return "text-amber-600"
+  if (v >= 40) return "text-sky-500"
+  if (v >= 30) return "text-blue-600"
+  return "text-slate-400"
+}
+
+function scoreBar(v: number | null | undefined) {
+  if (v == null) return "bg-slate-200"
+  if (v >= 70) return "bg-red-500/70"
+  if (v >= 60) return "bg-orange-500/70"
+  if (v >= 50) return "bg-amber-500/70"
+  if (v >= 40) return "bg-sky-500/70"
+  if (v >= 30) return "bg-blue-500/70"
+  return "bg-slate-400/60"
+}
+
 const MSI_COMPONENT_META: Array<{
   key: keyof MarketSentimentIndexComponents
   label: string
@@ -1533,10 +1751,14 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
   const [history, setHistory] = useState<MarketSentimentIndexHistoryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // 后端 3 年数据已就绪 (limit_emotion / vol_sentiment / profit_effect / msi 全部 728+ 行)
+  const USE_MOCK = false
+
   useEffect(() => {
+    if (USE_MOCK) return
     let cancelled = false
     const end = date ?? isoDateNDaysAgo(0)
-    const start = shiftIsoDays(end, -90)
+    const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
         const [snap, hist] = await Promise.all([
@@ -1557,6 +1779,68 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
     })()
     return () => { cancelled = true }
   }, [date])
+
+  // Mock data — 90 个交易日的合成情绪分, 含均值回归 + 多周期 + 大噪声 + 偶发冲击
+  // 目标覆盖 10-90 全档位, 让 50 中性线/红蓝分区都看得出变化
+  useEffect(() => {
+    if (!USE_MOCK) return
+    const mockHistory: MarketSentimentIndexHistoryItem[] = []
+    const today = new Date()
+    let score = 55 // 从中性开始
+    for (let i = 90; i >= 0; i--) {
+      const d = new Date(today)
+      d.setDate(d.getDate() - i)
+      if (d.getDay() === 0 || d.getDay() === 6) continue // 跳过周末
+      // 弱均值回归 (loose pull back)
+      const drift = (50 - score) * 0.02
+      // 多周期叠加 (长周期 + 短周期)
+      const cycle = Math.sin(i * 0.09) * 14 + Math.sin(i * 0.21) * 6
+      // 大噪声 (±7)
+      const noise = (Math.random() - 0.5) * 14
+      // 偶发极端冲击 (~6% 概率)
+      const shock = Math.random() < 0.06 ? (Math.random() < 0.5 ? -15 : 18) : 0
+      score = Math.max(8, Math.min(92, score + drift + cycle * 0.10 + noise + shock))
+      const level =
+        score >= 70 ? "hot" as const
+        : score >= 55 ? "active" as const
+        : score >= 45 ? "normal" as const
+        : score >= 30 ? "weak" as const
+        : "ice" as const
+      mockHistory.push({
+        tradeDate: d.toISOString().slice(0, 10),
+        compositeScore: Math.round(score * 10) / 10,
+        level,
+      } as unknown as MarketSentimentIndexHistoryItem)
+    }
+    const last = mockHistory[mockHistory.length - 1]
+    const mockData: MarketSentimentIndexResponse = {
+      ok: true,
+      tradeDate: last.tradeDate,
+      compositeScore: last.compositeScore,
+      level: last.level,
+      componentCount: 9,
+      components: {
+        vol: 72,
+        turnover: 48,
+        price_strength: 35,
+        risk_appetite: 62,
+        breadth: 55,
+        limit_emotion: last.compositeScore,
+        profit_effect: 58,
+        sector_breadth: 44,
+        style_risk: 37,
+      },
+      weights: {
+        vol: 0.15, turnover: 0.15, price_strength: 0.10,
+        risk_appetite: 0.10, breadth: 0.15, limit_emotion: 0.15,
+        profit_effect: 0.10, sector_breadth: 0.05, style_risk: 0.05,
+      },
+    } as unknown as MarketSentimentIndexResponse
+
+    setData(mockData)
+    setHistory(mockHistory)
+    setLoading(false)
+  }, [USE_MOCK])
 
   const score = data?.compositeScore ?? null
   const level = data?.level ?? "normal"
@@ -1592,16 +1876,6 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
 
   return (
     <Card className="border-0 shadow-none bg-muted/50">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Gauge className="size-4 text-muted-foreground" />
-          市场情绪指数
-        </CardTitle>
-        <CardDescription>
-          9 张卡加权合成的市场情绪指数
-          {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
-        </CardDescription>
-      </CardHeader>
       <CardContent>
         {loading ? (
           <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
@@ -1624,36 +1898,42 @@ function MarketSentimentIndexCard({ date }: { date: string | null }) {
                 >
                   {meta.label}
                 </span>
+                {data?.tradeDate && (
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {data.tradeDate}
+                  </span>
+                )}
               </div>
-              {data && (
-                <div className="text-[10px] text-muted-foreground">
-                  实际参与合成的 component: {data.componentCount} / 9
-                  {data.componentCount < 9 && " (部分子卡尚未落盘, 缺失按 50 中性)"}
-                </div>
-              )}
-              <SentimentLine data={sentimentPoints} height={340} />
+              <SentimentLine data={sentimentPoints} height={440} />
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-                <span className="text-red-600/70">≥70 火热</span>
-                <span className="text-orange-600/70">55-70 活跃</span>
-                <span className="text-amber-600/70">45-55 中性</span>
-                <span className="text-blue-600/70">30-45 弱势</span>
+                <span className="text-red-600/70">≥70 极热</span>
+                <span className="text-orange-600/70">60-70 偏热</span>
+                <span className="text-amber-600/70">50-60 偏多</span>
+                <span className="text-sky-500/80">40-50 偏弱</span>
+                <span className="text-blue-600/70">30-40 低迷</span>
                 <span className="text-slate-400">＜30 冰点</span>
               </div>
             </div>
 
             {/* 右侧: 9 个 component 明细 (等距竖排, 字号可读) */}
             <div className="flex flex-1 flex-col justify-around text-xs">
+              {data && (
+                <div className="text-[10px] text-muted-foreground mb-2">
+                  实际参与合成的 component: {data.componentCount} / 9
+                  {data.componentCount < 9 && " (部分子卡尚未落盘, 缺失按 50 中性)"}
+                </div>
+              )}
               {MSI_COMPONENT_META.map((c) => {
                 const v = components[c.key]
                 return (
                   <div key={c.key} className="flex items-center gap-1.5">
                     <span className="w-12 shrink-0 truncate text-muted-foreground">{c.label}</span>
-                    <span className={`w-7 shrink-0 text-right font-semibold tabular-nums ${v == null ? "text-slate-300" : tone}`}>
+                    <span className={`w-7 shrink-0 text-right font-semibold tabular-nums ${scoreTone(v)}`}>
                       {v == null ? "—" : v.toFixed(0)}
                     </span>
                     <div className="flex-1 h-1.5 rounded-full bg-muted/40 overflow-hidden">
                       <div
-                        className="h-full rounded-full bg-foreground/30 transition-all"
+                        className={`h-full rounded-full transition-all ${scoreBar(v)}`}
                         style={{ width: `${v == null ? 0 : Math.min(v, 100)}%` }}
                       />
                     </div>
@@ -1693,9 +1973,6 @@ export default function MarketSentimentPage() {
             <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
               Market Sentiment
             </h1>
-            <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-              市场情绪:风险偏好 / 多空对比 / 舆情 / 融资杠杆等信号。
-            </p>
           </div>
           <div className="flex flex-col items-start gap-1.5 sm:items-end">
             <div className="flex items-center gap-2">
