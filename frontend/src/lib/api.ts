@@ -1419,6 +1419,10 @@ export interface MaCountResponse {
   advancingCount: number
   /** advancingCount / totalEligible * 100 */
   pctAdvancing: number
+  /** 252日新高 0-100 历史分位情绪得分 (基于过去 3 年) */
+  newHigh252dScore?: number
+  /** 原始 pctNewHigh252d 值 */
+  newHigh252dRawValue?: number
   byBoard: Record<string, MaCountBoardStat>
   elapsedMs?: number
   source?: string
@@ -1457,6 +1461,8 @@ export async function fetchMarketSentimentMaCount(date?: string): Promise<MaCoun
     pctNewLow60d: (data.pctNewLow60d as number) ?? 0,
     newHigh252dCount: (data.newHigh252dCount as number) ?? 0,
     pctNewHigh252d: (data.pctNewHigh252d as number) ?? 0,
+    newHigh252dScore: (data.newHigh252dScore as number) ?? undefined,
+    newHigh252dRawValue: (data.newHigh252dRawValue as number) ?? undefined,
     advancingCount: (data.advancingCount as number) ?? 0,
     pctAdvancing: (data.pctAdvancing as number) ?? 0,
     byBoard: (data.byBoard as Record<string, MaCountBoardStat>) ?? {},
@@ -1549,6 +1555,8 @@ export interface MaCountHistoryItem {
   pctNewHigh252d: number
   advancingCount: number
   pctAdvancing: number
+  /** 252日新高 0-100 历史分位情绪得分 */
+  newHigh252dScore?: number
   fromCache?: boolean
 }
 
@@ -1593,6 +1601,7 @@ export async function fetchMarketSentimentMaCountHistory(
       pctNewLow60d: (it.pctNewLow60d as number) ?? 0,
       newHigh252dCount: (it.newHigh252dCount as number) ?? 0,
       pctNewHigh252d: (it.pctNewHigh252d as number) ?? 0,
+      newHigh252dScore: (it.newHigh252dScore as number) ?? undefined,
       advancingCount: (it.advancingCount as number) ?? 0,
       pctAdvancing: (it.pctAdvancing as number) ?? 0,
       fromCache: Boolean(it.fromCache),
@@ -1798,6 +1807,10 @@ export interface RiskAppetiteResponse {
     "511090": number | null   // hs300 - 511090
     weighted: number | null   // hs300 - (511010+511090)/2  ← 主指标
   }
+  /** 0-100 历史分位情绪得分 (基于过去 3 年 spread_weighted 的百分位) */
+  score?: number
+  /** 原始 spread_weighted 值 (百分比) */
+  rawValue?: number
   elapsedMs?: number
   source?: string
   fromCache?: boolean
@@ -1843,6 +1856,8 @@ export async function fetchMarketSentimentRiskAppetite(date?: string): Promise<R
     elapsedMs: (data.elapsedMs as number) ?? undefined,
     source: (data.source as string) ?? undefined,
     fromCache: Boolean(data.fromCache),
+    score: (data.score as number) ?? undefined,
+    rawValue: (data.rawValue as number) ?? undefined,
     error: (data.error as string) ?? undefined,
   }
 }
@@ -1859,6 +1874,8 @@ export interface RiskAppetiteHistoryItem {
   spread511010: number | null
   spread511090: number | null
   spreadWeighted: number | null
+  /** 0-100 历史分位情绪得分 */
+  score?: number
   fromCache?: boolean
 }
 
@@ -1902,6 +1919,7 @@ export async function fetchMarketSentimentRiskAppetiteHistory(
         spread511010: (s["511010"] as number | null) ?? null,
         spread511090: (s["511090"] as number | null) ?? null,
         spreadWeighted: (s.weighted as number | null) ?? null,
+        score: (it.score as number) ?? undefined,
         fromCache: Boolean(it.fromCache),
       }
     }),
@@ -2219,6 +2237,10 @@ export interface TurnoverActivityResponse {
   totalAmount: number | null
   avg20dAmount: number | null
   ratio: number | null
+  /** 0-100 历史分位情绪得分 (基于过去 3 年 ratio 的百分位) */
+  score?: number
+  /** 原始 ratio 值 */
+  rawValue?: number
   elapsedMs: number | null
   source: string
   error?: string
@@ -2229,6 +2251,8 @@ export interface TurnoverActivityHistoryItem {
   totalAmount: number | null
   avg20dAmount: number | null
   ratio: number | null
+  /** 0-100 历史分位情绪得分 */
+  score?: number
   elapsedMs: number | null
   source: string
   fromCache: boolean
@@ -2262,6 +2286,8 @@ export async function fetchMarketSentimentTurnoverActivity(
     totalAmount: (data.totalAmount as number | null) ?? null,
     avg20dAmount: (data.avg20dAmount as number | null) ?? null,
     ratio: (data.ratio as number | null) ?? null,
+    score: (data.score as number) ?? undefined,
+    rawValue: (data.rawValue as number) ?? undefined,
     elapsedMs: (data.elapsedMs as number | null) ?? null,
     source: (data.source as string) ?? "",
     error: data.error as string | undefined,
@@ -2290,6 +2316,7 @@ export async function fetchMarketSentimentTurnoverActivityHistory(
       totalAmount: (it.totalAmount as number | null) ?? null,
       avg20dAmount: (it.avg20dAmount as number | null) ?? null,
       ratio: (it.ratio as number | null) ?? null,
+      score: (it.score as number) ?? undefined,
       elapsedMs: (it.elapsedMs as number) ?? null,
       source: (it.source as string) ?? "",
       fromCache: Boolean(it.fromCache),
@@ -2321,6 +2348,10 @@ export interface StyleRiskAppetiteResponse {
   hs300: StyleRiskAppetiteIndex
   csi1000: StyleRiskAppetiteIndex
   spread: number | null
+  /** 0-100 历史分位情绪得分 (基于过去 3 年 spread 的百分位) */
+  score?: number
+  /** 原始 spread 值 (百分比) */
+  rawValue?: number
   elapsedMs?: number
   source?: string
   fromCache?: boolean
@@ -2363,6 +2394,8 @@ export async function fetchMarketSentimentStyleRiskAppetite(
       returnPct: (csi1000Raw.returnPct as number | null) ?? null,
     },
     spread: (data.spread as number | null) ?? null,
+    score: (data.score as number) ?? undefined,
+    rawValue: (data.rawValue as number) ?? undefined,
     elapsedMs: (data.elapsedMs as number) ?? undefined,
     source: (data.source as string) ?? undefined,
     fromCache: Boolean(data.fromCache),
@@ -2373,6 +2406,8 @@ export async function fetchMarketSentimentStyleRiskAppetite(
 export interface StyleRiskAppetiteHistoryItem {
   tradeDate: string
   spread: number | null
+  /** 0-100 历史分位情绪得分 */
+  score?: number
   fromCache?: boolean
 }
 
@@ -2406,6 +2441,7 @@ export async function fetchMarketSentimentStyleRiskAppetiteHistory(
     items: raw.map((it) => ({
       tradeDate: String(it.tradeDate ?? ""),
       spread: (it.spread as number | null) ?? null,
+      score: (it.score as number) ?? undefined,
       fromCache: Boolean(it.fromCache),
     })),
     error: (data.error as string) ?? undefined,

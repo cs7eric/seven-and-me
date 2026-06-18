@@ -18,6 +18,10 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.repositories.market.percentile_helper import (
+    enrich_history_scores,
+    percentile_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +47,9 @@ def calc_style_risk_appetite(
     *,
     window: int = DEFAULT_WINDOW,
 ) -> dict[str, Any] | None:
-    """在 trade_date 算风格强弱.
+    """在 trade_date 算风格强弱, 直接读 daily_qfq (TDX).
 
-    从 index_returns_daily 取沪深300 + 中证1000 的 window 日收益率,
+    从 daily_qfq 取沪深300(000300) + 中证1000(000852) 的 window 日收益率,
     spread = csi1000_return - hs300_return.
 
     Returns:
@@ -61,40 +65,57 @@ def calc_style_risk_appetite(
     t0 = time.time()
     con = get_conn()
 
-    rows = con.execute(
-        """
-        SELECT index_code, index_name, return_pct, current, base_close
-          FROM index_returns_daily
-         WHERE trade_date = ? AND window_days = ?
-           AND index_code IN (?, ?)
-        """,
-        [td, window, INDEX_CODES["hs300"], INDEX_CODES["csi1000"]],
-    ).fetchall()
+    codes_info: list[tuple[str, str, str]] = [
+        ("000300", "沪深300", INDEX_CODES["hs300"]),
+        ("000852", "中证1000", INDEX_CODES["csi1000"]),
+    ]
 
-    if len(rows) < 2:
-        return None
+    results: dict[str, dict[str, Any] | None] = {}
+    for qfq_code, name, full_code in codes_info:
+        rows = con.execute(
+            """
+            SELECT trade_date, close
+              FROM daily_qfq
+             WHERE code = ? AND trade_date <= ?
+             ORDER BY trade_date DESC
+             LIMIT ?
+            """,
+            [qfq_code, td, window + 1],
+        ).fetchall()
 
-    hs300 = None
-    csi1000 = None
-    for code, name, return_pct, current, base_close in rows:
-        item = {
+        if not rows or len(rows) < 2:
+            results[full_code] = None
+            continue
+
+        rows_asc = list(reversed(rows))
+        recent = rows_asc[-window:] if len(rows_asc) >= window else rows_asc
+        current_close = float(recent[-1][1])
+        current_date = recent[-1][0]
+        base_close = float(recent[0][1])
+        base_date = recent[0][0]
+        ret = (current_close - base_close) / base_close * 100 if base_close > 0 else None
+
+        results[full_code] = {
             "name": name,
-            "code": str(code),
-            "returnPct": float(return_pct) if return_pct is not None else None,
-            "current": float(current) if current is not None else None,
-            "baseClose": float(base_close) if base_close is not None else None,
+            "code": full_code,
+            "returnPct": round(ret, 4) if ret is not None else None,
+            "current": round(current_close, 4),
+            "currentDate": current_date.isoformat(),
+            "baseClose": round(base_close, 4),
+            "baseDate": base_date.isoformat(),
         }
-        if str(code) == INDEX_CODES["hs300"]:
-            hs300 = item
-        elif str(code) == INDEX_CODES["csi1000"]:
-            csi1000 = item
+
+    hs300 = results.get(INDEX_CODES["hs300"])
+    csi1000 = results.get(INDEX_CODES["csi1000"])
 
     if hs300 is None or csi1000 is None:
         return None
-
     hs300_ret = hs300["returnPct"]
     csi1000_ret = csi1000["returnPct"]
-    spread = (csi1000_ret - hs300_ret) if (hs300_ret is not None and csi1000_ret is not None) else None
+    if hs300_ret is None or csi1000_ret is None:
+        return None
+
+    spread = csi1000_ret - hs300_ret
 
     elapsed_ms = int((time.time() - t0) * 1000)
     return {
@@ -102,9 +123,9 @@ def calc_style_risk_appetite(
         "windowDays": window,
         "hs300": hs300,
         "csi1000": csi1000,
-        "spread": round(spread, 4) if spread is not None else None,
+        "spread": round(spread, 4),
         "elapsedMs": elapsed_ms,
-        "source": "duckdb.index_returns_daily",
+        "source": "duckdb.daily_qfq",
     }
 
 
@@ -135,7 +156,7 @@ def save_style_risk_appetite(payload: dict) -> None:
         float(csi1000.get("returnPct") or 0),
         float(payload.get("spread") or 0),
         int(payload.get("elapsedMs") or 0),
-        str(payload.get("source") or "duckdb.index_returns_daily"),
+        str(payload.get("source") or "duckdb.daily_qfq"),
     ])
 
 
@@ -167,7 +188,7 @@ def _row_to_payload(row: tuple) -> dict:
         },
         "spread": float(row[4]) if row[4] is not None else None,
         "elapsedMs": int(row[5]) if row[5] is not None else None,
-        "source": str(row[6]) if row[6] else None,
+        "source": str(row[6]) if row[6] else "duckdb.daily_qfq",
         "fromCache": True,
     }
 
@@ -200,12 +221,24 @@ def get_style_risk_appetite_history(
         f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
         [s, e],
     ).fetchall()
-    return [_row_to_payload(r) for r in rows]
+    items = [_row_to_payload(r) for r in rows]
+    enrich_history_scores(items, "style_risk_appetite_daily", "spread", e)
+    return items
 
 
 # ---------------------------------------------------------------------------
 # 4. cache-aside
 # ---------------------------------------------------------------------------
+
+def _add_score(payload: dict, trade_date: date | str) -> None:
+    """给 payload 加 score (0-100 历史分位) + rawValue."""
+    spread = payload.get("spread")
+    if spread is not None:
+        payload["score"] = percentile_score(
+            "style_risk_appetite_daily", "spread", trade_date, spread,
+        )
+        payload["rawValue"] = spread
+
 
 def calc_style_risk_appetite_cached(
     trade_date: date | str,
@@ -217,6 +250,7 @@ def calc_style_risk_appetite_cached(
     if not force:
         cached = get_style_risk_appetite(trade_date)
         if cached is not None:
+            _add_score(cached, trade_date)
             return cached
     payload = calc_style_risk_appetite(trade_date, window=window)
     if payload is None:
@@ -225,6 +259,7 @@ def calc_style_risk_appetite_cached(
         save_style_risk_appetite(payload)
     except Exception:
         logger.debug("save_style_risk_appetite failed (non-fatal): %s", payload.get("tradeDate"))
+    _add_score(payload, trade_date)
     return payload
 
 

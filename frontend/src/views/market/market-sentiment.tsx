@@ -229,18 +229,19 @@ function RiskAppetiteCard({ date }: { date: string | null }) {
     }
   }, [date])
 
-  const spread = data?.spread?.weighted ?? null
-  const tone =
-    spread == null
-      ? "text-slate-700"
-      : spread > 0.5
-        ? "text-red-600"
-        : spread < -0.5
-          ? "text-emerald-600"
-          : "text-slate-700"
+  const score = data?.score ?? null
+  const rawValue = data?.rawValue ?? null
   const spread511010 = data?.spread?.["511010"] ?? null
   const spread511090 = data?.spread?.["511090"] ?? null
-  const sparkData = toSparkData(history, (it) => it.spreadWeighted)
+  const tone =
+    score == null
+      ? "text-slate-700"
+      : score >= 70
+        ? "text-red-600"
+        : score >= 40
+          ? "text-slate-700"
+          : "text-emerald-600"
+  const sparkData = toSparkData(history, (it) => it.score ?? 50)
 
   return (
     <Card>
@@ -261,10 +262,17 @@ function RiskAppetiteCard({ date }: { date: string | null }) {
           <>
             <div className="flex items-baseline gap-2">
               <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
-                {spread == null ? "—" : `${spread > 0 ? "+" : ""}${spread.toFixed(2)}%`}
+                {score == null ? "—" : score.toFixed(1)}
               </span>
-              <span className="text-xs text-muted-foreground">主指标</span>
+              <span className="text-xs text-muted-foreground">/ 100 · 历史分位</span>
             </div>
+
+            {rawValue != null && (
+              <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+                沪深300跑赢债券ETF {rawValue > 0 ? "+" : ""}{rawValue.toFixed(2)}%
+                {score != null && <span> · 高于过去3年{score.toFixed(0)}%的时间</span>}
+              </div>
+            )}
 
             {(spread511010 != null || spread511090 != null) && (
               <div className="mt-2 flex gap-3 text-xs tabular-nums text-muted-foreground">
@@ -290,12 +298,12 @@ function RiskAppetiteCard({ date }: { date: string | null }) {
             )}
 
             <div className="mt-3">
-              <Sparkline data={sparkData} formatter={(v) => `${v > 0 ? "+" : ""}${v.toFixed(2)}%`} />
-              <div className="mt-1 text-[10px] text-muted-foreground">近 30 日 spread_weighted</div>
+              <Sparkline data={sparkData} formatter={(v) => v.toFixed(1)} />
+              <div className="mt-1 text-[10px] text-muted-foreground">近 30 日情绪得分 (历史分位)</div>
             </div>
 
             <div className="mt-2 text-[10px] leading-4 text-muted-foreground">
-              阈值: ≥ +0.5% risk-on (红) · 中性 (slate) · ≤ -0.5% risk-off (绿)
+              阈值: ≥70 risk-on (红) · 中性 (slate) · &lt;40 risk-off (绿)
             </div>
           </>
         )}
@@ -478,15 +486,17 @@ function NewHigh252dCard({ date }: { date: string | null }) {
   const total = data?.totalEligible ?? 0
   const pct = data?.pctNewHigh252d ?? null
   const cnt = data?.newHigh252dCount ?? null
+  const score = data?.newHigh252dScore ?? null
+  const rawValue = data?.newHigh252dRawValue ?? null
   const tone =
-    pct == null
+    score == null
       ? "text-slate-700"
-      : pct >= 10
+      : score >= 70
         ? "text-red-600"
-        : pct >= 3
+        : score >= 40
           ? "text-amber-600"
           : "text-slate-700"
-  const sparkData = toSparkData(history, (it) => it.pctNewHigh252d)
+  const sparkData = toSparkData(history, (it) => it.newHigh252dScore ?? 50)
 
   return (
     <Card>
@@ -496,21 +506,30 @@ function NewHigh252dCard({ date }: { date: string | null }) {
           252日新高
         </CardTitle>
         <CardDescription>
-          创 252 日新高占比
+          创 252 日新高占比 · 历史分位
           {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {loading ? (
           <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
-        ) : pct == null ? (
+        ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
           <>
-            <div className={`text-3xl font-semibold tabular-nums ${tone}`}>
-              {pct.toFixed(1)}%
+            <div className="flex items-baseline gap-2">
+              <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
+                {score.toFixed(1)}
+              </span>
+              <span className="text-xs text-muted-foreground">/ 100 · 历史分位</span>
             </div>
-            {total > 0 && cnt != null && (
+            {rawValue != null && (
+              <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+                {cnt} / {total} 只 ({rawValue.toFixed(1)}%)
+                <span> · 高于过去3年{score.toFixed(0)}%的时间</span>
+              </div>
+            )}
+            {total > 0 && cnt != null && !rawValue && (
               <div className="mt-1 text-xs text-muted-foreground">
                 {cnt} / {total} 只
               </div>
@@ -520,7 +539,7 @@ function NewHigh252dCard({ date }: { date: string | null }) {
                 data={sparkData}
                 height={40}
                 color="auto"
-                formatter={(v) => `${v.toFixed(1)}%`}
+                formatter={(v) => v.toFixed(1)}
               />
             </div>
           </>
@@ -849,18 +868,19 @@ function TurnoverActivityCard({ date }: { date: string | null }) {
     }
   }, [date])
 
-  const ratio = data?.ratio ?? null
+  const score = data?.score ?? null
+  const rawValue = data?.rawValue ?? null
   const totalAmount = data?.totalAmount ?? null
   const avgAmount = data?.avg20dAmount ?? null
   const tone =
-    ratio == null
+    score == null
       ? "text-slate-700"
-      : ratio >= 1.2
+      : score >= 70
         ? "text-red-600"
-        : ratio <= 0.8
-          ? "text-emerald-600"
-          : "text-slate-700"
-  const sparkData = toSparkData(history, (it) => it.ratio)
+        : score >= 40
+          ? "text-slate-700"
+          : "text-slate-500"
+  const sparkData = toSparkData(history, (it) => it.score ?? 50)
 
   return (
     <Card>
@@ -870,7 +890,7 @@ function TurnoverActivityCard({ date }: { date: string | null }) {
           成交活跃度
         </CardTitle>
         <CardDescription>
-          今日成交额 / 过去 20 日平均成交额
+          今日成交额 / 过去 20 日平均成交额 · 历史分位
           {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
         </CardDescription>
       </CardHeader>
@@ -881,10 +901,16 @@ function TurnoverActivityCard({ date }: { date: string | null }) {
           <>
             <div className="flex items-baseline gap-2">
               <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
-                {ratio == null ? "—" : `${(ratio * 100).toFixed(0)}%`}
+                {score == null ? "—" : score.toFixed(1)}
               </span>
-              <span className="text-xs text-muted-foreground">活跃度</span>
+              <span className="text-xs text-muted-foreground">/ 100 · 历史分位</span>
             </div>
+
+            {rawValue != null && (
+              <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+                成交额 {(rawValue * 100).toFixed(0)}% · 高于过去3年{score!.toFixed(0)}%的时间
+              </div>
+            )}
 
             {(totalAmount != null || avgAmount != null) && (
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
@@ -904,12 +930,12 @@ function TurnoverActivityCard({ date }: { date: string | null }) {
             )}
 
             <div className="mt-3">
-              <Sparkline data={sparkData} color="neutral" formatter={(v) => `${(v * 100).toFixed(0)}%`} />
-              <div className="mt-1 text-[10px] text-muted-foreground">近 30 日活跃度比值</div>
+              <Sparkline data={sparkData} color="neutral" formatter={(v) => v.toFixed(1)} />
+              <div className="mt-1 text-[10px] text-muted-foreground">近 30 日情绪得分 (历史分位)</div>
             </div>
 
             <div className="mt-2 text-[10px] leading-4 text-muted-foreground">
-              阈值: ≥ 120% 放量 (红) · 中性 (slate) · ≤ 80% 缩量 (绿)
+              阈值: ≥70 放量 (红) · 中性 (slate) · &lt;40 缩量
             </div>
           </>
         )}
@@ -1075,25 +1101,26 @@ function StyleRiskAppetiteCard({ date }: { date: string | null }) {
     return () => { cancelled = true }
   }, [date])
 
-  const spread = data?.spread ?? null
+  const score = data?.score ?? null
+  const rawValue = data?.rawValue ?? null
   const hs300Return = data?.hs300?.returnPct ?? null
   const csi1000Return = data?.csi1000?.returnPct ?? null
 
   const tone =
-    spread == null
+    score == null
       ? "text-slate-700"
-      : spread >= 2
+      : score >= 70
         ? "text-red-600"
-        : spread <= -2
-          ? "text-emerald-600"
-          : "text-slate-700"
+        : score >= 40
+          ? "text-slate-700"
+          : "text-emerald-600"
   const directionLabel =
-    spread == null ? ""
-      : spread >= 0.5 ? "小盘强 ↑"
-      : spread <= -0.5 ? "大盘强 ↓"
+    score == null ? ""
+      : score >= 70 ? "小盘强 ↑"
+      : score <= 30 ? "大盘强 ↓"
       : "中性"
 
-  const sparkData = toSparkData(history, (it) => it.spread)
+  const sparkData = toSparkData(history, (it) => it.score ?? 50)
 
   return (
     <Card>
@@ -1103,25 +1130,33 @@ function StyleRiskAppetiteCard({ date }: { date: string | null }) {
           风格风险偏好
         </CardTitle>
         <CardDescription>
-          中证1000 5日收益 - 沪深300 5日收益
+          中证1000 5日收益 - 沪深300 5日收益 · 历史分位
           {data?.tradeDate ? ` · ${data.tradeDate}` : ""}
         </CardDescription>
       </CardHeader>
       <CardContent>
         {loading ? (
           <div className="animate-pulse text-sm text-muted-foreground">加载中…</div>
-        ) : spread == null ? (
+        ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
           <>
             <div className="flex items-baseline gap-3">
               <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
-                {spread >= 0 ? "+" : ""}{spread.toFixed(2)}%
+                {score.toFixed(1)}
               </span>
+              <span className="text-xs text-muted-foreground">/ 100 · 历史分位</span>
               {directionLabel && (
                 <span className={`text-xs font-medium ${tone}`}>{directionLabel}</span>
               )}
             </div>
+
+            {rawValue != null && (
+              <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+                中证1000 - 沪深300: {rawValue >= 0 ? "+" : ""}{rawValue.toFixed(2)}%
+                <span> · 高于过去3年{score.toFixed(0)}%的时间</span>
+              </div>
+            )}
 
             <div className="mt-2 space-y-0.5 text-xs text-muted-foreground tabular-nums">
               <div>
@@ -1137,14 +1172,14 @@ function StyleRiskAppetiteCard({ date }: { date: string | null }) {
                 data={sparkData}
                 height={40}
                 color="auto"
-                formatter={(v) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`}
+                formatter={(v) => v.toFixed(1)}
               />
             </div>
 
             <div className="mt-1 flex gap-3 text-[10px] text-muted-foreground">
-              <span className="text-red-600/70">≥+2% 小盘强</span>
-              <span className="text-slate-400">中庸</span>
-              <span className="text-emerald-600/70">≤-2% 大盘强</span>
+              <span className="text-red-600/70">≥70 小盘强</span>
+              <span className="text-slate-400">40-70 中性</span>
+              <span className="text-emerald-600/70">≤30 大盘强</span>
             </div>
           </>
         )}

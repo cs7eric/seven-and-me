@@ -14,6 +14,10 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.repositories.market.percentile_helper import (
+    enrich_history_scores,
+    percentile_score,
+)
 
 
 # 风险偏好窗口 (默认 20 日, 对应 ~ 1 个月)
@@ -284,7 +288,19 @@ def get_risk_appetite_history(
          WHERE trade_date BETWEEN ? AND ?
          ORDER BY trade_date ASC
     """, [s, e]).fetchall()
-    return [_row_to_payload(r) for r in rows]
+    items = [_row_to_payload(r) for r in rows]
+    enrich_history_scores(items, "risk_appetite_daily", "spread_weighted", e)
+    return items
+
+
+def _add_score(payload: dict, trade_date: date | str) -> None:
+    """给 payload 加 score (0-100 历史分位) + rawValue (原始 spread)."""
+    spread = payload.get("spread", {}).get("weighted")
+    if spread is not None:
+        payload["score"] = percentile_score(
+            "risk_appetite_daily", "spread_weighted", trade_date, spread,
+        )
+        payload["rawValue"] = spread
 
 
 def calc_risk_appetite_cached(
@@ -303,12 +319,14 @@ def calc_risk_appetite_cached(
     if not force:
         cached = get_risk_appetite(trade_date)
         if cached is not None:
+            _add_score(cached, trade_date)
             return cached
     payload = calc_risk_appetite(trade_date, window=window)
     try:
         save_risk_appetite(payload)
     except Exception:
         pass
+    _add_score(payload, trade_date)
     return payload
 
 

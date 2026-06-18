@@ -71,7 +71,7 @@ def fetch_stock_klines_from_tencent(target_type: str, symbol: str, period: str, 
     code = stock_symbol_to_tencent_code(target_type, symbol)
     unit = stock_period_to_tencent_unit(period)
     adjust_prefix = stock_adjust_to_tencent_prefix(adjust)
-    params = {'param': f'{code},{unit},,,500,{adjust_prefix}'}
+    params = {'param': f'{code},{unit},,,1000,{adjust_prefix}'}
     response = requests.get(
         STOCK_TENCENT_KLINE_URL,
         params=params,

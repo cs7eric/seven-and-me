@@ -15,6 +15,10 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.repositories.market.percentile_helper import (
+    enrich_history_scores,
+    percentile_score,
+)
 
 _DEFAULT_MA_WINDOWS = (5, 10, 20, 30, 60, 120, 250)
 
@@ -697,12 +701,27 @@ def get_ma_count_history(start: date | str, end: date | str | None = None) -> li
          WHERE trade_date BETWEEN ? AND ?
          ORDER BY trade_date ASC
     """, [s, e]).fetchall()
-    return [_row_to_ma_payload(r) for r in rows]
+    items = [_row_to_ma_payload(r) for r in rows]
+    enrich_history_scores(
+        items, "ma_count_daily", "new_high_252d_pct", e,
+        score_key="newHigh252dScore",
+    )
+    return items
 
 
 # ---------------------------------------------------------------------------
 # 7. calc_ma_count 改成 cache-aside
 # ---------------------------------------------------------------------------
+def _add_new_high_score(payload: dict, trade_date: date | str) -> None:
+    """给 payload 加 newHigh252dScore (0-100 历史分位) + newHigh252dRawValue."""
+    pct = payload.get("pctNewHigh252d")
+    if pct is not None:
+        payload["newHigh252dScore"] = percentile_score(
+            "ma_count_daily", "new_high_252d_pct", trade_date, pct,
+        )
+        payload["newHigh252dRawValue"] = pct
+
+
 def calc_ma_count_cached(
     trade_date: date | str,
     *,
@@ -717,6 +736,7 @@ def calc_ma_count_cached(
     if not force:
         cached = get_ma_count(trade_date)
         if cached is not None:
+            _add_new_high_score(cached, trade_date)
             return cached
     payload = calc_ma_count(trade_date)
     try:
@@ -724,6 +744,7 @@ def calc_ma_count_cached(
     except Exception:
         # 落盘失败不影响返回 (calc 结果照样可用)
         pass
+    _add_new_high_score(payload, trade_date)
     return payload
 
 

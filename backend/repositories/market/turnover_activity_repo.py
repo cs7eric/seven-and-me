@@ -18,6 +18,10 @@ from datetime import date, timedelta
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.repositories.market.percentile_helper import (
+    enrich_history_scores,
+    percentile_score,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +177,9 @@ def get_turnover_activity_history(
         f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
         [s, e],
     ).fetchall()
-    return [_row_to_payload(r) for r in rows]
+    items = [_row_to_payload(r) for r in rows]
+    enrich_history_scores(items, "turnover_activity_daily", "ratio", e)
+    return items
 
 
 def coverage() -> dict[str, Any]:
@@ -193,6 +199,16 @@ def coverage() -> dict[str, Any]:
 # 4. cache-aside
 # ---------------------------------------------------------------------------
 
+def _add_score(payload: dict, trade_date: date | str) -> None:
+    """给 payload 加 score (0-100 历史分位) + rawValue."""
+    ratio = payload.get("ratio")
+    if ratio is not None:
+        payload["score"] = percentile_score(
+            "turnover_activity_daily", "ratio", trade_date, ratio,
+        )
+        payload["rawValue"] = ratio
+
+
 def calc_turnover_activity_cached(
     trade_date: date | str,
     *,
@@ -209,6 +225,7 @@ def calc_turnover_activity_cached(
     if not force:
         cached = get_turnover_activity(trade_date)
         if cached is not None:
+            _add_score(cached, trade_date)
             return cached
     payload = calc_turnover_activity(trade_date, window=window)
     if payload is None:
@@ -217,6 +234,7 @@ def calc_turnover_activity_cached(
         save_turnover_activity(payload)
     except Exception:
         logger.debug("save_turnover_activity failed (non-fatal): %s", payload.get("tradeDate"))
+    _add_score(payload, trade_date)
     return payload
 
 
