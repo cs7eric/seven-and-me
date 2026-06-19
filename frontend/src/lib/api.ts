@@ -2824,6 +2824,8 @@ export async function fetchIndexKlineBatch(params: {
 export interface IndexDailyItem {
   tradeDate: string
   close: number
+  /** 成交额 (元). 后端 duckdb.index_daily_raw.amount 原值, 未做单位换算. */
+  amount?: number
 }
 
 export interface IndexDailyResponse {
@@ -2838,7 +2840,7 @@ export interface IndexDailyResponse {
 }
 
 /**
- * 拉单只宽基指数日线历史 (Market Sentiment 顶卡叠加用).
+ * 拉单只宽基指数日线历史 (Market Sentiment 顶卡 / POC 叠加用).
  * 数据源: backend.api.stock_chart.index_daily_history → duckdb.index_daily_raw.
  */
 export async function fetchIndexDailyHistory(params: {
@@ -2870,6 +2872,7 @@ export async function fetchIndexDailyHistory(params: {
     items: rawItems.map((it) => ({
       tradeDate: String(it.tradeDate ?? ""),
       close: typeof it.close === "number" ? it.close : Number(it.close ?? 0),
+      amount: typeof it.amount === "number" ? it.amount : Number(it.amount ?? 0),
     })),
     error: typeof data.error === "string" ? (data.error as string) : undefined,
   }
@@ -2889,6 +2892,96 @@ export async function triggerMarketOverviewAkshareRefresh(): Promise<{
     ok: Boolean(data.ok),
     snapshot: (data.snapshot as MarketOverview | undefined) ?? undefined,
     error: (data.error as string | undefined) ?? undefined,
+  }
+}
+
+/** market_overview_daily 单日条目 (POC 等历史/对齐场景用).
+ *  与 fetchMarketOverviewAkshare 同 shape 的核心字段, 加 tradeDate + fromCache.
+ *  单位: totalAmount / mainNetInflow / 其余资金流字段一律 "亿元".
+ */
+export interface MarketOverviewHistoryItem {
+  tradeDate: string
+  totalAmount: number | null      // 亿
+  totalVolume: number | null      // 万手
+  risingCount: number | null
+  fallingCount: number | null
+  flatCount: number | null
+  limitUpCount: number | null
+  limitDownCount: number | null
+  stockCount: number | null
+  mainNetInflow: number | null    // 亿 (主力 = 超大 + 大)
+  superLargeNetInflow: number | null
+  largeNetInflow: number | null
+  mediumNetInflow: number | null
+  smallNetInflow: number | null
+  mainNetInflowRatio: number | null
+  source?: string
+  fromCache?: boolean
+}
+
+export interface MarketOverviewHistoryResponse {
+  ok: boolean
+  start: string
+  end: string
+  count: number
+  items: MarketOverviewHistoryItem[]
+  error?: string
+}
+
+const _parseNullableNumber = (v: unknown): number | null => {
+  if (v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+const _parseNullableInt = (v: unknown): number | null => {
+  if (v == null) return null
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.round(n) : null
+}
+
+/** 拉大盘概况历史区间 (大盘成交额 + 主力净流入 + 涨跌家数等).
+ *  数据源: backend.api.stock_chart.stock_chart_market_overview_history → duckdb.market_overview_daily.
+ *  返回 items 已是升序, 字段单位统一为 "亿" (资金流/成交额).
+ */
+export async function fetchMarketOverviewHistory(params: {
+  start: string
+  end: string
+}): Promise<MarketOverviewHistoryResponse> {
+  const query = new URLSearchParams({ start: params.start, end: params.end })
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/market-overview/history?${query.toString()}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    return { ok: false, start: params.start, end: params.end, count: 0, items: [], error: `HTTP ${res.status}` }
+  }
+  const raw = Array.isArray(data.items) ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    start: String(data.start ?? params.start),
+    end: String(data.end ?? params.end),
+    count: typeof data.count === "number" ? data.count : raw.length,
+    items: raw.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      totalAmount: _parseNullableNumber(it.totalAmount),
+      totalVolume: _parseNullableNumber(it.totalVolume),
+      risingCount: _parseNullableInt(it.risingCount),
+      fallingCount: _parseNullableInt(it.fallingCount),
+      flatCount: _parseNullableInt(it.flatCount),
+      limitUpCount: _parseNullableInt(it.limitUpCount),
+      limitDownCount: _parseNullableInt(it.limitDownCount),
+      stockCount: _parseNullableInt(it.stockCount),
+      mainNetInflow: _parseNullableNumber(it.mainNetInflow),
+      superLargeNetInflow: _parseNullableNumber(it.superLargeNetInflow),
+      largeNetInflow: _parseNullableNumber(it.largeNetInflow),
+      mediumNetInflow: _parseNullableNumber(it.mediumNetInflow),
+      smallNetInflow: _parseNullableNumber(it.smallNetInflow),
+      mainNetInflowRatio: _parseNullableNumber(it.mainNetInflowRatio),
+      source: typeof it.source === "string" ? it.source : undefined,
+      fromCache: Boolean(it.fromCache),
+    })),
+    error: typeof data.error === "string" ? (data.error as string) : undefined,
   }
 }
 

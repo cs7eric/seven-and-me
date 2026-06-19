@@ -10,9 +10,9 @@
   "tick_seconds": 60,
   "inter_industry_sleep_seconds": 1.5,
   "inter_industry_sleep_jitter": 0.5,
-  "last_run_at": "2026-06-18T17:06:34.804905",
-  "last_run_date": "2026-06-18",
-  "last_status": "success",
+  "last_run_at": "2026-06-19T17:00:24.016373",
+  "last_run_date": "2026-06-19",
+  "last_status": "skipped_non_trading_day",
   "last_industry_count": 90,
   "last_total_rows": 4666,
   "last_failed_codes": [],
@@ -22,6 +22,6 @@
   "total_trading_day_runs": 7,
   "total_industries_crawled": 720,
   "total_failures": 0,
-  "total_skipped_non_trading_day": 2,
-  "_saved_at": "2026-06-19T13:18:21.594439"
+  "total_skipped_non_trading_day": 3,
+  "_saved_at": "2026-06-20T01:22:34.221370"
 }

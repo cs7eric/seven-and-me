@@ -2064,11 +2064,15 @@ def market_sentiment_index_history():
 
 @stock_chart_bp.route('/api/stock-chart/index/daily')
 def index_daily_history():
-    """单只宽基指数日线历史 (Market Sentiment 顶部卡叠加用).
+    """单只宽基指数日线历史 (Market Sentiment 顶部卡 / POC 叠加用).
 
     URL: ?code=000001 (必填, 兼容 'sh000001' / 'sz399001')
          &start=YYYY-MM-DD (默认 end-1095d)
          &end=YYYY-MM-DD   (默认 today)
+
+    返回 items 含 tradeDate / close / amount (成交额, 元).
+    注: 成交额沿用 duckdb.index_daily_raw.amount 原始单位 (元), 不在端点层做单位换算,
+        让前端按需要 (/1e8 转亿) 处理.
 
     数据源: duckdb.index_daily_raw → index_repo.get_index_daily
     """
@@ -2106,6 +2110,7 @@ def index_daily_history():
                 items.append({
                     "tradeDate": td_d.isoformat(),
                     "close": float(r["close"]),
+                    "amount": float(r.get("amount") or 0),
                 })
         return jsonify({
             "ok": True, "code": code,

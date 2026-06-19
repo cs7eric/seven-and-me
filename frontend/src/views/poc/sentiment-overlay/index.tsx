@@ -1,15 +1,26 @@
 /**
  * POC: 情绪折线图叠加上证指数 + 主力净流 + 成交额
  *
- * 布局:
- *   上 1: 主力净流
- *   中 3: 情绪分 + 上证指数
- *   下 1: 成交额
+ * 样式参考 ECharts sample: Rainfall and Flow Relationship
  *
- * 关键:
- *   - 三个 grid 轻微重叠，制造“上下区域溢入主图”的效果
- *   - dataZoom 联动 3 个 xAxis
- *   - axisPointer 使用 cross + link，贴近 ECharts sample 的交互风格
+ * 布局:
+ *   上 1: 主力净流，Rainfall 风格，反向轴，0 在顶部
+ *   中 3: 情绪分 + 上证指数
+ *   下 1: 成交额，Flow 风格，蓝色面积图
+ *
+ * 轴布局:
+ *   左外: 成交额
+ *   左内: 情绪分
+ *   右内: 上证指数
+ *   右外: 主力净流
+ *
+ * 主力净流:
+ *   流入: 红色
+ *   流出: 绿色
+ *   正负切换经过中性色，减少割裂感
+ *   线和面积都做渐变
+ *   使用 custom series 画平滑曲线
+ *   缩放时 clamp 贝塞尔控制点，避免左右过冲
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import * as echarts from "echarts/core"
@@ -20,6 +31,7 @@ import {
   DataZoomComponent,
   MarkLineComponent,
   LegendComponent,
+  ToolboxComponent,
 } from "echarts/components"
 import { CanvasRenderer } from "echarts/renderers"
 import type { EChartsOption } from "echarts"
@@ -28,8 +40,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 import {
   fetchMarketSentimentIndexHistory,
   fetchIndexDailyHistory,
+  fetchMarketOverviewHistory,
   type MarketSentimentIndexHistoryItem,
   type IndexDailyItem,
+  type MarketOverviewHistoryItem,
 } from "@/lib/api"
 import { scoreToColor, scoreToRgb } from "../../market/market-sentiment/lib/color"
 
@@ -41,6 +55,7 @@ echarts.use([
   DataZoomComponent,
   MarkLineComponent,
   LegendComponent,
+  ToolboxComponent,
   CanvasRenderer,
 ])
 
@@ -80,13 +95,6 @@ function pickFirstNumber(obj: unknown, keys: string[]) {
   return null
 }
 
-/**
- * 成交额字段适配:
- * 你可以按真实 IndexDailyItem 字段改这里。
- *
- * 常见字段可能是:
- *   amount / turnoverAmount / turnover / volumeAmount
- */
 function pickAmount(item: IndexDailyItem) {
   return pickFirstNumber(item, [
     "amount",
@@ -97,28 +105,26 @@ function pickAmount(item: IndexDailyItem) {
   ])
 }
 
-/**
- * 主力净流字段适配:
- * 如果主力净流来自另一个接口，建议把那个接口返回 items 传进这里生成 map。
- *
- * 这里先兼容从 history 或 shIndex item 里取字段。
- */
-function pickMainNetFlow(item: unknown) {
-  return pickFirstNumber(item, [
-    "mainNetFlow",
-    "mainNetInflow",
-    "mainForceNetFlow",
-    "mainForceNetInflow",
-    "netMainInflow",
-    "netInflowMain",
-    "主力净流",
-    "主力净流入",
-  ])
+function maxOf(arr: Array<number | null>, fallback = 1) {
+  const nums = arr.filter((v): v is number => v != null && Number.isFinite(v))
+  return nums.length ? Math.max(fallback, ...nums) : fallback
+}
+
+function clamp01(v: number) {
+  return Math.max(0, Math.min(1, v))
+}
+
+function mix(a: number, b: number, t: number) {
+  return Math.round(a + (b - a) * t)
+}
+
+function rgba(rgb: [number, number, number], alpha: number) {
+  return `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`
 }
 
 function SentimentLine({
                          data,
-                         height = 560,
+                         height = 620,
                          shOverlay,
                          mainNetFlowOverlay,
                          amountOverlay,
@@ -131,6 +137,8 @@ function SentimentLine({
 }) {
   const ref = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
+  const [zoomRange, setZoomRange] = useState<{ start: number; end: number } | null>(null)
+  const [chartWidth, setChartWidth] = useState(1200)
 
   const option = useMemo<EChartsOption>(() => {
     const dates = data.map((d) => d.date)
@@ -144,7 +152,12 @@ function SentimentLine({
     const recentBars = 63
     const totalBars = values.length
     const zoomStart =
-      totalBars > recentBars ? Math.max(0, 100 - (recentBars / totalBars) * 100) : 0
+      totalBars > recentBars
+        ? Math.max(0, 100 - (recentBars / totalBars) * 100)
+        : 0
+
+    const effectiveZoomStart = zoomRange?.start ?? zoomStart
+    const effectiveZoomEnd = zoomRange?.end ?? 100
 
     const yMin = Math.max(0, Math.floor(Math.min(minValue, 50) - padding))
     const yMax = Math.min(100, Math.ceil(Math.max(maxValue, 50) + padding))
@@ -162,57 +175,499 @@ function SentimentLine({
       })
     }
 
-    const fg = "#94a3b8"
-    const fgStrong = "#e2e8f0"
-    const axisLine = "rgba(148, 163, 184, 0.28)"
-    const splitLine = "rgba(148, 163, 184, 0.10)"
-
     const shValues = shOverlay?.data.map((d) => d.value) ?? []
-    const mainNetFlowValues = mainNetFlowOverlay?.data.map((d) => d.value) ?? []
-    const amountValues = amountOverlay?.data.map((d) => d.value) ?? []
+    const mainNetFlowRawValues = mainNetFlowOverlay?.data.map((d) => d.value) ?? []
+    const amountRawValues = amountOverlay?.data.map((d) => d.value) ?? []
 
-    return {
-      backgroundColor: "transparent",
+    const mainNetFlowYiValues = mainNetFlowRawValues.map((v) =>
+      v == null ? null : v / 1e8,
+    )
 
-      legend: {
-        top: 0,
-        right: 8,
-        itemWidth: 14,
-        itemHeight: 8,
-        textStyle: { color: fg, fontSize: 11 },
-        data: ["主力净流", "市场情绪指数", "上证指数", "成交额"],
-      },
+    const mainNetFlowRainValues = mainNetFlowYiValues.map((v) =>
+      v == null ? null : Math.abs(v),
+    )
+
+    /**
+     * 主力净流使用分段视觉刻度：
+     * - 0 ~ 100 亿：压缩，避免小额波动占用太多顶部空间
+     * - 100 亿以上：放大，让大额净流变化更明显
+     *
+     * 注意：这里只改 Rainfall 的 y 坐标，不改真实主力净流值。
+     * tooltip 仍然展示原始主力净流，y 轴标签会反算回真实亿数。
+     */
+    const FLOW_BREAKPOINT_YI = 500
+    const FLOW_LOW_SCALE = 0.4
+    const FLOW_HIGH_SCALE = 3
+
+    const flowToVisual = (flowYi: number) => {
+      const absFlowYi = Math.max(0, Math.abs(flowYi))
+
+      if (absFlowYi <= FLOW_BREAKPOINT_YI) {
+        return absFlowYi * FLOW_LOW_SCALE
+      }
+
+      return (
+        FLOW_BREAKPOINT_YI * FLOW_LOW_SCALE +
+        (absFlowYi - FLOW_BREAKPOINT_YI) * FLOW_HIGH_SCALE
+      )
+    }
+
+    const visualToFlow = (visualValue: number) => {
+      const breakpointVisual = FLOW_BREAKPOINT_YI * FLOW_LOW_SCALE
+
+      if (visualValue <= breakpointVisual) {
+        return visualValue / FLOW_LOW_SCALE
+      }
+
+      return (
+        FLOW_BREAKPOINT_YI +
+        (visualValue - breakpointVisual) / FLOW_HIGH_SCALE
+      )
+    }
+
+    const formatFlowAxis = (visualValue: number) => {
+      const flowYi = visualToFlow(visualValue)
+      if (!Number.isFinite(flowYi)) return "-"
+
+      return flowYi >= 1000
+        ? `${Math.round(flowYi / 100) / 10}千`
+        : `${Math.round(flowYi)}`
+    }
+
+    const mainNetFlowVisualRainValues = mainNetFlowRainValues.map((v) =>
+      v == null ? null : flowToVisual(v),
+    )
+
+    const maxFlowVisualRain = maxOf(mainNetFlowVisualRainValues, 1)
+
+    const maxInflowYi = maxOf(
+      mainNetFlowYiValues.map((v) =>
+        v != null && v > 0 ? Math.abs(v) : null,
+      ),
+      1,
+    )
+
+    const maxOutflowYi = maxOf(
+      mainNetFlowYiValues.map((v) =>
+        v != null && v < 0 ? Math.abs(v) : null,
+      ),
+      1,
+    )
+
+    const fillNullableNumbers = (arr: Array<number | null>) => {
+      const result = arr.slice()
+      const validIndexes: number[] = []
+
+      for (let i = 0; i < result.length; i++) {
+        const v = result[i]
+        if (v != null && Number.isFinite(v)) validIndexes.push(i)
+      }
+
+      if (!validIndexes.length) return [] as number[]
+
+      const first = validIndexes[0]
+      const last = validIndexes[validIndexes.length - 1]
+
+      for (let i = 0; i < first; i++) result[i] = result[first]
+      for (let i = last + 1; i < result.length; i++) result[i] = result[last]
+
+      for (let k = 0; k < validIndexes.length - 1; k++) {
+        const left = validIndexes[k]
+        const right = validIndexes[k + 1]
+        const leftValue = result[left]
+        const rightValue = result[right]
+
+        if (leftValue == null || rightValue == null || right - left <= 1) continue
+
+        for (let i = left + 1; i < right; i++) {
+          const t = (i - left) / (right - left)
+          result[i] = leftValue + (rightValue - leftValue) * t
+        }
+      }
+
+      return result.map((v) => (v == null || !Number.isFinite(v) ? 0 : v))
+    }
+
+    const catmullRom = (
+      p0: number,
+      p1: number,
+      p2: number,
+      p3: number,
+      t: number,
+    ) => {
+      const t2 = t * t
+      const t3 = t2 * t
+      return (
+        0.5 *
+        (2 * p1 +
+          (-p0 + p2) * t +
+          (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+          (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+      )
+    }
+
+    const clampBetween = (v: number, a: number, b: number) => {
+      const lo = Math.min(a, b)
+      const hi = Math.max(a, b)
+      return Math.max(lo, Math.min(hi, v))
+    }
+
+    const clampInt = (v: number, min: number, max: number) =>
+      Math.max(min, Math.min(max, Math.round(v)))
+
+    /**
+     * 主力净流动态虚拟点策略：
+     * - raw 是 signed 主力净流的真实插值值，专门用于颜色。
+     * - y 是 Rainfall 可视高度的插值值，专门用于面积形状。
+     * - 当前 dataZoom 放得越大，每根 bar 的像素越宽，虚拟点越密。
+     */
+    const filledMainNetFlowYiValues = fillNullableNumbers(mainNetFlowYiValues)
+
+    type FlowVirtualSample = {
+      x: number
+      y: number
+      raw: number
+    }
+
+    const buildDynamicVirtualFlowSamples = (
+      filledValues: number[],
+      zoomStartPercent: number,
+      zoomEndPercent: number,
+      widthPx: number,
+    ): FlowVirtualSample[] => {
+      const total = filledValues.length
+      if (!total) return []
+
+      if (total === 1) {
+        const raw = filledValues[0]
+        return [{ x: 0, y: flowToVisual(raw), raw }]
+      }
+
+      const startPercent = clamp01(Math.min(zoomStartPercent, zoomEndPercent) / 100)
+      const endPercent = clamp01(Math.max(zoomStartPercent, zoomEndPercent) / 100)
+
+      const visibleStartFloat = startPercent * (total - 1)
+      const visibleEndFloat = endPercent * (total - 1)
+
+      const visibleStart = Math.max(0, Math.floor(visibleStartFloat))
+      const visibleEnd = Math.min(total - 1, Math.ceil(visibleEndFloat))
+      const visibleBars = Math.max(1, visibleEndFloat - visibleStartFloat)
+
+      // 与 option.grid[0] 的 left/right 对齐，用于估算当前一根 bar 的像素宽度。
+      const gridWidth = Math.max(160, widthPx - 86 - 96)
+      const pxPerBar = gridWidth / visibleBars
+
+      // 目标是大约每 0.75px 一个虚拟点。
+      // zoom 越近，pxPerBar 越大，补点越多；全景时自动降密度。
+      const baseStepsPerBar = clampInt(pxPerBar / 0.75, 16, 720)
+
+      // 只生成可视区附近，不对全量历史做过度采样，避免拖动缩放时卡成毛线团。
+      const buildStart = Math.max(0, visibleStart - 2)
+      const buildEnd = Math.min(total - 1, visibleEnd + 2)
+
+      const samples: FlowVirtualSample[] = []
+
+      for (let i = buildStart; i < buildEnd; i++) {
+        const p0 = filledValues[i - 1] ?? filledValues[i]
+        const p1 = filledValues[i]
+        const p2 = filledValues[i + 1]
+        const p3 = filledValues[i + 2] ?? p2
+
+        const h0 = flowToVisual(p0)
+        const h1 = flowToVisual(p1)
+        const h2 = flowToVisual(p2)
+        const h3 = flowToVisual(p3)
+
+        const crossesZero = p1 !== 0 && p2 !== 0 && p1 * p2 < 0
+        const steps = clampInt(
+          crossesZero ? baseStepsPerBar * 2.4 : baseStepsPerBar,
+          16,
+          1200,
+        )
+
+        for (let step = 0; step < steps; step++) {
+          const t = step / steps
+          const x = i + t
+
+          // 关键：每一个虚拟点都有 signed raw 的真实过渡值，颜色就有连续采样。
+          const smoothRaw = catmullRom(p0, p1, p2, p3, t)
+          const raw = clampBetween(smoothRaw, p1, p2)
+
+          // Rainfall 的面积高度单独对分段视觉值做插值：0~100 亿压缩，100 亿以上放大。
+          const smoothHeight = catmullRom(h0, h1, h2, h3, t)
+          const y = Math.max(0, clampBetween(smoothHeight, h1, h2))
+
+          samples.push({ x, y, raw })
+        }
+      }
+
+      const lastRaw = filledValues[buildEnd]
+      samples.push({ x: buildEnd, y: flowToVisual(lastRaw), raw: lastRaw })
+
+      return samples
+    }
+
+    const mainNetFlowVirtualSamples = buildDynamicVirtualFlowSamples(
+      filledMainNetFlowYiValues,
+      effectiveZoomStart,
+      effectiveZoomEnd,
+      chartWidth,
+    )
+
+    /**
+     * 更柔和的颜色策略:
+     * - 正值: neutral -> light red -> deep red
+     * - 负值: neutral -> light green -> deep green
+     * - 接近 0 时尽量接近中性色，避免红绿硬切
+     */
+    const neutral: [number, number, number] = [226, 232, 240]
+
+    const inflowSoftRed: [number, number, number] = [254, 202, 202]
+    const inflowDeepRed: [number, number, number] = [220, 38, 38]
+
+    const outflowSoftGreen: [number, number, number] = [187, 247, 208]
+    const outflowDeepGreen: [number, number, number] = [22, 101, 52]
+
+    const mixRgb = (
+      from: [number, number, number],
+      to: [number, number, number],
+      t: number,
+    ): [number, number, number] => [
+      mix(from[0], to[0], t),
+      mix(from[1], to[1], t),
+      mix(from[2], to[2], t),
+    ]
+
+    const toneIntensity = (value: number, maxValue: number) => {
+      const raw = clamp01(Math.abs(value) / Math.max(1, maxValue))
+
+      if (raw < 0.000001) return 0
 
       /**
-       * 1:3:1 的视觉布局。
-       *
-       * 注意这里不是硬切成 20 / 60 / 20。
-       * top 和 bottom grid 都稍微压进 middle，
-       * 再配合 series.clip = false，形成“溢入中间主图”的感觉。
+       * 这一版继续保持“均匀”，但整体再推重：
+       * - 小值也明显染色，不再贴近白底。
+       * - 中大值更多靠近 soft/deep，但 deep 仍然受控，避免重新两极分化。
+       * - 只改映射比例，不改 neutral / soft / deep 的原始 RGB。
        */
+      return clamp01(0.50 + 0.42 * Math.pow(raw, 0.62))
+    }
+
+    const flowRgb = (rawYi: number) => {
+      if (Math.abs(rawYi) < 0.000001) return neutral
+
+      if (rawYi > 0) {
+        const t = toneIntensity(rawYi, maxInflowYi)
+        const softRatio = 0.72 + 0.25 * t
+        const deepRatio = clamp01((t - 0.60) / 0.40) * 0.32
+        const soft = mixRgb(neutral, inflowSoftRed, softRatio)
+        return mixRgb(soft, inflowDeepRed, deepRatio)
+      }
+
+      const t = toneIntensity(rawYi, maxOutflowYi)
+      const softRatio = 0.72 + 0.25 * t
+      const deepRatio = clamp01((t - 0.60) / 0.40) * 0.32
+      const soft = mixRgb(neutral, outflowSoftGreen, softRatio)
+      return mixRgb(soft, outflowDeepGreen, deepRatio)
+    }
+
+    const flowLineColor = (rawYi: number) => {
+      const t =
+        rawYi >= 0
+          ? toneIntensity(rawYi, maxInflowYi)
+          : toneIntensity(rawYi, maxOutflowYi)
+
+      // 线条基本不透明，让主力净流轮廓更明确。
+      return rgba(flowRgb(rawYi), 0.96 + 0.04 * t)
+    }
+
+    const flowAreaColor = (rawYi: number) => {
+      const t =
+        rawYi >= 0
+          ? toneIntensity(rawYi, maxInflowYi)
+          : toneIntensity(rawYi, maxOutflowYi)
+
+      // 面积明显加重，同时保持窄区间，避免又出现深浅割裂。
+      return rgba(flowRgb(rawYi), 0.42 + 0.10 * t)
+    }
+
+    const dedupeStops = (
+      stops: Array<{ offset: number; color: string }>,
+    ) =>
+      stops
+        .map((s) => ({ offset: clamp01(s.offset), color: s.color }))
+        .sort((a, b) => a.offset - b.offset)
+        .reduce<Array<{ offset: number; color: string }>>((acc, stop) => {
+          const last = acc[acc.length - 1]
+          if (last && Math.abs(last.offset - stop.offset) < 0.0008) {
+            last.color = stop.color
+          } else {
+            acc.push(stop)
+          }
+          return acc
+        }, [])
+
+    const buildFlowStops = (
+      samples: Array<{ x: number; y: number; raw: number }>,
+      colorFn: (raw: number) => string,
+    ) => {
+      if (!samples.length) {
+        return [
+          { offset: 0, color: colorFn(0) },
+          { offset: 1, color: colorFn(0) },
+        ]
+      }
+
+      const firstX = samples[0].x
+      const lastX = samples[samples.length - 1].x
+      const span = Math.max(0.000001, lastX - firstX)
+      const stops: Array<{ offset: number; color: string }> = []
+
+      for (const sample of samples) {
+        stops.push({
+          offset: (sample.x - firstX) / span,
+          color: colorFn(sample.raw),
+        })
+      }
+
+      return dedupeStops(stops)
+    }
+
+    const amountFlowValues = amountRawValues.map((v) =>
+      v == null ? null : v / 1e8,
+    )
+
+    /**
+     * 成交额使用分段视觉刻度：
+     * - 0 ~ 25000 亿：压缩，避免低区间吃掉太多纵向空间
+     * - 25000 亿以上：放大，让高成交额区间的细微变化更明显
+     *
+     * 注意：这里只改绘图坐标，不改真实成交额。
+     * tooltip 仍然展示原始成交额，y 轴标签会反算回真实成交额。
+     */
+    const AMOUNT_BREAKPOINT_YI = 25000
+    const AMOUNT_LOW_SCALE = 0.24
+    const AMOUNT_HIGH_SCALE = 1.85
+
+    const amountToVisual = (amountYi: number) => {
+      if (amountYi <= AMOUNT_BREAKPOINT_YI) {
+        return amountYi * AMOUNT_LOW_SCALE
+      }
+
+      return (
+        AMOUNT_BREAKPOINT_YI * AMOUNT_LOW_SCALE +
+        (amountYi - AMOUNT_BREAKPOINT_YI) * AMOUNT_HIGH_SCALE
+      )
+    }
+
+    const visualToAmount = (visualValue: number) => {
+      const breakpointVisual = AMOUNT_BREAKPOINT_YI * AMOUNT_LOW_SCALE
+
+      if (visualValue <= breakpointVisual) {
+        return visualValue / AMOUNT_LOW_SCALE
+      }
+
+      return (
+        AMOUNT_BREAKPOINT_YI +
+        (visualValue - breakpointVisual) / AMOUNT_HIGH_SCALE
+      )
+    }
+
+    const formatAmountAxis = (visualValue: number) => {
+      const amountYi = visualToAmount(visualValue)
+      if (!Number.isFinite(amountYi)) return "-"
+
+      return amountYi >= 10000
+        ? `${Math.round(amountYi / 1000) / 10}万`
+        : `${Math.round(amountYi)}`
+    }
+
+    const amountVisualValues = amountFlowValues.map((v) =>
+      v == null ? null : amountToVisual(v),
+    )
+
+    const maxAmountFlow = maxOf(amountFlowValues, 1)
+    const maxAmountVisualFlow = Math.max(
+      amountToVisual(AMOUNT_BREAKPOINT_YI),
+      amountToVisual(maxAmountFlow),
+    )
+
+    const fg = "#555"
+    const fgLight = "#6b7280"
+    const axisLine = "#ccd3dd"
+    const splitLine = "#d9dee8"
+
+    const flowBlue = "#5470c6"
+    const flowBlueArea = "rgba(84, 112, 198, 0.62)"
+
+    /**
+     * 上下两层向中间主图叠加的比例。
+     * 0.30 表示：
+     * - 上方主力净流向下进入中间主图 30% 的中图高度
+     * - 下方成交额向上进入中间主图 30% 的中图高度
+     *
+     * 这里只改变可渲染区域，不改变真实数据和 tooltip 口径。
+     */
+    const MIDDLE_OVERLAY_RATIO = 0.3
+    const MIDDLE_GRID_TOP = 22
+    const MIDDLE_GRID_HEIGHT = 54
+    const EXTRA_OVERLAY_HEIGHT = MIDDLE_GRID_HEIGHT * MIDDLE_OVERLAY_RATIO
+
+    const FLOW_GRID_TOP = 8
+    const FLOW_GRID_BASE_HEIGHT = 24
+    const FLOW_GRID_HEIGHT = FLOW_GRID_BASE_HEIGHT + EXTRA_OVERLAY_HEIGHT
+
+    const AMOUNT_GRID_BASE_TOP = 68
+    const AMOUNT_GRID_BOTTOM = 88
+    const AMOUNT_GRID_TOP = AMOUNT_GRID_BASE_TOP - EXTRA_OVERLAY_HEIGHT
+    const AMOUNT_GRID_HEIGHT = AMOUNT_GRID_BOTTOM - AMOUNT_GRID_TOP
+
+    return {
+      backgroundColor: "#fff",
+
+      legend: {
+        bottom: 34,
+        left: 8,
+        itemWidth: 18,
+        itemHeight: 10,
+        textStyle: { color: fg, fontSize: 12 },
+        data: ["成交额", "主力净流", "市场情绪指数", "上证指数"],
+      },
+
+      toolbox: {
+        right: 8,
+        top: 0,
+        feature: {
+          dataZoom: {
+            yAxisIndex: "none",
+          },
+          restore: {},
+          saveAsImage: {},
+        },
+        iconStyle: {
+          borderColor: "#64748b",
+        },
+      },
+
       grid: [
         {
-          // 上 1: 主力净流
-          left: 42,
-          right: 58,
-          top: 30,
-          height: "22%",
+          left: 86,
+          right: 96,
+          top: `${FLOW_GRID_TOP}%`,
+          height: `${FLOW_GRID_HEIGHT}%`,
           containLabel: false,
         },
         {
-          // 中 3: 情绪分 + 上证
-          left: 42,
-          right: 58,
-          top: "20%",
-          height: "52%",
+          left: 86,
+          right: 96,
+          top: `${MIDDLE_GRID_TOP}%`,
+          height: `${MIDDLE_GRID_HEIGHT}%`,
           containLabel: false,
         },
         {
-          // 下 1: 成交额
-          left: 42,
-          right: 58,
-          top: "64%",
-          height: "22%",
+          left: 86,
+          right: 96,
+          top: `${AMOUNT_GRID_TOP}%`,
+          height: `${AMOUNT_GRID_HEIGHT}%`,
           containLabel: false,
         },
       ],
@@ -226,11 +681,11 @@ function SentimentLine({
             backgroundColor: "#505765",
           },
         },
-        backgroundColor: "rgba(15, 23, 42, 0.94)",
-        borderColor: "rgba(148, 163, 184, 0.25)",
+        backgroundColor: "rgba(255,255,255,0.96)",
+        borderColor: "#d9dee8",
         borderWidth: 1,
         padding: [8, 10],
-        textStyle: { color: "#e5e7eb", fontSize: 12 },
+        textStyle: { color: "#333", fontSize: 12 },
         formatter: (params: unknown) => {
           const arr = params as Array<{
             axisValueLabel: string
@@ -244,12 +699,14 @@ function SentimentLine({
           const scorePoint =
             arr.find((p) => p.seriesName === "市场情绪指数") ?? arr[0]
           const shPoint = arr.find((p) => p.seriesName === "上证指数")
-          const flowPoint = arr.find((p) => p.seriesName === "主力净流")
-          const amountPoint = arr.find((p) => p.seriesName === "成交额")
 
           const idx = scorePoint.dataIndex
           const score = Number(values[idx] ?? scorePoint.value ?? 50)
           const diff = score - 50
+
+          const rawFlow = mainNetFlowRawValues[idx]
+          const rawAmount = amountRawValues[idx]
+          const sh = toFiniteNumber(shPoint?.value)
 
           const moodLabel =
             score >= 70
@@ -277,37 +734,33 @@ function SentimentLine({
                       ? "#60a5fa"
                       : "#94a3b8"
 
-          const flow = toFiniteNumber(flowPoint?.value)
-          const amount = toFiniteNumber(amountPoint?.value)
-          const sh = toFiniteNumber(shPoint?.value)
-
           return `
             <div style="font-weight:600;margin-bottom:6px;">${arr[0].axisValueLabel}</div>
 
             ${
-            flow != null
-              ? `<div style="color:${flow >= 0 ? "#ef4444" : "#38bdf8"};">
-                    主力净流: <b>${formatYi(flow)}</b>
+            rawFlow != null
+              ? `<div style="color:${flowLineColor(rawFlow / 1e8)};">
+                    主力净流: <b>${formatYi(rawFlow)}</b>
                   </div>`
               : ""
           }
 
-            <div style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(148,163,184,0.25);">
+            <div style="margin-top:6px;padding-top:5px;border-top:1px solid #e5e7eb;">
               情绪分: <b style="color:${moodColor};font-size:14px;">${score.toFixed(1)}</b>
             </div>
             <div style="margin-top:3px;">状态: <span style="color:${moodColor};">${moodLabel}</span></div>
-            <div style="margin-top:3px;color:#94a3b8;">距离中性线: ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}</div>
+            <div style="margin-top:3px;color:#6b7280;">距离中性线: ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}</div>
 
             ${
             sh != null
-              ? `<div style="margin-top:5px;color:#94a3b8;">上证指数: <b>${sh.toFixed(2)}</b></div>`
+              ? `<div style="margin-top:5px;color:#475569;">上证指数: <b>${sh.toFixed(2)}</b></div>`
               : ""
           }
 
             ${
-            amount != null
-              ? `<div style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(148,163,184,0.25);color:#60a5fa;">
-                    成交额: <b>${formatYi(amount)}</b>
+            rawAmount != null
+              ? `<div style="margin-top:6px;padding-top:5px;border-top:1px solid #e5e7eb;color:${flowBlue};">
+                    成交额: <b>${formatYi(rawAmount)}</b>
                   </div>`
               : ""
           }
@@ -325,7 +778,8 @@ function SentimentLine({
           gridIndex: 0,
           boundaryGap: false,
           data: dates,
-          axisLine: { onZero: false, lineStyle: { color: axisLine } },
+          // 上方 grid 现在会向中间主图叠加，隐藏它自己的 x 轴线，避免横线切进中图。
+          axisLine: { show: false, onZero: false, lineStyle: { color: axisLine } },
           axisTick: { show: false },
           axisLabel: { show: false },
         },
@@ -345,139 +799,278 @@ function SentimentLine({
           data: dates,
           axisLine: { onZero: false, lineStyle: { color: axisLine } },
           axisTick: { show: false },
-          axisLabel: { color: fg, fontSize: 10, margin: 8 },
+          axisLabel: { color: fg, fontSize: 11, margin: 8 },
         },
       ],
 
       yAxis: [
         {
-          // 0: 主力净流
           type: "value",
+          name: "主力净流(亿)",
+          nameTextStyle: { color: "#047857", fontSize: 12 },
           gridIndex: 0,
-          scale: true,
-          splitNumber: 2,
+          min: 0,
+          max: Math.ceil(maxFlowVisualRain * 1.15),
+          inverse: true,
+          position: "right",
+          offset: 42,
+          splitNumber: 4,
           axisLabel: {
-            color: fg,
-            fontSize: 10,
-            formatter: (v: number) => formatYi(v),
+            color: "#047857",
+            fontSize: 11,
+            formatter: (value: number) => formatFlowAxis(Number(value)),
+            margin: 6,
           },
-          splitLine: { show: false },
-          axisLine: { show: false },
+          axisPointer: {
+            label: {
+              formatter: (params: { value: number }) =>
+                `${formatFlowAxis(Number(params.value))}亿`,
+            },
+          },
+          splitLine: { lineStyle: { color: "rgba(217,222,232,0.38)" } },
+          axisLine: { show: true, lineStyle: { color: "#86efac" } },
           axisTick: { show: false },
         },
         {
-          // 1: 情绪分
           type: "value",
+          name: "情绪分",
+          nameTextStyle: { color: fg, fontSize: 12 },
           gridIndex: 1,
           min: yMin,
           max: yMax,
           splitNumber: 4,
-          axisLabel: { color: fg, fontSize: 10, formatter: "{value}" },
+          position: "left",
+          offset: 0,
+          axisLabel: { color: fg, fontSize: 11, formatter: "{value}" },
           splitLine: { lineStyle: { color: splitLine } },
-          axisLine: { show: false },
+          axisLine: { show: true, lineStyle: { color: axisLine } },
           axisTick: { show: false },
         },
         {
-          // 2: 上证指数
           type: "value",
+          name: "上证",
+          nameTextStyle: { color: "#475569", fontSize: 12 },
           gridIndex: 1,
           scale: true,
           position: "right",
+          offset: 0,
+          splitNumber: 3,
           axisLabel: {
-            color: shOverlay?.color ?? "#475569",
-            fontSize: 10,
+            color: "#475569",
+            fontSize: 11,
             formatter: "{value}",
           },
           splitLine: { show: false },
-          axisLine: { show: false },
+          axisLine: { show: true, lineStyle: { color: "#94a3b8" } },
           axisTick: { show: false },
         },
         {
-          // 3: 成交额
           type: "value",
+          name: "成交额(亿)",
+          nameTextStyle: { color: "#5470c6", fontSize: 12 },
           gridIndex: 2,
-          scale: true,
-          splitNumber: 2,
+          min: 0,
+          max: Math.ceil(maxAmountVisualFlow * 1.08),
+          splitNumber: 4,
+          position: "left",
+          offset: 42,
           axisLabel: {
-            color: fg,
-            fontSize: 10,
-            formatter: (v: number) => formatYi(v),
+            color: "#5470c6",
+            fontSize: 11,
+            formatter: (value: number) => formatAmountAxis(Number(value)),
+            margin: 6,
           },
-          splitLine: { show: false },
-          axisLine: { show: false },
+          axisPointer: {
+            label: {
+              formatter: (params: { value: number }) =>
+                `${formatAmountAxis(Number(params.value))}亿`,
+            },
+          },
+          splitLine: { lineStyle: { color: "rgba(217,222,232,0.38)" } },
+          axisLine: { show: true, lineStyle: { color: "#5470c6" } },
           axisTick: { show: false },
         },
       ],
 
       dataZoom: [
         {
-          type: "inside",
-          xAxisIndex: [0, 1, 2],
+          show: true,
           realtime: true,
-          start: zoomStart,
-          end: 100,
-          zoomOnMouseWheel: true,
-          moveOnMouseMove: true,
-          moveOnMouseWheel: false,
+          xAxisIndex: [0, 1, 2],
+          start: effectiveZoomStart,
+          end: effectiveZoomEnd,
+          height: 24,
+          bottom: 4,
+          borderColor: "#dbe3f3",
+          backgroundColor: "#f5f7fc",
+          fillerColor: "rgba(151, 171, 232, 0.35)",
+          handleStyle: { color: "#aab8df" },
+          moveHandleStyle: { color: "#aab8df" },
+          textStyle: { color: fgLight, fontSize: 10 },
+          filterMode: "none",
         },
         {
-          type: "slider",
-          xAxisIndex: [0, 1, 2],
+          type: "inside",
           realtime: true,
-          start: zoomStart,
-          end: 100,
-          height: 18,
-          bottom: 6,
-          borderColor: "transparent",
-          backgroundColor: "rgba(148,163,184,0.08)",
-          fillerColor: "rgba(148,163,184,0.18)",
-          handleStyle: { color: "#64748b" },
-          textStyle: { color: fg, fontSize: 10 },
+          xAxisIndex: [0, 1, 2],
+          start: effectiveZoomStart,
+          end: effectiveZoomEnd,
+          filterMode: "none",
         },
       ],
 
       series: [
-        /**
-         * 上 1: 主力净流
-         * 用 line + area，更贴近你给的 sample。
-         * clip:false 让它可以轻微溢出自己的 grid。
-         */
         {
           name: "主力净流",
+          type: "custom" as const,
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          coordinateSystem: "cartesian2d" as const,
+          clip: true,
+          renderItem: (
+            _params: unknown,
+            api: {
+              coord: (data: [number, number]) => [number, number]
+            },
+          ) => {
+            if (mainNetFlowVirtualSamples.length < 2) return null
+
+            const toPixel = (x: number, y: number): [number, number] => {
+              const fx = Math.floor(x)
+              const cx = Math.ceil(x)
+
+              if (fx === cx) return api.coord([fx, y])
+
+              const frac = x - fx
+              const [px0, py0] = api.coord([fx, y])
+              const [px1, py1] = api.coord([cx, y])
+              return [px0 + (px1 - px0) * frac, py0 + (py1 - py0) * frac]
+            }
+
+            const topPoints = mainNetFlowVirtualSamples.map((p) =>
+              toPixel(p.x, p.y),
+            )
+
+            const first = mainNetFlowVirtualSamples[0]
+            const last = mainNetFlowVirtualSamples[mainNetFlowVirtualSamples.length - 1]
+
+            const gradientLeft = toPixel(first.x, 0)
+            const gradientRight = toPixel(last.x, 0)
+
+            const lineGradient = {
+              type: "linear" as const,
+              x: gradientLeft[0],
+              y: 0,
+              x2: gradientRight[0],
+              y2: 0,
+              global: true,
+              colorStops: buildFlowStops(mainNetFlowVirtualSamples, flowLineColor),
+            }
+
+            const areaGradient = {
+              type: "linear" as const,
+              x: gradientLeft[0],
+              y: 0,
+              x2: gradientRight[0],
+              y2: 0,
+              global: true,
+              colorStops: buildFlowStops(mainNetFlowVirtualSamples, flowAreaColor),
+            }
+
+            const continuousArea = [
+              toPixel(first.x, 0),
+              ...topPoints,
+              toPixel(last.x, 0),
+            ]
+
+            // 一整块 polygon 承载整条渐变，避免薄片拼接产生抗锯齿白缝。
+            const baseArea = {
+              type: "polygon" as const,
+              shape: { points: continuousArea },
+              style: {
+                fill: rgba(neutral, 0.105),
+                stroke: "none",
+              },
+              silent: true,
+            }
+
+            const continuousGradientArea = {
+              type: "polygon" as const,
+              shape: { points: continuousArea },
+              style: {
+                fill: areaGradient,
+                stroke: "none",
+              },
+              silent: true,
+            }
+
+            return {
+              type: "group",
+              children: [
+                baseArea,
+                continuousGradientArea,
+                {
+                  type: "polyline",
+                  shape: {
+                    points: topPoints,
+                  },
+                  style: {
+                    fill: "none",
+                    stroke: lineGradient,
+                    lineWidth: 1.8,
+                    lineJoin: "round" as const,
+                    lineCap: "round" as const,
+                  },
+                  silent: true,
+                },
+              ],
+            }
+          },
+          data: mainNetFlowVirtualSamples.length
+            ? [{ value: [Math.max(0, dates.length - 1), 0] }]
+            : [],
+          tooltip: { show: false },
+          // 叠到中间主图时作为背景信息层，避免压住情绪线和上证线。
+          z: 3,
+        },
+
+        {
+          name: "主力净流压缩线",
           type: "line",
           xAxisIndex: 0,
           yAxisIndex: 0,
-          data: mainNetFlowValues,
+          data: dates.map(() => null),
           symbol: "none",
-          smooth: 0.25,
-          connectNulls: false,
-          clip: false,
-          lineStyle: {
-            width: 2,
-            color: mainNetFlowOverlay?.color ?? "#22c55e",
-            opacity: 0.95,
-          },
-          areaStyle: {
-            opacity: 0.12,
-            color: mainNetFlowOverlay?.color ?? "#22c55e",
-          },
+          lineStyle: { width: 0, opacity: 0 },
+          tooltip: { show: false },
+          silent: true,
           markLine: {
             symbol: "none",
             silent: true,
-            label: { show: false },
-            lineStyle: {
-              color: "rgba(148, 163, 184, 0.35)",
-              width: 1,
-              type: "dashed",
+            label: {
+              color: "#047857",
+              fontSize: 10,
+              formatter: "100亿压缩线",
+              position: "insideEndTop",
+              backgroundColor: "rgba(255,255,255,0.72)",
+              padding: [2, 5],
+              borderRadius: 3,
             },
-            data: [{ yAxis: 0 }],
+            lineStyle: {
+              type: "dashed",
+              color: "rgba(4,120,87,0.42)",
+              width: 1,
+            },
+            data: [
+              {
+                yAxis: flowToVisual(FLOW_BREAKPOINT_YI),
+                name: "100亿压缩线",
+              },
+            ],
           },
-          z: 1,
+          z: 3,
         },
 
-        /**
-         * 中 3: 情绪多头区域
-         */
         {
           name: "多头区域",
           type: "line",
@@ -489,11 +1082,11 @@ function SentimentLine({
           lineStyle: { width: 0, opacity: 0 },
           areaStyle: {
             origin: 50,
-            opacity: 0.34,
+            opacity: 0.24,
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: "rgba(239, 68, 68, 0.42)" },
-              { offset: 0.55, color: "rgba(249, 115, 22, 0.20)" },
-              { offset: 1, color: "rgba(249, 115, 22, 0.02)" },
+              { offset: 0, color: "rgba(239, 68, 68, 0.26)" },
+              { offset: 0.55, color: "rgba(249, 115, 22, 0.12)" },
+              { offset: 1, color: "rgba(249, 115, 22, 0.01)" },
             ]),
           },
           emphasis: { disabled: true },
@@ -502,28 +1095,25 @@ function SentimentLine({
             symbol: "none",
             silent: true,
             label: {
-              color: fgStrong,
+              color: "#444",
               fontSize: 11,
               fontWeight: 600,
               formatter: "中性线 50",
               position: "insideEndTop",
-              backgroundColor: "rgba(226,232,240,0.10)",
+              backgroundColor: "rgba(255,255,255,0.70)",
               padding: [2, 5],
               borderRadius: 3,
             },
             lineStyle: {
               type: "solid",
-              color: "rgba(226, 232, 240, 0.70)",
-              width: 1.6,
+              color: "rgba(80, 80, 80, 0.55)",
+              width: 1.4,
             },
             data: [{ yAxis: 50, name: "中性线" }],
           },
           z: 2,
         },
 
-        /**
-         * 中 3: 情绪空头区域
-         */
         {
           name: "空头区域",
           type: "line",
@@ -535,11 +1125,11 @@ function SentimentLine({
           lineStyle: { width: 0, opacity: 0 },
           areaStyle: {
             origin: 50,
-            opacity: 0.32,
+            opacity: 0.22,
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: "rgba(14, 165, 233, 0.02)" },
-              { offset: 0.45, color: "rgba(14, 165, 233, 0.18)" },
-              { offset: 1, color: "rgba(37, 99, 235, 0.38)" },
+              { offset: 0, color: "rgba(14, 165, 233, 0.01)" },
+              { offset: 0.45, color: "rgba(14, 165, 233, 0.10)" },
+              { offset: 1, color: "rgba(37, 99, 235, 0.22)" },
             ]),
           },
           emphasis: { disabled: true },
@@ -547,9 +1137,6 @@ function SentimentLine({
           z: 2,
         },
 
-        /**
-         * 中 3: 透明情绪线，只用于 tooltip 命中
-         */
         {
           name: "市场情绪指数",
           type: "line",
@@ -561,9 +1148,6 @@ function SentimentLine({
           z: 3,
         },
 
-        /**
-         * 中 3: 情绪渐变主线
-         */
         ...(lineSegments.length > 0
           ? [
             {
@@ -645,9 +1229,6 @@ function SentimentLine({
           ]
           : []),
 
-        /**
-         * 中 3: 上证指数
-         */
         {
           name: "上证指数",
           type: "line",
@@ -666,34 +1247,64 @@ function SentimentLine({
           z: 5,
         },
 
-        /**
-         * 下 1: 成交额
-         * 同样用 line + area，并允许向中间溢出一点。
-         */
         {
           name: "成交额",
           type: "line",
           xAxisIndex: 2,
           yAxisIndex: 3,
-          data: amountValues,
+          data: amountVisualValues,
           symbol: "none",
-          smooth: 0.25,
+          smooth: 0.22,
           connectNulls: false,
           clip: false,
           lineStyle: {
-            width: 2,
-            color: amountOverlay?.color ?? "#60a5fa",
-            opacity: 0.95,
+            width: 1.5,
+            color: flowBlue,
           },
           areaStyle: {
-            opacity: 0.12,
-            color: amountOverlay?.color ?? "#60a5fa",
+            color: flowBlueArea,
           },
-          z: 1,
+          markLine: {
+            symbol: "none",
+            silent: true,
+            label: {
+              color: "#5470c6",
+              fontSize: 10,
+              formatter: "25000亿压缩线",
+              position: "insideEndTop",
+              backgroundColor: "rgba(255,255,255,0.72)",
+              padding: [2, 5],
+              borderRadius: 3,
+            },
+            lineStyle: {
+              type: "dashed",
+              color: "rgba(84,112,198,0.45)",
+              width: 1,
+            },
+            data: [
+              {
+                yAxis: amountToVisual(AMOUNT_BREAKPOINT_YI),
+                name: "25000亿压缩线",
+              },
+            ],
+          },
+          emphasis: {
+            focus: "series",
+          },
+          // 叠到中间主图时作为背景信息层，中央情绪线和上证线仍在上面。
+          z: 3,
         },
       ],
     }
-  }, [data, shOverlay, mainNetFlowOverlay, amountOverlay])
+  }, [
+    data,
+    shOverlay,
+    mainNetFlowOverlay,
+    amountOverlay,
+    zoomRange?.start,
+    zoomRange?.end,
+    chartWidth,
+  ])
 
   useEffect(() => {
     if (!ref.current) return
@@ -704,16 +1315,58 @@ function SentimentLine({
       })
     }
 
-    chartRef.current.setOption(option, { notMerge: true })
+    const chart = chartRef.current
+    chart.setOption(option, { notMerge: true, lazyUpdate: true })
 
-    const onWinResize = () => chartRef.current?.resize()
-    window.addEventListener("resize", onWinResize)
+    const syncSize = () => {
+      chart.resize()
+      const nextWidth = ref.current?.clientWidth ?? chart.getWidth?.() ?? 1200
+      setChartWidth((prev) =>
+        Math.abs(prev - nextWidth) > 2 ? nextWidth : prev,
+      )
+    }
 
-    const ro = new ResizeObserver(() => chartRef.current?.resize())
+    const syncZoomRange = () => {
+      const model = chart.getOption() as { dataZoom?: Array<Record<string, unknown>> }
+      const dz = Array.isArray(model.dataZoom) ? model.dataZoom[0] : undefined
+      if (!dz) return
+
+      const start = Number(dz.start ?? 0)
+      const end = Number(dz.end ?? 100)
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return
+
+      setZoomRange((prev) => {
+        if (
+          prev &&
+          Math.abs(prev.start - start) < 0.03 &&
+          Math.abs(prev.end - end) < 0.03
+        ) {
+          return prev
+        }
+
+        return { start, end }
+      })
+    }
+
+    const onDataZoom = () => syncZoomRange()
+
+    ;(chart as any).off("datazoom", onDataZoom)
+    ;(chart as any).off("dataZoom", onDataZoom)
+    ;(chart as any).on("datazoom", onDataZoom)
+    ;(chart as any).on("dataZoom", onDataZoom)
+
+    syncSize()
+    syncZoomRange()
+
+    window.addEventListener("resize", syncSize)
+
+    const ro = new ResizeObserver(() => syncSize())
     ro.observe(ref.current)
 
     return () => {
-      window.removeEventListener("resize", onWinResize)
+      ;(chart as any).off("datazoom", onDataZoom)
+      ;(chart as any).off("dataZoom", onDataZoom)
+      window.removeEventListener("resize", syncSize)
       ro.disconnect()
     }
   }, [option])
@@ -739,16 +1392,127 @@ function SentimentLine({
   return <div ref={ref} style={{ width: "100%", height }} />
 }
 
-// ─── POC 页面 ────────────────────────────────────────────────────────────────
+const USE_MOCK = false
+
+function generateMockData(n = 120) {
+  const result: Array<{
+    tradeDate: string
+    compositeScore: number
+    level: string
+    close: number
+    amount: number
+    mainNetFlow: number
+  }> = []
+
+  let score = 50
+  let closePrice = 3000
+  let flow = 0
+  let amountBase = 7000e8
+
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000)
+
+    if (d.getDay() === 0 || d.getDay() === 6) continue
+
+    const tradeDate = d.toISOString().slice(0, 10)
+
+    const drift = (50 - score) * 0.02
+    const cycle = Math.sin(i * 0.09) * 14 + Math.sin(i * 0.21) * 6
+    const noise = (Math.random() - 0.5) * 12
+    const shock = Math.random() < 0.06 ? (Math.random() < 0.5 ? -14 : 16) : 0
+
+    score = Math.max(8, Math.min(92, score + drift + cycle * 0.1 + noise + shock))
+
+    const level =
+      score >= 70
+        ? "hot"
+        : score >= 55
+          ? "active"
+          : score >= 45
+            ? "normal"
+            : score >= 30
+              ? "weak"
+              : "ice"
+
+    const trend = Math.sin(i * 0.04) * 100
+    const priceNoise = (Math.random() - 0.5) * 50
+    closePrice = Math.max(
+      2600,
+      Math.min(3400, closePrice + trend * 0.02 + priceNoise),
+    )
+
+    flow = (Math.random() - 0.5) * 600e8 * 0.6 + flow * 0.6
+
+    const amount = amountBase + (Math.random() - 0.5) * 2000e8
+    amountBase = amountBase * 0.95 + amount * 0.05
+
+    result.push({
+      tradeDate,
+      compositeScore: Math.round(score * 10) / 10,
+      level,
+      close: Math.round(closePrice * 100) / 100,
+      amount: Math.round(amount),
+      mainNetFlow: Math.round(flow),
+    })
+  }
+
+  return result
+}
+
+const MOCK_DATA = generateMockData(120)
+
 export default function SentimentOverlayPoc() {
   const [history, setHistory] = useState<MarketSentimentIndexHistoryItem[] | null>(
     null,
   )
   const [shIndex, setShIndex] = useState<IndexDailyItem[] | null>(null)
+  const [overview, setOverview] = useState<MarketOverviewHistoryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (USE_MOCK) {
+      const mockHistory = MOCK_DATA.map((it) => ({
+        tradeDate: it.tradeDate,
+        compositeScore: it.compositeScore,
+        level: it.level,
+        mainNetFlow: it.mainNetFlow,
+      })) as unknown as MarketSentimentIndexHistoryItem[]
+
+      const mockSh = MOCK_DATA.map((it) => ({
+        tradeDate: it.tradeDate,
+        close: it.close,
+        amount: it.amount,
+      })) as unknown as IndexDailyItem[]
+
+      // mock 下也按真实接口的"亿元"口径构造 overview
+      const mockOverview = MOCK_DATA.map((it) => ({
+        tradeDate: it.tradeDate,
+        totalAmount: it.amount / 1e8,
+        mainNetInflow: it.mainNetFlow / 1e8,
+        risingCount: null,
+        fallingCount: null,
+        flatCount: null,
+        limitUpCount: null,
+        limitDownCount: null,
+        stockCount: null,
+        totalVolume: null,
+        superLargeNetInflow: null,
+        largeNetInflow: null,
+        mediumNetInflow: null,
+        smallNetInflow: null,
+        mainNetInflowRatio: null,
+        source: "mock",
+        fromCache: false,
+      })) as unknown as MarketOverviewHistoryItem[]
+
+      setHistory(mockHistory)
+      setShIndex(mockSh)
+      setOverview(mockOverview)
+      setLoading(false)
+      return
+    }
+
     let cancelled = false
 
     const end = new Date().toISOString().slice(0, 10)
@@ -756,15 +1520,17 @@ export default function SentimentOverlayPoc() {
 
     void (async () => {
       try {
-        const [hist, sh] = await Promise.all([
+        const [hist, sh, ov] = await Promise.all([
           fetchMarketSentimentIndexHistory(start, end),
           fetchIndexDailyHistory({ code: "000001", start, end }),
+          fetchMarketOverviewHistory({ start, end }),
         ])
 
         if (cancelled) return
 
         setHistory(hist.items ?? [])
         setShIndex(sh.items ?? [])
+        setOverview(ov.items ?? [])
       } catch (e) {
         if (!cancelled) setError(String(e))
       } finally {
@@ -777,14 +1543,6 @@ export default function SentimentOverlayPoc() {
     }
   }, [])
 
-  /**
-   * 重要改动:
-   * 以前是 history ∩ shIndex 取交集。
-   * 现在改成以 history 为主时间轴，其它指标缺失填 null。
-   *
-   * 原因:
-   * 加了成交额、主力净流以后，如果继续取交集，很容易把可视区砍碎。
-   */
   const {
     sentimentPoints,
     shOverlay,
@@ -814,30 +1572,25 @@ export default function SentimentOverlayPoc() {
       (shIndex ?? []).map((it) => [it.tradeDate, toFiniteNumber(it.close)]),
     )
 
-    const amountMap = new Map(
+    // 大盘 overview 提供 主力净流 (mainNetInflow, 亿) + 成交额 (totalAmount, 亿)
+    // 统一换算成 "元" 入 POC (下游 / 1e8 显示亿)
+    const flowMapFromOverview = new Map(
+      (overview ?? []).map((it) => [
+        it.tradeDate,
+        it.mainNetInflow == null ? null : it.mainNetInflow * 1e8,
+      ]),
+    )
+
+    const amountMapFromOverview = new Map(
+      (overview ?? []).map((it) => [
+        it.tradeDate,
+        it.totalAmount == null ? null : it.totalAmount * 1e8,
+      ]),
+    )
+
+    // 兜底: 上证指数自身 amount (元)
+    const amountMapFromIndex = new Map(
       (shIndex ?? []).map((it) => [it.tradeDate, pickAmount(it)]),
-    )
-
-    /**
-     * 主力净流:
-     *
-     * 如果你的主力净流来自独立接口，例如:
-     *   fetchMarketMainNetFlowHistory(start, end)
-     *
-     * 那就新增一个 state:
-     *   const [mainFlow, setMainFlow] = useState<MainFlowItem[] | null>(null)
-     *
-     * 然后这里改成:
-     *   const flowMap = new Map(mainFlow.map((it) => [it.tradeDate, it.mainNetFlow]))
-     *
-     * 现在这版先尝试从 history / shIndex item 里取，方便你直接跑布局。
-     */
-    const flowMapFromHistory = new Map(
-      sorted.map((it) => [it.tradeDate, pickMainNetFlow(it)]),
-    )
-
-    const flowMapFromIndex = new Map(
-      (shIndex ?? []).map((it) => [it.tradeDate, pickMainNetFlow(it)]),
     )
 
     const sentimentPoints: SentimentLinePoint[] = sorted.map((it) => ({
@@ -851,16 +1604,16 @@ export default function SentimentOverlayPoc() {
       value: shMap.get(it.tradeDate) ?? null,
     }))
 
-    const amountData: OverlayPoint[] = sorted.map((it) => ({
-      date: it.tradeDate.slice(5),
-      value: amountMap.get(it.tradeDate) ?? null,
-    }))
-
     const flowData: OverlayPoint[] = sorted.map((it) => ({
       date: it.tradeDate.slice(5),
+      value: flowMapFromOverview.get(it.tradeDate) ?? null,
+    }))
+
+    const amountData: OverlayPoint[] = sorted.map((it) => ({
+      date: it.tradeDate.slice(5),
       value:
-        flowMapFromHistory.get(it.tradeDate) ??
-        flowMapFromIndex.get(it.tradeDate) ??
+        amountMapFromOverview.get(it.tradeDate) ??
+        amountMapFromIndex.get(it.tradeDate) ??
         null,
     }))
 
@@ -884,7 +1637,7 @@ export default function SentimentOverlayPoc() {
         flowHitCount >= 2
           ? {
             name: "主力净流",
-            color: "#22c55e",
+            color: "#ef4444",
             data: flowData,
           }
           : undefined,
@@ -893,7 +1646,7 @@ export default function SentimentOverlayPoc() {
         amountHitCount >= 2
           ? {
             name: "成交额",
-            color: "#60a5fa",
+            color: "#5470c6",
             data: amountData,
           }
           : undefined,
@@ -902,21 +1655,30 @@ export default function SentimentOverlayPoc() {
       flowHitCount,
       amountHitCount,
     }
-  }, [history, shIndex])
+  }, [history, shIndex, overview])
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
         <p className="font-medium text-foreground">POC 目标</p>
         <p className="mt-1">
-          按 1:3:1 分为上中下三层：上层主力净流，中层情绪分 + 上证指数，下层成交额。
-          上下两层轻微溢入中间主图，验证多 grid 联动效果。
+          按 ECharts Rainfall and Flow Relationship 的样式做三层叠加：
+          上层主力净流使用反向轴，流入红色、流出绿色且流出越多越深；
+          中央是情绪分 + 上证指数，下层成交额使用蓝色面积图。
         </p>
         <ul className="mt-2 ml-4 list-disc space-y-0.5 text-xs">
-          <li>上层: 主力净流，line + area，允许溢出</li>
+          <li>
+            当前模式: <b>{USE_MOCK ? "MOCK (120天假数据)" : "真实接口"}</b>
+          </li>
+          <li>上层: 主力净流，流入红色，流出绿色，0~100亿压缩，100亿以上放大</li>
           <li>中层: 市场情绪指数 + 上证指数</li>
-          <li>下层: 成交额，line + area，允许溢出</li>
+          <li>下层: 成交额，Flow 风格，蓝色面积图</li>
+          <li>轴布局: 左外成交额，左内情绪分，右内上证，右外主力净流</li>
           <li>交互: cross tooltip + axisPointer link + dataZoom 三轴联动</li>
+          <li>
+            切换真实数据: 改{" "}
+            <code className="rounded bg-muted px-1">USE_MOCK = false</code>
+          </li>
         </ul>
       </div>
 
@@ -928,15 +1690,15 @@ export default function SentimentOverlayPoc() {
         </CardHeader>
         <CardContent className="pt-0">
           {loading ? (
-            <Skeleton className="h-[560px] w-full" />
+            <Skeleton className="h-[620px] w-full" />
           ) : error ? (
-            <div className="flex h-[560px] items-center justify-center text-sm text-red-500">
+            <div className="flex h-[620px] items-center justify-center text-sm text-red-500">
               {error}
             </div>
           ) : (
             <SentimentLine
               data={sentimentPoints}
-              height={560}
+              height={620}
               shOverlay={shOverlay}
               mainNetFlowOverlay={mainNetFlowOverlay}
               amountOverlay={amountOverlay}
