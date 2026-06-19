@@ -462,10 +462,34 @@ export default function MarketPulsePage() {
       <ManualFundFlowDialog
         open={manualDialogOpen}
         onOpenChange={setManualDialogOpen}
-        tradingDate={getMostRecentTradingDayClient()}
+        initialTradingDate={getMostRecentTradingDayClient()}
         existing={manualFundFlow}
+        onFetchExisting={async (tradingDate) => {
+          try {
+            return await fetchManualFundFlow(tradingDate)
+          } catch {
+            return null
+          }
+        }}
         onSaved={(saved) => {
-          setManualFundFlow(saved)
+          // 只在保存日期落在"卡片 manual 覆盖"关心的窗口内 (今天 / 最近 3 个交易日)
+          // 时, 同步更新 manualFundFlow. 历史日期的录入不影响今日 overview 显示.
+          const recent = getMostRecentTradingDayClient()
+          const recentWindow = new Set<string>([recent])
+          let cursor = recent
+          for (let i = 0; i < 2; i++) {
+            cursor = getPrevTradingDayClient(cursor)
+            if (!cursor) break
+            recentWindow.add(cursor)
+          }
+          if (recentWindow.has(saved.tradingDate)) {
+            setManualFundFlow(saved)
+          } else {
+            // 历史日录入: 顺便尝试把"最近 3 天窗口"重新拉一次, 仍然有 manual 的话
+            // 仍按新窗口回填, 否则置空. 避免用户把历史日录进去后, 卡片还显示旧的
+            // (跟新录入无关的) manual 覆盖.
+            void loadManualFundFlow(getMostRecentTradingDayClient())
+          }
           // 保存后顺手 re-pull overview, 让 "数据滞后" 角标等状态刷新
           void loadOverview()
         }}

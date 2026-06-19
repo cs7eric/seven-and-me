@@ -1,14 +1,25 @@
 /**
  * Top Card: Market Sentiment Index (composite, 9 张卡加权合成)
+ *
+ * 图表为三层叠加 (源自 /poc/sentiment-overlay 迁移):
+ *   上 1: 主力净流 (rainfall 风格, 反向轴)
+ *   中 3: 情绪分 + 上证指数
+ *   下 1: 成交额 (flow 风格, 蓝色面积)
+ *
+ * 成交额数据源: duckdb.market_overview_daily.total_amount (元, 经 ×1e8 换算)
+ *              兜底: duckdb.index_daily_raw.amount (上证指数自身成交额, 元)
+ * 主力净流数据源: duckdb.market_overview_daily.main_net_inflow (元, 经 ×1e8 换算)
+ * 上证指数数据源: duckdb.index_daily_raw
+ * 情绪分数据源:   duckdb.market_sentiment_index_daily
  */
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Activity, Smile } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Calendar as CalendarUi } from "@/components/ui/calendar"
 import { cn } from "@/lib/utils"
 import { toLocalDate, toLocalIso } from "@/lib/date-utils"
-import { SentimentLine } from "./sentiment-line"
+import { SentimentOverlay, type SentimentOverlaySeries } from "./sentiment-overlay"
 import { CompositeCardSkeleton } from "./skeletons"
 import { MSI_LEVEL_META } from "./sub-metric"
 import { isoDateNDaysAgo, shiftIsoDays } from "../lib/date"
@@ -16,7 +27,9 @@ import {
   fetchMarketSentimentIndex,
   fetchMarketSentimentIndexHistory,
   fetchIndexDailyHistory,
+  fetchMarketOverviewHistory,
   type IndexDailyItem,
+  type MarketOverviewHistoryItem,
   type MarketSentimentIndexResponse,
   type MarketSentimentIndexHistoryItem,
 } from "@/lib/api"
@@ -37,6 +50,7 @@ export function MarketSentimentIndexCard({
   const [data, setData] = useState<MarketSentimentIndexResponse | null>(null)
   const [history, setHistory] = useState<MarketSentimentIndexHistoryItem[] | null>(null)
   const [shIndex, setShIndex] = useState<IndexDailyItem[] | null>(null)
+  const [overview, setOverview] = useState<MarketOverviewHistoryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
 
   // 后端 3 年数据已就绪 (limit_emotion / vol_sentiment / profit_effect / msi 全部 728+ 行)
@@ -49,20 +63,23 @@ export function MarketSentimentIndexCard({
     const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
-        const [snap, hist, sh] = await Promise.all([
+        const [snap, hist, sh, ov] = await Promise.all([
           fetchMarketSentimentIndex(date ?? undefined),
           fetchMarketSentimentIndexHistory(start, end),
           fetchIndexDailyHistory({ code: "000001", start, end }),
+          fetchMarketOverviewHistory({ start, end }),
         ])
         if (cancelled) return
         setData(snap)
         setHistory(hist.items ?? [])
         setShIndex(sh.items ?? [])
+        setOverview(ov.items ?? [])
       } catch {
         if (!cancelled) {
           setData(null)
           setHistory(null)
           setShIndex(null)
+          setOverview(null)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -137,7 +154,7 @@ export function MarketSentimentIndexCard({
   const level = data?.level ?? "normal"
   const meta = MSI_LEVEL_META[level] ?? MSI_LEVEL_META.normal
 
-  // 跟 sentiment-line tooltip moodColor 同款色阶: ≥70 极热 / ≥60 偏热 / ≥50 偏多 / ≥40 偏弱 / ≥30 低迷 / ＜30 冰点
+  // 跟 SentimentOverlay tooltip moodColor 同款色阶: ≥70 极热 / ≥60 偏热 / ≥50 偏多 / ≥40 偏弱 / ≥30 低迷 / ＜30 冰点
   const tone =
     score == null
       ? "text-slate-700"
@@ -187,6 +204,71 @@ export function MarketSentimentIndexCard({
       ),
     }
   })()
+
+  /**
+   * 主力净流 / 成交额两个 duckdb 叠加线:
+   * - 数据源 1: duckdb.market_overview_daily (全 A, 接口层已是 "亿元", 下游 /1e8 走 "元")
+   * - 成交额 兜底: duckdb.index_daily_raw.amount (上证指数自身成交额, "元")
+   *
+   * 统一按 sortedHistory 的日期 key 对齐, 与情绪分折线 + 上证叠加线共享 x 轴.
+   */
+  const { mainNetFlowOverlay, amountOverlay } = useMemo(() => {
+    const toFiniteNumber = (v: unknown): number | null => {
+      const n = Number(v)
+      return Number.isFinite(n) ? n : null
+    }
+
+    const pickAmount = (item: IndexDailyItem) => {
+      const record = item as unknown as Record<string, unknown>
+      for (const key of ["amount", "turnoverAmount", "turnover", "volumeAmount"]) {
+        const n = toFiniteNumber(record[key])
+        if (n != null) return n
+      }
+      return null
+    }
+
+    const flowMapFromOverview = new Map(
+      (overview ?? []).map((it) => [
+        it.tradeDate,
+        it.mainNetInflow == null ? null : it.mainNetInflow * 1e8,
+      ]),
+    )
+    const amountMapFromOverview = new Map(
+      (overview ?? []).map((it) => [
+        it.tradeDate,
+        it.totalAmount == null ? null : it.totalAmount * 1e8,
+      ]),
+    )
+    const amountMapFromIndex = new Map(
+      (shIndex ?? []).map((it) => [it.tradeDate, pickAmount(it)]),
+    )
+
+    const flowData = sortedHistory.map((it) => ({
+      date: it.tradeDate.slice(5),
+      value: flowMapFromOverview.get(it.tradeDate) ?? null,
+    }))
+    const amountData = sortedHistory.map((it) => ({
+      date: it.tradeDate.slice(5),
+      value:
+        amountMapFromOverview.get(it.tradeDate) ??
+        amountMapFromIndex.get(it.tradeDate) ??
+        null,
+    }))
+
+    const flowHitCount = flowData.filter((d) => d.value != null).length
+    const amountHitCount = amountData.filter((d) => d.value != null).length
+
+    return {
+      mainNetFlowOverlay:
+        flowHitCount >= 2
+          ? ({ name: "主力净流", color: "#ef4444", data: flowData } as SentimentOverlaySeries)
+          : undefined,
+      amountOverlay:
+        amountHitCount >= 2
+          ? ({ name: "成交额", color: "#5470c6", data: amountData } as SentimentOverlaySeries)
+          : undefined,
+    }
+  }, [sortedHistory, shIndex, overview])
 
   return (
     <Card className="border-0 shadow-none bg-muted/50 h-full">
@@ -270,7 +352,13 @@ export function MarketSentimentIndexCard({
                 <span className="text-xs">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
               </div>
               <div className="min-h-0 flex-1">
-                <SentimentLine data={sentimentPoints} height="100%" overlay={shOverlay} />
+                <SentimentOverlay
+                  data={sentimentPoints}
+                  height="100%"
+                  shOverlay={shOverlay}
+                  mainNetFlowOverlay={mainNetFlowOverlay}
+                  amountOverlay={amountOverlay}
+                />
               </div>
             </div>
 
