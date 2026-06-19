@@ -15,6 +15,8 @@ import { isoDateNDaysAgo, shiftIsoDays } from "../lib/date"
 import {
   fetchMarketSentimentIndex,
   fetchMarketSentimentIndexHistory,
+  fetchIndexDailyHistory,
+  type IndexDailyItem,
   type MarketSentimentIndexResponse,
   type MarketSentimentIndexHistoryItem,
 } from "@/lib/api"
@@ -34,6 +36,7 @@ export function MarketSentimentIndexCard({
 }: MarketSentimentIndexCardProps) {
   const [data, setData] = useState<MarketSentimentIndexResponse | null>(null)
   const [history, setHistory] = useState<MarketSentimentIndexHistoryItem[] | null>(null)
+  const [shIndex, setShIndex] = useState<IndexDailyItem[] | null>(null)
   const [loading, setLoading] = useState(true)
 
   // 后端 3 年数据已就绪 (limit_emotion / vol_sentiment / profit_effect / msi 全部 728+ 行)
@@ -46,17 +49,20 @@ export function MarketSentimentIndexCard({
     const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
-        const [snap, hist] = await Promise.all([
+        const [snap, hist, sh] = await Promise.all([
           fetchMarketSentimentIndex(date ?? undefined),
           fetchMarketSentimentIndexHistory(start, end),
+          fetchIndexDailyHistory({ code: "000001", start, end }),
         ])
         if (cancelled) return
         setData(snap)
         setHistory(hist.items ?? [])
+        setShIndex(sh.items ?? [])
       } catch {
         if (!cancelled) {
           setData(null)
           setHistory(null)
+          setShIndex(null)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -131,28 +137,56 @@ export function MarketSentimentIndexCard({
   const level = data?.level ?? "normal"
   const meta = MSI_LEVEL_META[level] ?? MSI_LEVEL_META.normal
 
+  // 跟 sentiment-line tooltip moodColor 同款色阶: ≥70 极热 / ≥60 偏热 / ≥50 偏多 / ≥40 偏弱 / ≥30 低迷 / ＜30 冰点
   const tone =
     score == null
       ? "text-slate-700"
       : score >= 70
         ? "text-red-600"
-        : score >= 55
+        : score >= 60
           ? "text-orange-600"
-          : score >= 45
-            ? "text-slate-700"
-            : score >= 30
-              ? "text-blue-600"
-              : "text-slate-400"
+          : score >= 50
+            ? "text-amber-600"
+            : score >= 40
+              ? "text-sky-500"
+              : score >= 30
+                ? "text-blue-600"
+                : "text-slate-400"
 
-  // ECharts 折线: 完整 ISO 日期 + value, visualMap 按 value 自动上色
-  const sentimentPoints = (history ?? [])
+  // ECharts 折线: xAxis 取 msi ∩ sh (两边都有的日期) — 任一数据源缺日期都不会断线.
+  // (msi 历史上有过周末脏数据, sh tencent API 不收录调休周六; 交集化比 null-patching 鲁棒)
+  const alignedHistory = (() => {
+    if (!shIndex || shIndex.length === 0) return (history ?? [])
+    const shDates = new Set(shIndex.map((it) => it.tradeDate))
+    return (history ?? []).filter((it) => shDates.has(it.tradeDate))
+  })()
+  const sortedHistory = alignedHistory
     .slice()
     .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))
-    .map((it) => ({
-      date: it.tradeDate.slice(5),
-      value: it.compositeScore ?? 50,
-      level: it.level,
-    }))
+  const sentimentPoints = sortedHistory.map((it) => ({
+    date: it.tradeDate.slice(5),
+    value: it.compositeScore ?? 50,
+    level: it.level,
+  }))
+
+  // 上证指数叠加线: 用完整 YYYY-MM-DD 对齐避免跨年 MM-DD 撞 key.
+  const shOverlay = (() => {
+    if (!shIndex || shIndex.length === 0) return undefined
+    const shMap = new Map(shIndex.map((it) => [it.tradeDate, it.close]))
+    const data: (number | null)[] = sortedHistory.map((it) => {
+      const v = shMap.get(it.tradeDate)
+      return v == null ? null : v
+    })
+    const hitCount = data.filter((v) => v != null).length
+    if (hitCount < 2) return undefined
+    return {
+      name: "上证指数",
+      color: "#475569",  // slate-600 全不透明 (card bg-muted/50 浅灰, 浅色糊掉)
+      data: data.map((v, i) =>
+        v == null ? null : { date: sortedHistory[i].tradeDate.slice(5), value: v },
+      ),
+    }
+  })()
 
   return (
     <Card className="border-0 shadow-none bg-muted/50 h-full">
@@ -236,7 +270,7 @@ export function MarketSentimentIndexCard({
                 <span className="text-xs">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
               </div>
               <div className="min-h-0 flex-1">
-                <SentimentLine data={sentimentPoints} height="100%" />
+                <SentimentLine data={sentimentPoints} height="100%" overlay={shOverlay} />
               </div>
             </div>
 

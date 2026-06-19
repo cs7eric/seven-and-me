@@ -37,6 +37,7 @@ from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
 from backend.repositories.market.percentile_helper import percentile_score
+from backend.services.stock.trading_calendar import is_trading_day
 
 logger = logging.getLogger(__name__)
 
@@ -140,21 +141,15 @@ def _fetch_risk_appetite_score(td: date) -> float | None:
 
 
 def _fetch_breadth_score(td: date) -> float | None:
-    """市场广度: ma_count_daily 合成 (40%上涨 + 35%MA20 + 25%MA60).
-
-    这本身就是 0-100 百分比类, 不需要再百分位.
-    """
+    """市场广度: ma_count_daily.breadth_raw (40%上涨 + 35%MA20 + 25%MA60 合成) → 历史分位."""
     con = get_conn()
     r = con.execute(
-        "SELECT advancing_pct, pct_ma20, pct_ma60 FROM ma_count_daily WHERE trade_date = ?",
+        "SELECT breadth_raw FROM ma_count_daily WHERE trade_date = ?",
         [td],
     ).fetchone()
-    if not r:
+    if not r or r[0] is None:
         return None
-    adv, ma20, ma60 = r
-    if adv is None or ma20 is None or ma60 is None:
-        return None
-    return round(0.40 * float(adv) + 0.35 * float(ma20) + 0.25 * float(ma60), 2)
+    return percentile_score("ma_count_daily", "breadth_raw", td, float(r[0]))
 
 
 def _fetch_limit_emotion_score(td: date) -> float | None:
@@ -170,15 +165,19 @@ def _fetch_limit_emotion_score(td: date) -> float | None:
 
 
 def _fetch_profit_effect_score(td: date) -> float | None:
-    """赚钱效应: profit_effect_daily.score (0-100)."""
+    """赚钱效应: profit_effect_daily.score (公式 raw) → 历史分位.
+
+    score 存的是 0.6*up5d + 0.4*(100-newlow60d) 的 0-100 合成,
+    msi 跟其他 8 factor 一样取 (T-3y, T) 滚动分位.
+    """
     con = get_conn()
     r = con.execute(
         "SELECT score FROM profit_effect_daily WHERE trade_date = ?",
         [td],
     ).fetchone()
-    if r and r[0] is not None:
-        return round(float(r[0]), 2)
-    return None
+    if not r or r[0] is None:
+        return None
+    return percentile_score("profit_effect_daily", "score", td, float(r[0]))
 
 
 def _fetch_sector_breadth_score(td: date) -> float | None:
@@ -280,10 +279,17 @@ def calc_market_sentiment_index(trade_date: date | str) -> dict[str, Any] | None
 # ---------------------------------------------------------------------------
 
 def save_market_sentiment_index(payload: dict) -> None:
-    """把 calc_market_sentiment_index 的 dict 落盘 (INSERT OR REPLACE by trade_date)."""
+    """把 calc_market_sentiment_index 的 dict 落盘 (INSERT OR REPLACE by trade_date).
+
+    非交易日直接拒绝落盘 (msi 是工作日指数, 周末/节假日不该有行;
+    历史上有子卡周末脏数据污染 msi union → chart SH 叠加线断点的 bug, 见 git log).
+    """
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
+    if not is_trading_day(td):
+        logger.debug("save_market_sentiment_index skipped non-trading day: %s", td)
+        return
     components = payload.get("components") or {}
 
     def _f(key: str) -> float | None:

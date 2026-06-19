@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 from typing import Any
@@ -18,6 +19,9 @@ from backend.repositories.market.percentile_helper import (
     enrich_history_scores,
     percentile_score,
 )
+from backend.services.stock.trading_calendar import is_trading_day
+
+logger = logging.getLogger(__name__)
 
 
 # 风险偏好窗口 (默认 20 日, 对应 ~ 1 个月)
@@ -151,10 +155,16 @@ def calc_risk_appetite(trade_date: date | str, window: int = DEFAULT_WINDOW) -> 
 
 
 def save_risk_appetite(payload: dict) -> None:
-    """把 calc_risk_appetite 的 dict 落盘 (INSERT OR REPLACE by trade_date)."""
+    """把 calc_risk_appetite 的 dict 落盘 (INSERT OR REPLACE by trade_date).
+
+    非交易日拒绝落盘 (历史上有 2026-06-13/14 端午调休脏数据).
+    """
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
+    if not is_trading_day(td):
+        logger.debug("save_risk_appetite skipped non-trading day: %s", td)
+        return
     spread = payload.get("spread") or {}
     hs = payload.get("hs300") or {}
     t = payload.get("treasury") or {}

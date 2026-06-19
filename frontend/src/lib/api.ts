@@ -2821,6 +2821,60 @@ export async function fetchIndexKlineBatch(params: {
   }
 }
 
+export interface IndexDailyItem {
+  tradeDate: string
+  close: number
+}
+
+export interface IndexDailyResponse {
+  ok: boolean
+  code: string
+  name: string
+  start: string
+  end: string
+  count: number
+  items: IndexDailyItem[]
+  error?: string
+}
+
+/**
+ * 拉单只宽基指数日线历史 (Market Sentiment 顶卡叠加用).
+ * 数据源: backend.api.stock_chart.index_daily_history → duckdb.index_daily_raw.
+ */
+export async function fetchIndexDailyHistory(params: {
+  code: string
+  start: string  // YYYY-MM-DD
+  end: string    // YYYY-MM-DD
+}): Promise<IndexDailyResponse> {
+  const query = new URLSearchParams({
+    code: params.code,
+    start: params.start,
+    end: params.end,
+  })
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/stock-chart/index/daily?${query.toString()}`,
+  )
+  const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !data) {
+    throw new Error((data?.error as string) || `获取指数日线失败: ${res.status}`)
+  }
+  const rawItems = Array.isArray(data.items)
+    ? (data.items as Array<Record<string, unknown>>) : []
+  return {
+    ok: Boolean(data.ok),
+    code: String(data.code ?? params.code),
+    name: String(data.name ?? params.code),
+    start: String(data.start ?? params.start),
+    end: String(data.end ?? params.end),
+    count: typeof data.count === "number" ? data.count : rawItems.length,
+    items: rawItems.map((it) => ({
+      tradeDate: String(it.tradeDate ?? ""),
+      close: typeof it.close === "number" ? it.close : Number(it.close ?? 0),
+    })),
+    error: typeof data.error === "string" ? (data.error as string) : undefined,
+  }
+}
+
 export async function triggerMarketOverviewAkshareRefresh(): Promise<{
   ok: boolean
   snapshot?: MarketOverview

@@ -54,7 +54,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--codes", type=str, default="",
-        help="逗号分隔的 6 位 code, 默认全 INDEX_TARGETS (000300,000852)",
+        help="逗号分隔的 6 位 code, 默认全 INDEX_TARGETS (000001,000300,000852)",
     )
     args = parser.parse_args()
 

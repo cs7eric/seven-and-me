@@ -37,6 +37,7 @@ logging.basicConfig(
 log = logging.getLogger("backfill_market_sentiment_index")
 
 from backend.adapters.market.duckdb_store import init_schema, get_conn
+from backend.services.stock.trading_calendar import is_trading_day
 
 
 # 8 张 sub-card 的 trade_date 来源 (选取 schema §24 公式里的 9 个 component 的底层表)
@@ -126,7 +127,10 @@ def main() -> int:
             d = r[0].date() if hasattr(r[0], "date") else r[0]
             union_dates.add(d)
 
-    trade_dates = sorted(union_dates)
+    trade_dates = sorted(d for d in union_dates if is_trading_day(d))
+    skipped = len(union_dates) - len(trade_dates)
+    if skipped:
+        log.info("过滤掉 %d 个非交易日 (子卡 union 里有周末/节假日脏数据)", skipped)
     log.info("共 %d 个交易日 (子卡并集)", len(trade_dates))
     if args.dry_run:
         return 0

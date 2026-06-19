@@ -52,10 +52,11 @@ def percentile_score(
         column: 数值列名.
         target_date: 当前交易日.
         current_value: 当前值.
-        lookback_days: 回看天数 (默认 756 ≈ 3 年).
+        lookback_days: 回看天数 (默认 1060 ≈ 3y).
 
     Returns:
-        0-100 的得分. 无历史数据或 current_value 为 None 时返回 None.
+        0-100 的得分. 无历史数据或 current_value 为 None 时返回 None
+        (上游 msi 走中性 50).
     """
     if current_value is None:
         return None
@@ -91,8 +92,14 @@ def enrich_history_scores(
 ) -> list[dict[str, Any]]:
     """给 history items 每行加上百分位得分.
 
-    用 PERCENT_RANK 在同一 SQL 里算所有历史日的百分位,
-    避免 N+1 查询.
+    算法 (修复 look-ahead bias):
+      对每一天 T (T ∈ [start, end]), 用 T 之前 lookback_days 天内 (含 T 自身?)
+      的所有 val 计算"严格小于 T.val 的占比", 避免 T 日之后的数据污染过去日的分位.
+
+      T 的分位 = COUNT(prev.val < T.val) / COUNT(prev) × 100
+        其中 prev 满足:  T - lookback_days ≤ prev.trade_date < T.trade_date
+
+      实现: 自连接 + 区间过滤, DuckDB 单查询 O(N²) 756²≈570k 配对 <100ms.
 
     Args:
         items: 历史 items (每条必须有 tradeDate 字段).
@@ -114,12 +121,22 @@ def enrich_history_scores(
         con = get_conn()
         rows = con.execute(
             f"""
-            SELECT trade_date,
-                   PERCENT_RANK() OVER (ORDER BY {column}) * 100 AS score
-            FROM {table}
-            WHERE trade_date >= ? AND trade_date <= ?
-              AND {column} IS NOT NULL
-            ORDER BY trade_date ASC
+            WITH t AS (
+              SELECT trade_date, {column} AS val
+                FROM {table}
+               WHERE trade_date >= ? AND trade_date <= ?
+                 AND {column} IS NOT NULL
+            )
+            SELECT
+              cur.trade_date,
+              100.0 * SUM(CASE WHEN prev.val < cur.val THEN 1 ELSE 0 END)
+                  / NULLIF(COUNT(prev.val), 0) AS score
+            FROM t cur
+            LEFT JOIN t prev
+              ON prev.trade_date < cur.trade_date
+             AND prev.trade_date >= cur.trade_date - INTERVAL '{lookback_days} days'
+            GROUP BY cur.trade_date
+            ORDER BY cur.trade_date ASC
             """,
             [lookback_start, end_d],
         ).fetchall()

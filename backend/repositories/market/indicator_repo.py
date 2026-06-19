@@ -19,6 +19,10 @@ from backend.repositories.market.percentile_helper import (
     enrich_history_scores,
     percentile_score,
 )
+from backend.services.stock.trading_calendar import is_trading_day
+
+import logging
+logger = logging.getLogger(__name__)
 
 _DEFAULT_MA_WINDOWS = (5, 10, 20, 30, 60, 120, 250)
 
@@ -591,13 +595,20 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def save_ma_count(payload: dict) -> None:
-    """把 calc_ma_count 返回的 dict 落盘 (INSERT OR REPLACE by trade_date)."""
+    """把 calc_ma_count 返回的 dict 落盘 (INSERT OR REPLACE by trade_date).
+
+    非交易日拒绝落盘 (历史上有 2026-06-13/14 端午调休脏数据).
+    """
     import json as _json
     td = _to_date(payload.get("tradeDate") or payload.get("trade_date"))
     if td is None:
         raise ValueError("payload.tradeDate required")
+    if not is_trading_day(td):
+        logger.debug("save_ma_count skipped non-trading day: %s", td)
+        return
     by_board_json = _json.dumps(payload.get("byBoard") or {}, ensure_ascii=False)
     con = get_conn()
+    breadth_raw = round(0.40 * float(payload.get("pctAdvancing") or 0) + 0.35 * float(payload.get("pctAboveMa20") or 0) + 0.25 * float(payload.get("pctAboveMa60") or 0), 2)
     con.execute("""
         INSERT OR REPLACE INTO ma_count_daily
             (trade_date, total_eligible, above_ma20, above_ma60, above_both,
@@ -605,11 +616,13 @@ def save_ma_count(payload: dict) -> None:
              up_5d_count, up_5d_pct, new_low_60d_count, new_low_60d_pct,
              new_high_252d_count, new_high_252d_pct,
              advancing_count, advancing_pct,
+             breadth_raw,
              by_board_json, elapsed_ms, source, ingested_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?,
                 ?, ?,
                 ?, ?,
+                ?,
                 ?, ?, ?, current_timestamp)
     """, [
         td,
@@ -628,6 +641,7 @@ def save_ma_count(payload: dict) -> None:
         float(payload.get("pctNewHigh252d") or 0),
         int(payload.get("advancingCount") or 0),
         float(payload.get("pctAdvancing") or 0),
+        breadth_raw,
         by_board_json,
         int(payload.get("elapsedMs") or 0),
         str(payload.get("source") or "duckdb.daily_qfq"),
@@ -951,6 +965,10 @@ def bulk_save_ma_count(payloads: dict[date, dict[str, Any]]) -> int:
     con = get_conn()
     n = 0
     for td, payload in payloads.items():
+        if not is_trading_day(td):
+            logger.debug("bulk_save_ma_count skipped non-trading day: %s", td)
+            continue
+        breadth_raw = round(0.40 * float(payload.get("pctAdvancing") or 0) + 0.35 * float(payload.get("pctAboveMa20") or 0) + 0.25 * float(payload.get("pctAboveMa60") or 0), 2)
         by_board_json = _json.dumps(payload.get("byBoard") or {}, ensure_ascii=False)
         con.execute("""
             INSERT OR REPLACE INTO ma_count_daily
@@ -959,11 +977,13 @@ def bulk_save_ma_count(payloads: dict[date, dict[str, Any]]) -> int:
                  up_5d_count, up_5d_pct, new_low_60d_count, new_low_60d_pct,
                  new_high_252d_count, new_high_252d_pct,
                  advancing_count, advancing_pct,
+                 breadth_raw,
                  by_board_json, elapsed_ms, source, ingested_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?,
                     ?, ?,
                     ?, ?,
+                    ?,
                     ?, ?, ?, current_timestamp)
         """, [
             td,
@@ -982,6 +1002,7 @@ def bulk_save_ma_count(payloads: dict[date, dict[str, Any]]) -> int:
             float(payload.get("pctNewHigh252d") or 0),
             int(payload.get("advancingCount") or 0),
             float(payload.get("pctAdvancing") or 0),
+            breadth_raw,
             by_board_json,
             int(payload.get("elapsedMs") or 0),
             str(payload.get("source") or "duckdb.daily_qfq"),

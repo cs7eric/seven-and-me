@@ -2062,6 +2062,62 @@ def market_sentiment_index_history():
         return jsonify({"ok": False, "error": str(exc), "items": []}), 200
 
 
+@stock_chart_bp.route('/api/stock-chart/index/daily')
+def index_daily_history():
+    """单只宽基指数日线历史 (Market Sentiment 顶部卡叠加用).
+
+    URL: ?code=000001 (必填, 兼容 'sh000001' / 'sz399001')
+         &start=YYYY-MM-DD (默认 end-1095d)
+         &end=YYYY-MM-DD   (默认 today)
+
+    数据源: duckdb.index_daily_raw → index_repo.get_index_daily
+    """
+    from datetime import date as _date, timedelta
+    from backend.repositories.market.index_repo import get_index_daily
+    code = _normalize_index_code(request.args.get('code', ''))
+    if not code:
+        return jsonify({"ok": False, "error": "code required"}), 400
+    end_str = (request.args.get("end") or "").strip()
+    start_str = (request.args.get("start") or "").strip()
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+        start = _date.fromisoformat(start_str) if start_str else end - timedelta(days=1095)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
+    if start > end:
+        return jsonify({"ok": False, "error": "start > end"}), 400
+    # get_index_daily 上限 1500, 多取 30 天冗余防边界 (3 年窗口 = ~770 天, 留 2x buffer)
+    days = max(1, min(1500, (end - start).days + 30))
+    # duckdb.index_daily_raw 用 'sh000300' / 'sz399001' 这种带前缀 code (避免与 A股 000300 撞码)
+    # 客户端传 6 位 code ('000001'), 这里按首位加前缀. 已是前缀的保持不变.
+    full_code = code if code.startswith(('sh', 'sz')) else (
+        ('sh' + code) if code[:1] in ('0', '6', '9') else ('sz' + code)
+    )
+    try:
+        rows = get_index_daily(full_code, days=days)
+        items: list[dict] = []
+        for r in rows:
+            td = r["trade_date"]
+            if isinstance(td, str):
+                td_d = _date.fromisoformat(td)
+            else:
+                td_d = td
+            if start <= td_d <= end:
+                items.append({
+                    "tradeDate": td_d.isoformat(),
+                    "close": float(r["close"]),
+                })
+        return jsonify({
+            "ok": True, "code": code,
+            "name": _INDEX_CODE_TO_NAME.get(code, code),
+            "start": start.isoformat(), "end": end.isoformat(),
+            "count": len(items), "items": items,
+        })
+    except Exception as exc:
+        logger.exception("index daily history failed: %s", exc)
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+
+
 @stock_chart_bp.route('/api/stock-chart/market-pulse/strong')
 def market_pulse_strong():
     """强势板块: TDX 56 行业指数, 按当日 change_pct 排序. URL: ?topN=10"""

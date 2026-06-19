@@ -12,11 +12,16 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.services.stock.trading_calendar import is_trading_day
+
+import logging
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 关注的宽基指数
 # ---------------------------------------------------------------------------
 INDEX_TARGETS: list[dict[str, str]] = [
+    {"name": "上证指数", "code": "000001", "full": "sh000001", "exchange": "sh"},
     {"name": "沪深300", "code": "000300", "full": "sh000300", "exchange": "sh"},
     {"name": "中证1000", "code": "000852", "full": "sh000852", "exchange": "sh"},
 ]
@@ -51,6 +56,9 @@ def upsert_index_daily(code: str, rows: list[dict[str, Any]], source: str = "eas
         td = _to_date(r.get("trade_date") or r.get("date"))
         if td is None:
             continue
+        if not is_trading_day(td):
+            logger.debug("upsert_index_daily %s skipped non-trading day: %s", code, td)
+            continue
         con.execute(sql, [
             code, td,
             float(r.get("open") or 0),
@@ -73,7 +81,7 @@ def get_index_daily(code: str, days: int = 30) -> list[dict[str, Any]]:
     """单只指数近 N 个交易日 K 线, 按 trade_date ASC."""
     if not code:
         return []
-    days = max(1, min(days, 500))
+    days = max(1, min(days, 1500))
     con = get_conn()
     rows = con.execute(
         """

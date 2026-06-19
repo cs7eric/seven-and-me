@@ -11,17 +11,21 @@ limit_emotion_service.snapshot_today_daily 的字段兼容.
 """
 from __future__ import annotations
 
+import logging
 import time
 from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
 from backend.repositories.market.percentile_helper import percentile_score
+from backend.services.stock.trading_calendar import is_trading_day
 from backend.repositories.market.stock_meta_repo import (
     get_threshold,
     is_st_by_name,
     list_universe,
 )
+
+logger = logging.getLogger(__name__)
 
 _TOL = 0.0001   # 涨跌停判定容差 (与 limit_emotion_service 一致)
 _HIGH_TOL = 0.0005  # 盘中触板容差
@@ -596,10 +600,16 @@ def calc_limit_emotion_summary(
 
 
 def save_limit_emotion_summary(payload: dict) -> None:
-    """把 calc_limit_emotion_summary 的 dict 落盘 (INSERT OR REPLACE by trade_date)."""
+    """把 calc_limit_emotion_summary 的 dict 落盘 (INSERT OR REPLACE by trade_date).
+
+    非交易日拒绝落盘 (历史上有 2026-02-24 春节调休脏数据).
+    """
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
+    if not is_trading_day(td):
+        logger.debug("save_limit_emotion_summary skipped non-trading day: %s", td)
+        return
     comp = payload.get("components") or {}
     yest_avg = payload.get("yesterdayLimitUpAvgReturn")
     bb_rate = payload.get("breakBoardRate")

@@ -46,6 +46,7 @@ def main() -> int:
     from backend.repositories.market.turnover_activity_repo import (
         calc_turnover_activity,
         save_turnover_activity,
+        _add_score,
     )
 
     with conn() as c:
@@ -102,6 +103,7 @@ def main() -> int:
             if payload is None:
                 log.debug("  %s 数据不足, 跳过", td)
                 continue
+            _add_score(payload, td)
             save_turnover_activity(payload)
             ok_count += 1
         except Exception as exc:

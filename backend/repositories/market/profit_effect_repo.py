@@ -17,6 +17,7 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.services.stock.trading_calendar import is_trading_day
 
 logger = logging.getLogger(__name__)
 
@@ -79,10 +80,13 @@ def calc_profit_effect(trade_date: date | str) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 def save_profit_effect(payload: dict) -> None:
-    """INSERT OR REPLACE by trade_date."""
+    """INSERT OR REPLACE by trade_date. 非交易日拒绝落盘."""
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
+    if not is_trading_day(td):
+        logger.debug("save_profit_effect skipped non-trading day: %s", td)
+        return
     con = get_conn()
     con.execute("""
         INSERT OR REPLACE INTO profit_effect_daily

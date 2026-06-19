@@ -28,14 +28,21 @@ echarts.use([
 ])
 
 interface SentimentLinePoint { date: string; value: number; level?: string }
+interface OverlayPoint { date: string; value: number }
 interface SentimentLineProps {
   data: SentimentLinePoint[]
   height?: number
   /** 用浅色主题 (默认 false, 大卡深底浅字) */
   light?: boolean
+  /** 第二条线 (大盘指数等), 用右轴 (auto-scale). date 顺序与 data 对齐. */
+  overlay?: {
+    name: string
+    color?: string
+    data: OverlayPoint[]
+  }
 }
 
-export function SentimentLine({ data, height = 220, light = false }: SentimentLineProps) {
+export function SentimentLine({ data, height = 220, light = false, overlay }: SentimentLineProps) {
   const ref = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
 
@@ -144,11 +151,16 @@ export function SentimentLine({ data, height = 220, light = false }: SentimentLi
             : score >= 30 ? "#60a5fa"
             : "#94a3b8"
 
+          const overlayPoint = overlay
+            ? arr.find((p) => p.seriesName === overlay.name)
+            : undefined
+
           return `
             <div style="font-weight:600;margin-bottom:6px;">${realPoint.axisValueLabel}</div>
             <div>情绪分: <b style="color:${moodColor};font-size:14px;">${score.toFixed(1)}</b></div>
             <div style="margin-top:3px;">状态: <span style="color:${moodColor};">${moodLabel}</span></div>
             <div style="margin-top:3px;color:#94a3b8;">距离中性线: ${diff >= 0 ? "+" : ""}${diff.toFixed(1)}</div>
+            ${overlayPoint ? `<div style="margin-top:6px;padding-top:5px;border-top:1px solid rgba(148,163,184,0.25);color:${overlay?.color ?? "#475569"};">${overlay?.name ?? ""}: <b style="font-size:13px;">${Number(overlayPoint.value ?? 0).toFixed(2)}</b></div>` : ""}
           `
         },
       },
@@ -172,28 +184,46 @@ export function SentimentLine({ data, height = 220, light = false }: SentimentLi
         },
       },
 
-      yAxis: {
-        type: "value",
-        min: yMin,
-        max: yMax,
-        splitNumber: 4,
-        axisLabel: {
-          color: fg,
-          fontSize: 10,
-          formatter: "{value}",
-        },
-        splitLine: {
-          lineStyle: {
-            color: splitLine,
+      yAxis: [
+        {
+          type: "value",
+          min: yMin,
+          max: yMax,
+          splitNumber: 4,
+          axisLabel: {
+            color: fg,
+            fontSize: 10,
+            formatter: "{value}",
+          },
+          splitLine: {
+            lineStyle: {
+              color: splitLine,
+            },
+          },
+          axisLine: {
+            show: false,
+          },
+          axisTick: {
+            show: false,
           },
         },
-        axisLine: {
-          show: false,
-        },
-        axisTick: {
-          show: false,
-        },
-      },
+        // 右轴: 仅 overlay 时启用 (auto-scale, 不画 splitLine 避免双轴网格打架)
+        ...(overlay && overlay.data.length > 0
+          ? [{
+              type: "value" as const,
+              scale: true,
+              position: "right" as const,
+              axisLabel: {
+                color: overlay.color ?? "#475569",
+                fontSize: 10,
+                formatter: "{value}",
+              },
+              splitLine: { show: false },
+              axisLine: { show: false },
+              axisTick: { show: false },
+            }]
+          : []),
+      ],
 
       dataZoom: [
         {
@@ -365,9 +395,30 @@ export function SentimentLine({ data, height = 220, light = false }: SentimentLi
               z: 3,
             }]
           : []),
+
+        // ── 叠加线 (大盘指数等), 右轴 ──
+        ...(overlay && overlay.data.length > 0
+          ? [{
+              name: overlay.name,
+              type: "line" as const,
+              // data 元素是 {date,value} | null, null 让 ECharts 断线 (connectNulls:false)
+              data: overlay.data.map((d) => (d === null ? null : d.value)),
+              yAxisIndex: 1,
+              symbol: "none",
+              smooth: 0.2,
+              connectNulls: false,  // 缺失日留断线, 不连
+              lineStyle: {
+                color: overlay.color ?? "#475569",
+                width: 2,
+                type: "dashed" as const,
+                opacity: 1,
+              },
+              z: 4,
+            }]
+          : []),
       ],
     }
-  }, [data, light])
+  }, [data, light, overlay])
 
   useEffect(() => {
     if (!ref.current) return

@@ -32,6 +32,10 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.services.stock.trading_calendar import is_trading_day
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 # 标的固定: 沪深300. 改这个等于换标的, 后续如要扩 (中证1000 / 上证50) 加分支即可.
@@ -213,10 +217,16 @@ def calc_volatility_sentiment(
 # ---------------------------------------------------------------------------
 
 def save_volatility_sentiment(payload: dict) -> None:
-    """把 calc_volatility_sentiment 的 dict 落盘 (INSERT OR REPLACE by trade_date)."""
+    """把 calc_volatility_sentiment 的 dict 落盘 (INSERT OR REPLACE by trade_date).
+
+    非交易日拒绝落盘 (周末/节假日不该有行, 历史上有 2026-02-24 春节调休脏数据).
+    """
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
+    if not is_trading_day(td):
+        logger.debug("save_volatility_sentiment skipped non-trading day: %s", td)
+        return
     daily_ret = payload.get("dailyReturnPct")
     con = get_conn()
     con.execute("""

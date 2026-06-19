@@ -9,7 +9,7 @@ Runs each trading day after market close:
   5. fallback_remaining_ashares.py — copy raw → qfq/hfq for 614 A-shares
                                     eltdx missed (mostly delisted)
   6. validate_daily_raw.py       — OHLC / gap / unit-scale / stale checks
-  7. fetch_index_history.py      — pull 沪深300/中证1000 daily K → index_daily_raw
+  7. fetch_index_history.py      — pull 上证指数/沪深300/中证1000 daily K → index_daily_raw
                                     (Market Pulse "宽基指数 5 日收益" 用, 走 tencent
                                     一次 1.3s 写 60 行, 不影响主流程)
   8. backfill_ma_count_and_returns.py — 算当日 MA 计数 + 5/10/20/60 日收益快照

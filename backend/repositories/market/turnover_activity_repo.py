@@ -22,6 +22,7 @@ from backend.repositories.market.percentile_helper import (
     enrich_history_scores,
     percentile_score,
 )
+from backend.services.stock.trading_calendar import is_trading_day
 
 logger = logging.getLogger(__name__)
 
@@ -108,10 +109,14 @@ def save_turnover_activity(payload: dict) -> None:
     """把 calc_turnover_activity 的 dict 落盘 (INSERT OR REPLACE by trade_date).
 
     同时把 score (历史分位) 一起落, 避免下游 composite 大卡重复现算.
+    非交易日拒绝落盘 (历史上有 2026-02-24 春节调休 / 2026-06-13 端午调休脏数据).
     """
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
+    if not is_trading_day(td):
+        logger.debug("save_turnover_activity skipped non-trading day: %s", td)
+        return
     con = get_conn()
     con.execute("""
         INSERT OR REPLACE INTO turnover_activity_daily
