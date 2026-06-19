@@ -2,7 +2,7 @@
 
 > 维护人: cs7eric
 > 更新: 2026-06-19
-> 用途: 描述市场情绪指数 (MSI) 9 个子因子的实现逻辑、公式、数据源、取值方式
+> 用途: 描述市场情绪指数 (MSI) 9 个子因子的实现逻辑、公式、数据源、取值方式、前端接口
 
 ---
 
@@ -315,3 +315,172 @@ score = percentile_score("style_risk_appetite_daily", "spread", td, spread)
 | `backend/services/stock/trading_calendar.py` | `is_trading_day`，`WORKDAYS_OVERTIME` 清空 |
 | `scripts/backfill_turnover_from_index.py` | TDX sh+sz amount 回填 turnover_activity |
 | `scripts/backfill_limit_emotion_summary_batch.py` | expanding-window 重算 limit_emotion 4 个 score 列 |
+
+---
+
+## 7. 前端实现
+
+### 7.1 页面布局
+
+```
+/market/sentiment
+├── MarketSentimentIndexCard        (顶部大卡, 3/4 高)
+│   ├── MSI 大数字 (0-100, 颜色阈值: ≥70红/≥60橙/≥50琥珀/≥40天蓝/≥30蓝/＜30灰)
+│   ├── ECharts SentimentLine        (双Y轴: 左0-100情绪分 + 右auto-scale上证指数叠加)
+│   └── 日期选择 Popover
+├── RiskAppetiteCard                (右侧竖列, 第1行)
+├── MarketBreadthCard                (右侧竖列, 第2行)
+├── NewHigh252dCard                 (右侧竖列, 第3行)
+├── SectorBreadthCard               (右侧竖列, 第4行)
+├── TurnoverActivityCard            (右侧竖列, 第5行)
+├── LimitEmotionCard                (右侧竖列, 第6行)
+├── VolatilitySentimentCard         (右侧竖列, 第7行)
+├── StyleRiskAppetiteCard           (右侧竖列, 第8行)
+└── ProfitEffectCard               (右侧竖列, 第9行)
+```
+
+布局: `md:grid-cols-[5fr_2fr]` — 左侧 5/6 放合成指数大卡（撑满高度），右侧 1/6 放 9 张子卡（`overflow-y-auto` 独立滚动）。
+
+---
+
+### 7.2 前端 API fetcher 函数
+
+| 因子 | fetcher 函数 | 所在行 | 端点 |
+|------|-------------|--------|------|
+| MSI composite | `fetchMarketSentimentIndex(date?)` | api.ts:2618 | `GET /api/stock-chart/market-sentiment/index` |
+| MSI history | `fetchMarketSentimentIndexHistory(start, end)` | api.ts:2653 | `GET /api/stock-chart/market-sentiment/index/history` |
+| vol | `fetchMarketSentimentVolatilitySentiment(date?)` | api.ts:2146 | `GET /api/stock-chart/market-sentiment/volatility-sentiment` |
+| turnover | `fetchMarketSentimentTurnoverActivity(date?)` | api.ts:2276 | `GET /api/stock-chart/market-sentiment/turnover-activity` |
+| risk_appetite | `fetchMarketSentimentRiskAppetite(date?)` | api.ts:1826 | `GET /api/stock-chart/market-sentiment/risk-appetite` |
+| breadth (ma_count) | `fetchMarketSentimentMaCount(date?)` | api.ts:1432 | `GET /api/stock-chart/market-sentiment/ma-count` |
+| limit_emotion | `fetchMarketSentimentLimitEmotionSummary(date?)` | api.ts:1987 | `GET /api/stock-chart/market-sentiment/limit-emotion-summary` |
+| profit_effect | `fetchMarketSentimentProfitEffect(date?)` | api.ts:2476 | `GET /api/stock-chart/market-sentiment/profit-effect` |
+| sector_breadth | `fetchMarketSentimentSectorBreadth(date?)` | api.ts:1712 | `GET /api/stock-chart/market-sentiment/sector-breadth` |
+| style_risk | `fetchMarketSentimentStyleRiskAppetite(date?)` | api.ts:2367 | `GET /api/stock-chart/market-sentiment/style-risk-appetite` |
+| 上证指数叠加 | `fetchIndexDailyHistory({code, start, end})` | api.ts:2844 | `GET /api/stock-chart/index/daily` |
+
+---
+
+### 7.3 前端类型定义
+
+**MSI 合成指数响应** (`MarketSentimentIndexResponse`, api.ts:2581):
+```typescript
+interface MarketSentimentIndexResponse {
+  ok: boolean
+  tradeDate: string
+  components: {
+    vol: number | null          // 波动率情绪
+    turnover: number | null     // 成交活跃度
+    price_strength: number | null  // 价格强度
+    risk_appetite: number | null  // 风险偏好
+    breadth: number | null     // 市场广度
+    limit_emotion: number | null  // 涨跌停情绪
+    profit_effect: number | null  // 赚钱效应
+    sector_breadth: number | null  // 板块扩散
+    style_risk: number | null  // 风格风险偏好
+  }
+  weights: { ... }              // 9 个权重, 合计 1.0
+  compositeScore: number | null // 0-100
+  componentCount: number        // 实际有数据的因子数 (1-9)
+  level: "hot"|"active"|"normal"|"weak"|"ice"
+  fromCache?: boolean
+}
+```
+
+**SubMetric 组件** (`sub-metric.tsx:35`):
+```typescript
+interface SubMetricProps {
+  title: string
+  value: string           // 主值 (大字)
+  subValue: string | null // 副值 (小字)
+  score: number | null    // 0-100 情绪分
+  invertTone?: boolean    // 是否反向 (低分=绿, 高分=红, 默认 false)
+}
+```
+
+---
+
+### 7.4 颜色阈值（前端渲染）
+
+**MSI 大数字颜色** (`market-sentiment-index-card.tsx:140`):
+```typescript
+const tone = score >= 70 ? "text-red-600"    // 极热
+           : score >= 60 ? "text-orange-600"  // 偏热
+           : score >= 50 ? "text-amber-600"   // 偏多
+           : score >= 40 ? "text-sky-500"      // 偏弱
+           : score >= 30 ? "text-blue-600"    // 低迷
+           : "text-slate-400"                 // 冰点
+```
+
+**SentimentLine tooltip moodColor** (`sentiment-line.tsx`):
+与 MSI 大数字阈值完全一致 (6 档: 70/60/50/40/30)。
+
+**SubMetric 组件内评分颜色** (`sub-metric.tsx:42`):
+```typescript
+// 非反向模式 (默认):
+score >= 70 ? "text-red-600"
+: score >= 40 ? "text-amber-600"
+: "text-emerald-600"
+
+// 反向模式 (invertTone=true, 如 vol):
+score >= 70 ? "text-emerald-600"
+: score >= 40 ? "text-amber-600"
+: "text-red-600"
+```
+
+**MSI Level 元数据** (`sub-metric.tsx:19`):
+```typescript
+const MSI_LEVEL_META = {
+  hot:    { label: "火热", tone: "text-red-600",    chip: "border-red-200 bg-red-50 text-red-700" },
+  active: { label: "活跃", tone: "text-orange-600",  chip: "border-orange-200 bg-orange-50 text-orange-700" },
+  normal: { label: "中性", tone: "text-slate-700",   chip: "border-slate-200 bg-slate-50 text-slate-700" },
+  weak:   { label: "弱势", tone: "text-blue-600",    chip: "border-blue-200 bg-blue-50 text-blue-700" },
+  ice:    { label: "冰点", tone: "text-slate-400",   chip: "border-slate-300 bg-slate-100 text-slate-500" },
+}
+```
+
+---
+
+### 7.5 ECharts X 轴对齐策略
+
+**问题**: msi 历史有周末脏数据，sh 指数 API 不收录调休周六，两边日期不完全对齐会导致断线。
+
+**解法** (`market-sentiment-index-card.tsx:158`):
+```typescript
+// 取 msi ∩ sh 的交集，只有两边都有的日期才渲染
+const shDates = new Set(shIndex.map((it) => it.tradeDate))
+const alignedHistory = (history ?? []).filter(it => shDates.has(it.tradeDate))
+```
+
+**断线处理**: ECharts 默认 `connectNulls: false`，任一数据源缺日期则断线，不使用 `connectNulls: true`（避免视觉假象）。
+
+---
+
+### 7.6 日期导航行为
+
+- `date = null` → 默认行为（后端返回上一交易日）
+- 用户选择历史日期 → 所有 9 张子卡 + history 一起重拉
+- 重置按钮 → `setDate(null)`，回退到上一交易日
+- 日历禁用规则: 周末（`getDay() === 0 || getDay() === 6`）+ 未来日期
+
+---
+
+### 7.7 前端组件文件索引
+
+| 组件文件 | 职责 |
+|---------|------|
+| `frontend/src/views/market/market-sentiment/index.tsx` | 页面入口，布局（5/6 + 1/6 Grid） |
+| `frontend/src/views/market/market-sentiment/components/market-sentiment-index-card.tsx` | 顶部合成指数大卡，ECharts 双Y轴叠加 |
+| `frontend/src/views/market/market-sentiment/components/sentiment-line.tsx` | ECharts 折线图组件，支持 `overlay` prop |
+| `frontend/src/views/market/market-sentiment/components/sub-metric.tsx` | SubMetric 通用子卡组件 + LEVEL_META / MSI_LEVEL_META |
+| `frontend/src/views/market/market-sentiment/components/volatility-sentiment-card.tsx` | 波动率情绪子卡 |
+| `frontend/src/views/market/market-sentiment/components/turnover-activity-card.tsx` | 成交活跃度子卡 |
+| `frontend/src/views/market/market-sentiment/components/risk-appetite-card.tsx` | 风险偏好了卡 |
+| `frontend/src/views/market/market-sentiment/components/market-breadth-card.tsx` | 市场广度子卡 |
+| `frontend/src/views/market/market-sentiment/components/new-high-252d-card.tsx` | 252日新高子卡 |
+| `frontend/src/views/market/market-sentiment/components/limit-emotion-card.tsx` | 涨跌停情绪子卡 |
+| `frontend/src/views/market/market-sentiment/components/profit-effect-card.tsx` | 赚钱效应子卡 |
+| `frontend/src/views/market/market-sentiment/components/sector-breadth-card.tsx` | 板块扩散子卡 |
+| `frontend/src/views/market/market-sentiment/components/style-risk-appetite-card.tsx` | 风格风险偏好子卡 |
+| `frontend/src/views/market/market-sentiment/components/skeletons.tsx` | 加载骨架屏 |
+| `frontend/src/lib/api.ts` | 所有 fetcher 函数 + TypeScript 类型定义 |

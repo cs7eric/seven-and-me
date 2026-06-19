@@ -15,6 +15,7 @@ import StockOverviewPage from "../views/stock-overview"
 import MarketPulseMock from "../views/stock-overview/mock-market"
 import MarketPulsePage from "../views/market/market-pulse"
 import MarketSentimentPage from "../views/market/market-sentiment"
+import PocPage from "../views/poc"
 import StockReviewPage from "../views/stock-review"
 
 export const router = createBrowserRouter([
@@ -65,6 +66,10 @@ export const router = createBrowserRouter([
       {
         path: "market/sentiment",
         element: <MarketSentimentPage />,
+      },
+      {
+        path: "poc",
+        element: <PocPage />,
       },
       {
         path: "stock-overview/application-analysis",
