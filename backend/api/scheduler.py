@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 import traceback
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -100,6 +101,24 @@ from backend.services.scheduler.ths_industry_fund_flow_daily_scheduler import (
     start_ths_industry_fund_flow_daily_scheduler,
     stop_ths_industry_fund_flow_daily_scheduler,
 )
+from backend.services.scheduler.style_risk_appetite_scheduler import (
+    get_style_risk_appetite_scheduler_status,
+    run_style_risk_appetite_now,
+    start_style_risk_appetite_scheduler,
+    stop_style_risk_appetite_scheduler,
+)
+from backend.services.scheduler.profit_effect_scheduler import (
+    get_profit_effect_scheduler_status,
+    run_profit_effect_now,
+    start_profit_effect_scheduler,
+    stop_profit_effect_scheduler,
+)
+from backend.services.scheduler.market_sentiment_index_scheduler import (
+    get_market_sentiment_index_scheduler_status,
+    run_market_sentiment_index_now,
+    start_market_sentiment_index_scheduler,
+    stop_market_sentiment_index_scheduler,
+)
 from backend.services.stock.market_overview_eltdx_service import capture_overview
 from backend.utils.json_io import read_json_file, write_json_file
 
@@ -125,9 +144,102 @@ _KNOWN_JOB_IDS = {
     'market_overview_daily',
     # 工作日 17:15 把同花顺 90 行业资金流回填 duckdb (ths_industry_fund_flow_daily)
     'ths_industry_fund_flow_daily',
+    # 17:08 / 17:09 / 17:10 的 pipeline 收尾 job (subprocess 调 scripts/backfill_*)
+    'style_risk_appetite_refresh', 'profit_effect_refresh', 'market_sentiment_index_refresh',
     # 测试用 job: 无对应 scheduler 模块, 用来演示"删除后重启不自动恢复"
     'test_scheduler_demo',
 }
+
+# ---------------------------------------------------------------------------
+# Job category: 给前端 /settings/scheduler 渲染 tab 用.
+# ---------------------------------------------------------------------------
+# 两份映射:
+#   1. JOB_CATEGORIES      -- list[CategoryMeta], 顺序即 id (1-based, 跟 SQL BIGSERIAL 对齐)
+#   2. JOB_CATEGORY_MAP    -- job_id → [category_id (int), ...] 多对多
+#
+# 跟 scheduler_migration.sql 的 scheduler_job_categories / scheduler_job_category_mapping
+# 两张表对齐 (SQL INSERT 顺序就是这个 list 的顺序). 切到 Postgres 持久化后, 这两个 dict
+# 直接换成 SQL 查询即可.
+# 不写到 jobs.json: 避免 _register_job() 自动注册时把它覆盖掉.
+
+@dataclass(frozen=True)
+class CategoryMeta:
+    label: str
+    icon_hint: str           # lucide 图标名, 前端 ICON_MAP 映射到组件
+    sort_order: int
+    description: str = ''
+
+
+# category 定义. list 顺序 = id (1-based), 跟 SQL INSERT 顺序一一对齐.
+# 警告: 重排这个 list 会改变所有 job 的 category_id 进而打乱 JOB_CATEGORY_MAP;
+# 增/删/改 metadata 是安全的, 不要重排顺序 (除非同时改 JOB_CATEGORY_MAP).
+JOB_CATEGORIES: list[CategoryMeta] = [
+    CategoryMeta('盘内实时', 'activity',  10, '工作时间内 (盘内/盘后) 持续刷新的 job'),                       # id=1
+    CategoryMeta('AI 分析',  'sparkles',  20, 'AI 解读 / 标的级应用分析'),                                  # id=2
+    CategoryMeta('数据采集', 'database',  30, '爬虫 / 离线下载 (A 股全市场 / 同花顺行业成分股 / TDX 历史)'),  # id=3
+    CategoryMeta('EOD 回填', 'refresh',   40, '工作日盘后增量回填 duckdb'),                                  # id=4
+    CategoryMeta('合成指标', 'trending',  50, '多张子表加权合成 (style_risk / profit_effect / sentiment_index)'),  # id=5
+    CategoryMeta('测试',     'flask',     99, '测试用 entry, 用来演示 jobs.json 注册表 CRUD'),               # id=6
+]
+
+
+# job ↔ category 多对多映射. 一个 job 暂只属于 1 个 category, 但用 list 包,
+# 后续扩到多对多不用改 schema. id 跟 JOB_CATEGORIES list 顺序对齐.
+JOB_CATEGORY_MAP: dict[str, list[int]] = {
+    # 1 = 盘内实时
+    'turnover_refresh':                       [1],
+    'market_pulse_inside':                    [1],
+    'market_pulse_close':                     [1],
+    'market_pulse_constituents':              [1],
+    'market_overview_inside':                 [1],
+    'market_overview_close':                  [1],
+    'market_overview_warmup':                 [1],
+    'eltdx_overview_inside':                  [1],
+    'eltdx_overview_close':                   [1],
+    'eltdx_overview_warmup':                  [1],
+    # 2 = AI 分析
+    'application_analysis':                   [2],
+    'auction_ai_analysis':                    [2],
+    # 3 = 数据采集
+    'stock_universe_refresh':                 [3],
+    'ths_industry_constituents_weekly':       [3],
+    'ths_industry_constituents_daily':        [3],
+    'tdx_hsjday_download':                    [3],
+    # 4 = EOD 回填
+    'daily_eod_incremental':                  [4],
+    'market_overview_daily':                  [4],
+    'ths_industry_fund_flow_daily':           [4],
+    # 5 = 合成指标
+    'style_risk_appetite_refresh':            [5],
+    'profit_effect_refresh':                  [5],
+    'market_sentiment_index_refresh':         [5],
+    # 6 = 测试
+    'test_scheduler_demo':                    [6],
+}
+
+
+def _categories_for(job_id: str | None) -> list[int]:
+    """返 job_id 属于的所有 category id (int, 按 sort_order 排序). 未知 job 返 [].
+
+    数据来源: 优先从 Postgres ``app.scheduler_job_category_mappings`` 读; 连不上时
+    回退到 Python ``JOB_CATEGORY_MAP`` (启动期 / 单测 / DB schema 还没建好的过渡).
+    """
+    if not job_id:
+        return []
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.scheduler import SchedulerJobRepository
+
+        with session_scope() as db:
+            return SchedulerJobRepository(db).category_ids_for_job(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_categories_for(%s) DB read failed, fallback to JOB_CATEGORY_MAP: %s",
+            job_id, exc,
+        )
+        cats = JOB_CATEGORY_MAP.get(job_id, [])
+        return sorted(cats, key=lambda c: JOB_CATEGORIES[c - 1].sort_order if 1 <= c <= len(JOB_CATEGORIES) else 999)
+
 
 # application_analysis 的 enabled 写入 ``scheduler.json``（状态文件），其余两个走
 # ``scheduler/<id>.json``。这里集中处理。
@@ -463,6 +575,7 @@ def _supports_enable(job_id: str) -> bool:
         'tdx_hsjday_download',
         'market_overview_daily',
         'ths_industry_fund_flow_daily',
+        'style_risk_appetite_refresh', 'profit_effect_refresh', 'market_sentiment_index_refresh',
         'test_scheduler_demo',
     }
 
@@ -497,6 +610,12 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         return get_market_overview_daily_scheduler_status()
     if job_id == 'ths_industry_fund_flow_daily':
         return get_ths_industry_fund_flow_daily_scheduler_status()
+    if job_id == 'style_risk_appetite_refresh':
+        return get_style_risk_appetite_scheduler_status()
+    if job_id == 'profit_effect_refresh':
+        return get_profit_effect_scheduler_status()
+    if job_id == 'market_sentiment_index_refresh':
+        return get_market_sentiment_index_scheduler_status()
     return {}
 
 
@@ -530,6 +649,12 @@ def _start_scheduler(job_id: str) -> None:
         start_market_overview_daily_scheduler()
     elif job_id == 'ths_industry_fund_flow_daily':
         start_ths_industry_fund_flow_daily_scheduler()
+    elif job_id == 'style_risk_appetite_refresh':
+        start_style_risk_appetite_scheduler()
+    elif job_id == 'profit_effect_refresh':
+        start_profit_effect_scheduler()
+    elif job_id == 'market_sentiment_index_refresh':
+        start_market_sentiment_index_scheduler()
 
 
 def _stop_scheduler(job_id: str) -> None:
@@ -561,6 +686,12 @@ def _stop_scheduler(job_id: str) -> None:
         stop_market_overview_daily_scheduler()
     elif job_id == 'ths_industry_fund_flow_daily':
         stop_ths_industry_fund_flow_daily_scheduler()
+    elif job_id == 'style_risk_appetite_refresh':
+        stop_style_risk_appetite_scheduler()
+    elif job_id == 'profit_effect_refresh':
+        stop_profit_effect_scheduler()
+    elif job_id == 'market_sentiment_index_refresh':
+        stop_market_sentiment_index_scheduler()
 
 
 def _trigger_scheduler(job_id: str) -> dict[str, Any]:
@@ -664,6 +795,12 @@ def _trigger_scheduler_inner(job_id: str) -> dict[str, Any]:
         return run_market_overview_daily_now()
     if job_id == 'ths_industry_fund_flow_daily':
         return run_ths_industry_fund_flow_daily_now()
+    if job_id == 'style_risk_appetite_refresh':
+        return run_style_risk_appetite_now()
+    if job_id == 'profit_effect_refresh':
+        return run_profit_effect_now()
+    if job_id == 'market_sentiment_index_refresh':
+        return run_market_sentiment_index_now()
     # test_scheduler_demo: 测试 entry, 没有对应 scheduler, trigger / start / stop 都返回错误
     if job_id == 'test_scheduler_demo':
         return {'ok': False, 'error': 'test_scheduler_demo 是测试 entry, 没有对应 scheduler 模块; 用来演示 jobs.json 注册表 CRUD'}
@@ -737,6 +874,100 @@ def get_job_history(job_id: str):
     })
 
 
+@scheduler_bp.route('/api/scheduler/stats/daily', methods=['GET'])
+def daily_stats():
+    """近 N 天每天 run_history 聚合 (按 status 分类).
+
+    Query param ``days`` (默认 14, 最大 90).
+
+    Response::
+
+        {
+            "ok": true,
+            "items": [
+                {"date": "2026-06-07", "total": 5, "success": 4, "failed": 1, "skipped": 0},
+                ...
+            ],
+            "summary": {
+                "total": 42,
+                "failed": 3,
+                "success_rate": 0.93
+            }
+        }
+    """
+    days = request.args.get("days", 14, type=int)
+    days = max(1, min(days, 90))
+
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.scheduler import SchedulerJobRepository
+
+        with session_scope() as db:
+            items = SchedulerJobRepository(db).daily_stats(days=days)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("daily_stats DB read failed: %s", exc)
+        return jsonify({"ok": True, "items": [], "summary": {"total": 0, "failed": 0, "success_rate": 1.0}})
+
+    total = sum(it["total"] for it in items)
+    failed = sum(it["failed"] for it in items)
+    success_rate = round((total - failed) / total, 4) if total > 0 else 1.0
+
+    return jsonify({
+        "ok": True,
+        "items": items,
+        "summary": {"total": total, "failed": failed, "success_rate": success_rate},
+    })
+
+
+@scheduler_bp.route('/api/scheduler/categories', methods=['GET'])
+def list_categories():
+    """列出所有 job category + 每类 job 数.
+
+    给前端 /settings/scheduler 渲染 tab 用, 不用在前端硬编码 CATEGORY_TABS.
+    数据来源: Postgres ``app.scheduler_job_categories`` JOIN
+    ``app.scheduler_job_category_mappings``. DB 连不上时回退到 ``JOB_CATEGORIES`` +
+    ``JOB_CATEGORY_MAP``.
+
+    Response shape::
+
+        {
+            "ok": true,
+            "items": [
+                {"id": 1, "label": "盘内实时", "icon_hint": "activity",
+                 "sort_order": 10, "description": "...", "count": 10},
+                ...
+            ],
+            "count": N
+        }
+    """
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.scheduler import SchedulerJobRepository
+
+        with session_scope() as db:
+            items = SchedulerJobRepository(db).list_categories_with_counts()
+        return jsonify({'ok': True, 'items': items, 'count': len(items)})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "list_categories DB read failed, fallback to JOB_CATEGORIES: %s", exc,
+        )
+        counts: dict[int, int] = {}
+        for cats in JOB_CATEGORY_MAP.values():
+            for cid in cats:
+                counts[cid] = counts.get(cid, 0) + 1
+        items = []
+        for cid, meta in enumerate(JOB_CATEGORIES, start=1):
+            items.append({
+                'id': cid,
+                'label': meta.label,
+                'icon_hint': meta.icon_hint,
+                'sort_order': meta.sort_order,
+                'description': meta.description,
+                'count': counts.get(cid, 0),
+            })
+        return jsonify({'ok': True, 'items': items, 'count': len(items)})
+
+
 @scheduler_bp.route('/api/scheduler/jobs', methods=['GET'])
 def list_jobs():
     """列出所有 job + 各自 config + 实时 status。
@@ -764,13 +995,29 @@ def list_jobs():
             ]
         }
     """
+    # 数据来源: 优先 Postgres ``app.scheduler_jobs`` (+ mapping), DB 连不上时回退到
+    # ``scheduler/jobs.json`` (启动期 / 单测 / 迁移前的过渡).
+    registry_entries: list[dict[str, Any]] = []
+    db_read_failed = False
     try:
-        registry = _load_jobs_registry()
-    except Exception as exc:
-        return jsonify({'ok': False, 'error': f'load registry failed: {exc}'}), 500
+        from backend.config.database import session_scope
+        from backend.repositories.scheduler import SchedulerJobRepository
+
+        with session_scope() as db:
+            registry_entries = SchedulerJobRepository(db).list_jobs()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("list_jobs DB read failed, fallback to jobs.json: %s", exc)
+        db_read_failed = True
+
+    if db_read_failed:
+        try:
+            registry = _load_jobs_registry()
+            registry_entries = registry.get('jobs', [])
+        except Exception as exc:
+            return jsonify({'ok': False, 'error': f'load registry failed: {exc}'}), 500
 
     items: list[dict[str, Any]] = []
-    for entry in registry.get('jobs', []):
+    for entry in registry_entries:
         job_id = entry.get('id')
         if not job_id:
             continue
@@ -784,15 +1031,24 @@ def list_jobs():
         except Exception as exc:
             live = {'error': f'get live status failed: {exc}'}
 
+        # DB 路径下, categories 已经在 entry['_category_ids'] 里; JSON 回退路径下
+        # entry 里没有, 走 _categories_for() (它本身也走 DB, 二次失败再用 dict).
+        db_categories = entry.get('_category_ids')
+        categories_value = db_categories if db_categories is not None else _categories_for(job_id)
+
         enabled_in_registry = bool(entry.get('enabled', True))
         config_enabled = config.get('enabled')
         # 对于 application_analysis 来说，没有独立 config；显示 live.running 即可
         if job_id == 'application_analysis':
             config_enabled = enabled_in_registry
 
+        # 不要把内部字段 ``_category_ids`` 漏到 API 响应里
+        entry_for_response = {k: v for k, v in entry.items() if k != '_category_ids'}
+
         items.append({
-            **entry,
+            **entry_for_response,
             'supports_enable': _supports_enable(job_id),
+            'categories': categories_value,
             'enabled': enabled_in_registry,
             'config_enabled': bool(config_enabled) if config_enabled is not None else True,
             'config': config,
@@ -809,22 +1065,45 @@ def get_job(job_id: str):
     if job_id not in _KNOWN_JOB_IDS:
         return jsonify({'ok': False, 'error': f'unknown job_id: {job_id}'}), 404
 
-    registry = _load_jobs_registry()
-    entry = next(
-        (item for item in registry.get('jobs', []) if item.get('id') == job_id),
-        None,
-    )
+    # 优先从 DB 读 entry, 失败回退到 jobs.json
+    entry: dict[str, Any] | None = None
+    db_read_failed = False
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.scheduler import SchedulerJobRepository
+
+        with session_scope() as db:
+            entry = SchedulerJobRepository(db).get_job_by_code(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_job(%s) DB read failed, fallback to jobs.json: %s", job_id, exc)
+        db_read_failed = True
+
+    if db_read_failed or entry is None:
+        # DB 读失败 / DB 里没找到 → 回退 jobs.json
+        try:
+            registry = _load_jobs_registry()
+            entry = next(
+                (item for item in registry.get('jobs', []) if item.get('id') == job_id),
+                None,
+            )
+        except Exception as exc:
+            return jsonify({'ok': False, 'error': f'load registry failed: {exc}'}), 500
+
     if entry is None:
         return jsonify({'ok': False, 'error': f'job {job_id} not registered'}), 404
 
     config_file = entry.get('config_file') or ''
     config = _load_job_config(config_file) if config_file else {}
     live = _get_live_status(job_id)
+    db_categories = entry.get('_category_ids')
+    categories_value = db_categories if db_categories is not None else _categories_for(job_id)
+    entry_for_response = {k: v for k, v in entry.items() if k != '_category_ids'}
     return jsonify({
         'ok': True,
         'item': {
-            **entry,
+            **entry_for_response,
             'supports_enable': _supports_enable(job_id),
+            'categories': categories_value,
             'enabled': bool(entry.get('enabled', True)),
             'config_enabled': bool(config.get('enabled', True)) if job_id != 'application_analysis' else True,
             'config': config,
@@ -848,15 +1127,32 @@ def _flip_enabled(job_id: str, enabled: bool) -> dict[str, Any]:
 
     enabled_bool = bool(enabled)
 
-    # test_scheduler_demo 没有对应 config 文件, 写到 jobs.json 注册表里的 enabled 字段
+    # test_scheduler_demo 没有对应 config 文件, 注册表 enabled 写到 Postgres (db)
+    # 或回退写到 jobs.json (fallback). 其他 job 写到 config_file (调度器运行时读).
     if job_id == 'test_scheduler_demo':
-        entry['enabled'] = enabled_bool
-        registry.setdefault('jobs', [])
-        # 写回
-        p = _jobs_registry_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        write_json_file(p, registry)
-        return {'ok': True, 'job_id': job_id, 'enabled': enabled_bool, 'config': {'enabled': enabled_bool}}
+        try:
+            from backend.config.database import session_scope
+            from backend.repositories.scheduler import SchedulerJobRepository
+
+            with session_scope() as db:
+                SchedulerJobRepository(db).set_enabled_by_code(job_id, enabled_bool)
+            return {
+                'ok': True,
+                'job_id': job_id,
+                'enabled': enabled_bool,
+                'config': {'enabled': enabled_bool},
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "_flip_enabled(%s) DB write failed, fallback to jobs.json: %s",
+                job_id, exc,
+            )
+            entry['enabled'] = enabled_bool
+            registry.setdefault('jobs', [])
+            p = _jobs_registry_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            write_json_file(p, registry)
+            return {'ok': True, 'job_id': job_id, 'enabled': enabled_bool, 'config': {'enabled': enabled_bool}}
 
     config_file = entry.get('config_file') or ''
     if not config_file:
@@ -866,6 +1162,18 @@ def _flip_enabled(job_id: str, enabled: bool) -> dict[str, Any]:
     config['enabled'] = enabled_bool
     config['job_name'] = config.get('job_name') or job_id
     _save_job_config(config_file, config)
+    # 同步写一份到 Postgres 注册表, 让 list_jobs 的 enabled 字段也对得上 (避免不一致)
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.scheduler import SchedulerJobRepository
+
+        with session_scope() as db:
+            SchedulerJobRepository(db).set_enabled_by_code(job_id, enabled_bool)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(
+            "_flip_enabled(%s) DB sync skipped (config file still authoritative): %s",
+            job_id, exc,
+        )
     return {'ok': True, 'job_id': job_id, 'enabled': enabled_bool, 'config': config}
 
 
@@ -959,7 +1267,22 @@ def delete_job(job_id: str):
         traceback.print_exc()
         logger.warning("delete_job: stop scheduler for %s failed: %s", job_id, exc)
 
-    # 2) 从 jobs.json 移除该 job
+    # 2) 优先从 Postgres 软删 (deleted_at = now), DB 失败回退到 jobs.json
+    db_removed = False
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.scheduler import SchedulerJobRepository
+
+        with session_scope() as db:
+            db_removed = SchedulerJobRepository(db).soft_delete_by_code(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("delete_job(%s) DB soft-delete failed, fallback to jobs.json: %s", job_id, exc)
+
+    if db_removed:
+        logger.info("delete_job: soft-deleted %s from app.scheduler_jobs", job_id)
+        return jsonify({'ok': True, 'job_id': job_id, 'removed': 1})
+
+    # fallback: 从 jobs.json 移除
     p = _jobs_registry_path()
     data = _load_jobs_registry()
     before_count = len(data.get("jobs", []))

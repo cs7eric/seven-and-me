@@ -14,3 +14,8 @@ beautifulsoup4>=4.12.0
 lxml>=4.9.0
 py-mini-racer>=0.6.0  # 同花顺 hexin-v 加密破解 (V8 嵌入)
 pandas>=2.0.0  # 同花顺全行业资金 (pd.read_html 解析表格)
+
+# Postgres + SQLAlchemy (自选股等结构化数据从 JSON 迁过来)
+SQLAlchemy>=2.0
+psycopg[binary]>=3.2
+alembic>=1.13

@@ -9,5 +9,28 @@
   },
   "timezone_offset_hours": 8,
   "tick_seconds": 60,
-  "command": "python -u scripts/backfill_profit_effect.py --days=2 --force"
+  "command": "python -u scripts/backfill_profit_effect.py --days=2 --force",
+  "schedulerStartedAt": "2026-06-20T22:38:39",
+  "running": true,
+  "lastRunAt": "2026-06-20T12:41:05",
+  "lastTargetTradeDate": "2026-06-18",
+  "lastDurationSeconds": 1.4,
+  "lastDaysRequested": 2,
+  "lastRowsUpserted": null,
+  "lastRowsSkipped": null,
+  "lastRunOk": true,
+  "lastRunError": null,
+  "totalRuns": 1,
+  "history": [
+    {
+      "start_at": "2026-06-20T12:41:05",
+      "end_at": "2026-06-20T12:41:06",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 1.4
+    }
+  ],
+  "stoppedAt": "2026-06-20T12:41:35",
+  "_saved_at": "2026-06-20T12:41:46.118809"
 }

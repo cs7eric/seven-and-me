@@ -9,5 +9,36 @@
   },
   "timezone_offset_hours": 8,
   "tick_seconds": 60,
-  "command": "python -u scripts/backfill_market_sentiment_index.py --days=2 --force"
+  "command": "python -u scripts/backfill_market_sentiment_index.py --days=2 --force",
+  "schedulerStartedAt": "2026-06-20T22:38:39",
+  "running": true,
+  "lastRunAt": "2026-06-20T12:45:14",
+  "lastTargetTradeDate": "2026-06-18",
+  "lastDurationSeconds": 1.4,
+  "lastDaysRequested": 2,
+  "lastRowsUpserted": null,
+  "lastRowsSkipped": null,
+  "lastRunOk": true,
+  "lastRunError": null,
+  "totalRuns": 2,
+  "history": [
+    {
+      "start_at": "2026-06-20T12:41:06",
+      "end_at": "2026-06-20T12:41:07",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 1.3
+    },
+    {
+      "start_at": "2026-06-20T12:45:14",
+      "end_at": "2026-06-20T12:45:16",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 1.4
+    }
+  ],
+  "stoppedAt": "2026-06-20T12:41:35",
+  "_saved_at": "2026-06-20T12:41:46.136061"
 }

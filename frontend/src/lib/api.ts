@@ -3868,6 +3868,8 @@ export interface SchedulerJobItem {
   service_module?: string
   service_class?: string
   registered_at?: string
+  /** 后端按 JOB_CATEGORY_MAP 注入: job 属于的所有 category id (numeric, BIGSERIAL). 多对多, 已按 sort_order 排好. */
+  categories?: number[]
   supports_enable: boolean
   enabled: boolean
   config_enabled: boolean
@@ -3889,6 +3891,70 @@ export interface SchedulerJobsResponse {
   items: SchedulerJobItem[]
   count: number
   error?: string
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler categories (从后端 /api/scheduler/categories 拉, 给 tab 用)
+// ---------------------------------------------------------------------------
+
+export interface SchedulerCategory {
+  id: number
+  label: string
+  /** lucide 图标名, 前端 ICON_MAP 映射到组件 */
+  icon_hint: string
+  sort_order: number
+  description?: string
+  /** 该 category 下的 job 数 */
+  count: number
+}
+
+export interface SchedulerCategoriesResponse {
+  ok: boolean
+  items: SchedulerCategory[]
+  count: number
+  error?: string
+}
+
+// ---------------------------------------------------------------------------
+// Scheduler daily run statistics
+// ---------------------------------------------------------------------------
+
+export interface SchedulerDailyStatItem {
+  date: string
+  total: number
+  success: number
+  failed: number
+  skipped: number
+}
+
+export interface SchedulerDailyStatsSummary {
+  total: number
+  failed: number
+  success_rate: number
+}
+
+export interface SchedulerDailyStatsResponse {
+  ok: boolean
+  items: SchedulerDailyStatItem[]
+  summary: SchedulerDailyStatsSummary
+  error?: string
+}
+
+export async function fetchSchedulerDailyStats(days = 14): Promise<SchedulerDailyStatsResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/scheduler/stats/daily?days=${encodeURIComponent(String(days))}`,
+    { cache: "no-store" },
+  )
+  const data = (await res.json().catch(() => null)) as SchedulerDailyStatsResponse | null
+  if (!res.ok || !data) throw new Error("获取调度任务日统计失败")
+  return data
+}
+
+export async function fetchSchedulerCategories(): Promise<SchedulerCategoriesResponse> {
+  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/categories`, { cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as SchedulerCategoriesResponse | null
+  if (!res.ok || !data) throw new Error("获取调度任务分类失败")
+  return data
 }
 
 export async function fetchSchedulerJobs(): Promise<SchedulerJobsResponse> {

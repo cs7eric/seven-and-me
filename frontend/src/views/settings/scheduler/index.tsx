@@ -1,16 +1,19 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
+﻿import { useCallback, useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   CirclePause,
   Clock,
+  Database,
   FileCode2,
   Hand,
   History as HistoryIcon,
+  LayoutGrid,
   ListChecks,
   Play,
   Power,
@@ -18,17 +21,27 @@ import {
   RefreshCcw,
   RefreshCw,
   Settings2,
+  Sparkles,
   TimerReset,
   Trash2,
+  TrendingUp,
   Zap,
 } from "lucide-react"
+import { Line, LineChart, XAxis } from "recharts"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Separator } from "@/components/ui/separator"
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs"
 import { notification } from "@/components/ui/notification"
 import {
   Dialog,
@@ -42,11 +55,15 @@ import {
 } from "@/components/ui/dialog"
 import DogLoader from "@/components/loader/dog-loader"
 import {
+  type SchedulerCategory,
+  type SchedulerDailyStatItem,
   type SchedulerJobHistoryItem,
   type SchedulerJobItem,
   deleteSchedulerJob,
   disableSchedulerJob,
   enableSchedulerJob,
+  fetchSchedulerCategories,
+  fetchSchedulerDailyStats,
   fetchSchedulerJobHistory,
   fetchSchedulerJobs,
   startSchedulerJob,
@@ -58,6 +75,28 @@ type ActionKey = "enable" | "disable" | "start" | "stop" | "trigger" | "delete"
 type ActionState = Record<string, ActionKey | null>
 
 const REFRESH_INTERVAL_MS = 5_000
+const ALL_TAB = "all"  // 兜底 tab (不过滤)
+
+// ---------------------------------------------------------------------------
+// Icon mapping: 后端 icon_hint (lucide 图标名) → 实际组件.
+// 这是前端唯一与后端耦合的点: 后端返 "activity" / "sparkles" 等字符串,
+// 前端用这张表查组件. 加新 category 时, 后端给个新 icon_hint 即可, 前端
+// 在这里加一行 fallback. 没找到就回退到 LayoutGrid.
+// ---------------------------------------------------------------------------
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  activity: Activity,
+  sparkles: Sparkles,
+  database: Database,
+  refresh: RefreshCcw,
+  trending: TrendingUp,
+  flask: Settings2,        // lucide 没 Flask, 用 Settings2 凑
+  grid: LayoutGrid,
+}
+
+function iconFor(hint: string | undefined): React.ComponentType<{ className?: string }> {
+  if (!hint) return LayoutGrid
+  return ICON_MAP[hint] || LayoutGrid
+}
 
 function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—"
@@ -159,7 +198,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   }, [expanded, job.id, pending])  // pending 变化 (用户点了 trigger) 时也立即重拉一次
 
   return (
-    <Card>
+    <Card className="border-0 bg-muted/60 shadow-none">
       {/* 折叠态: 显示基本信息 + 调度按钮 (start/stop + trigger) + 展开 chevron */}
       <CardHeader
         className="cursor-pointer select-none"
@@ -177,6 +216,15 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <Settings2 className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{job.name}</span>
                 <span className="font-mono text-xs text-muted-foreground">({job.id})</span>
+                {(job.categories || []).map((c) => (
+                  <Badge
+                    key={c}
+                    variant="outline"
+                    className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+                  >
+                    {c}
+                  </Badge>
+                ))}
               </CardTitle>
               {!expanded && job.description ? (
                 <CardDescription className="line-clamp-1">{job.description}</CardDescription>
@@ -638,23 +686,38 @@ export default function SchedulerSettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [pending, setPending] = useState<ActionState>({})
+  const [activeCategory, setActiveCategory] = useState<string>(ALL_TAB)
+  const [categories, setCategories] = useState<SchedulerCategory[]>([])
+  const [dailyStats, setDailyStats] = useState<SchedulerDailyStatItem[]>([])
+  const [dailyStatsSummary, setDailyStatsSummary] = useState<{ total: number; failed: number; success_rate: number } | null>(null)
 
   const refresh = useCallback(async (withSpinner = false) => {
     if (withSpinner) setLoading(true)
     try {
-      const res = await fetchSchedulerJobs()
-      if (res.ok) {
-        setJobs(res.items || [])
+      const [jobsRes, catRes, statsRes] = await Promise.all([
+        fetchSchedulerJobs(),
+        fetchSchedulerCategories(),
+        fetchSchedulerDailyStats(14),
+      ])
+      if (jobsRes.ok) {
+        setJobs(jobsRes.items || [])
         setError(null)
         setLastUpdated(new Date())
       } else {
-        setError(res.error || "获取调度任务列表失败")
+        setError(jobsRes.error || "获取调度任务列表失败")
         if (withSpinner) {
           notification.danger({
             title: "加载调度任务失败",
-            description: res.error || "请检查后端服务",
+            description: jobsRes.error || "请检查后端服务",
           })
         }
+      }
+      if (catRes.ok) {
+        setCategories(catRes.items || [])
+      }
+      if (statsRes.ok) {
+        setDailyStats(statsRes.items || [])
+        setDailyStatsSummary(statsRes.summary ?? null)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "未知错误"
@@ -773,6 +836,31 @@ export default function SchedulerSettingsPage() {
     return { total, running, enabled }
   }, [jobs])
 
+  // 每个 category 的 job 数 (用于 tab 上显示 count; 后端也带, 这里前端再算一份兜底)
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = { [ALL_TAB]: jobs.length }
+    for (const job of jobs) {
+      for (const c of job.categories || []) {
+        counts[c] = (counts[c] || 0) + 1
+      }
+    }
+    return counts
+  }, [jobs])
+
+  // 按 category 切分 jobs: 每个 tab 一个数组.
+  //   - ALL_TAB 返回全部 jobs
+  //   - 其它 tab 返回 (categories || []).includes(catId) 的 jobs
+  // shadcn TabsContent 要求 value 是 string, 这里跟 TabsTrigger 的 value 用同一个 String(catId).
+  const jobsForCategory = useCallback(
+    (key: string): SchedulerJobItem[] => {
+      if (key === ALL_TAB) return jobs
+      const catId = Number(key)
+      if (!Number.isFinite(catId)) return jobs
+      return jobs.filter((job) => (job.categories || []).includes(catId))
+    },
+    [jobs],
+  )
+
   return (
     <WorkspaceShell sectionLabel="Settings" pageTitle="Scheduler">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -829,43 +917,213 @@ export default function SchedulerSettingsPage() {
         />
       </div>
 
-      {error ? (
-        <Alert variant="destructive">
-          <AlertTriangle className="size-4" />
-          <AlertTitle>拉取调度任务失败</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      {loading && jobs.length === 0 ? (
-        <DogLoader overlay size={25} label="正在加载调度任务..." />
-      ) : jobs.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-            <RefreshCw className="size-8 text-muted-foreground" />
-            <div className="text-sm font-medium text-foreground">
-              jobs.json 中还没有注册任何调度任务
+      {/* 每日运行统计 — 双折线: 总次数 / 失败次数 */}
+      {dailyStats.length > 0 ? (
+        <Card className="overflow-hidden border-0 bg-muted/60 shadow-none py-0">
+          <div className="flex items-center justify-between gap-4 px-4 pt-4 pb-2">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <BarChart3 className="size-4 text-muted-foreground" />
+              运行统计
             </div>
-            <p className="max-w-md text-sm leading-6 text-muted-foreground">
-              启动一次 Flask 后，scheduler 会自动把 turnover / auction / application_analysis
-              三个内置 job 注册进去；或者手动编辑{" "}
-              <code className="rounded bg-muted px-1.5 py-0.5 text-xs">scheduler/jobs.json</code>。
-            </p>
+            {dailyStatsSummary ? (
+              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block size-2 rounded-full bg-emerald-500/80" />
+                  成功 {dailyStatsSummary.total - dailyStatsSummary.failed}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block size-2 rounded-full bg-red-500/80" />
+                  失败 {dailyStatsSummary.failed}
+                </span>
+                <span>
+                  {dailyStatsSummary.success_rate >= 1
+                    ? "100"
+                    : (dailyStatsSummary.success_rate * 100).toFixed(1)}
+                  %
+                </span>
+                <span className="text-muted-foreground/60">· {dailyStatsSummary.total} 次</span>
+              </div>
+            ) : null}
+          </div>
+          <CardContent className="px-4 pb-3">
+            <ChartContainer
+              config={{
+                total: { label: "总次数", color: "hsl(var(--chart-2))" },
+                failed: { label: "失败次数", color: "hsl(var(--chart-1))" },
+              }}
+              className="h-28"
+            >
+              <LineChart data={dailyStats} margin={{ top: 4, right: 4, bottom: 0, left: -14 }}>
+                <XAxis
+                  dataKey="date"
+                  tickLine={false}
+                  axisLine={false}
+                  fontSize={10}
+                  tickFormatter={(v: string) => v.slice(5)}
+                />
+                <ChartTooltip
+                  content={<ChartTooltipContent />}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="total"
+                  stroke="hsl(var(--chart-2))"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="failed"
+                  stroke="hsl(var(--chart-1))"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </LineChart>
+            </ChartContainer>
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid gap-4 xl:grid-cols-2">
-          {jobs.map((job) => (
-            <JobCard
-              key={job.id}
-              job={job}
-              pending={pending[job.id] ?? null}
-              onAction={handleAction}
-            />
-          ))}
-        </div>
-      )}
+      ) : null}
+
+      {/* shadcn Tabs: 按 category 切换. 默认 variant (bg-muted) 保证 trigger 可见,
+          每个 tab 一个 <TabsContent> 渲染对应 jobs. 不传 forceMount, 让 shadcn
+          按 active tab 自动 mount/unmount. */}
+      <Tabs value={activeCategory} onValueChange={setActiveCategory} className="w-full">
+        <TabsList>
+          {/* "全部" tab 固定第一个, 不来自 API */}
+          <TabsTrigger value={ALL_TAB}>
+            <LayoutGrid className="size-3.5" />
+            全部
+            <Badge
+              variant={activeCategory === ALL_TAB ? "default" : "secondary"}
+              className="ml-1 px-1.5 py-0 text-[10px]"
+            >
+              {categoryCounts[ALL_TAB] ?? 0}
+            </Badge>
+          </TabsTrigger>
+          {categories.map((cat) => {
+            const Icon = iconFor(cat.icon_hint)
+            const count = categoryCounts[cat.id] ?? cat.count
+            const value = String(cat.id)
+            return (
+              <TabsTrigger
+                key={cat.id}
+                value={value}
+                disabled={count === 0}
+                title={cat.description}
+              >
+                <Icon className="size-3.5" />
+                {cat.label}
+                <Badge
+                  variant={activeCategory === value ? "default" : "secondary"}
+                  className="ml-1 px-1.5 py-0 text-[10px]"
+                >
+                  {count}
+                </Badge>
+              </TabsTrigger>
+            )
+          })}
+        </TabsList>
+
+        {error ? (
+          <Alert variant="destructive">
+            <AlertTriangle className="size-4" />
+            <AlertTitle>拉取调度任务失败</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {loading && jobs.length === 0 ? (
+          <DogLoader overlay size={25} label="正在加载调度任务..." />
+        ) : jobs.length === 0 ? (
+          <Card className="border-0 bg-muted/60 shadow-none py-0">
+            <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+              <RefreshCw className="size-8 text-muted-foreground" />
+              <div className="text-sm font-medium text-foreground">
+                jobs.json 中还没有注册任何调度任务
+              </div>
+              <p className="max-w-md text-sm leading-6 text-muted-foreground">
+                启动一次 Flask 后，scheduler 会自动把 turnover / auction / application_analysis
+                三个内置 job 注册进去；或者手动编辑{" "}
+                <code className="rounded bg-muted px-1.5 py-0.5 text-xs">scheduler/jobs.json</code>。
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <TabsContent value={ALL_TAB}>
+              <JobsGrid
+                jobs={jobsForCategory(ALL_TAB)}
+                pending={pending}
+                onAction={handleAction}
+                emptyState={
+                  <Card className="border-0 bg-muted/60 shadow-none py-0">
+                    <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                      <BarChart3 className="size-8 text-muted-foreground" />
+                      <div className="text-sm font-medium text-foreground">
+                        还没有注册任何调度任务
+                      </div>
+                    </CardContent>
+                  </Card>
+                }
+              />
+            </TabsContent>
+
+            {categories.map((cat) => {
+              const value = String(cat.id)
+              return (
+                <TabsContent key={cat.id} value={value}>
+                  <JobsGrid
+                    jobs={jobsForCategory(value)}
+                    pending={pending}
+                    onAction={handleAction}
+                    emptyState={
+                      <Card className="border-0 bg-muted/60 shadow-none py-0">
+                        <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                          <BarChart3 className="size-8 text-muted-foreground" />
+                          <div className="text-sm font-medium text-foreground">
+                            "{cat.label}" category 没有 job
+                          </div>
+                        </CardContent>
+                      </Card>
+                    }
+                  />
+                </TabsContent>
+              )
+            })}
+          </>
+        )}
+      </Tabs>
     </WorkspaceShell>
+  )
+}
+
+/** 一个 tab 的 jobs 网格: jobs 非空时渲染 2 列 JobCard 网格, 空时显示传入的 emptyState.
+ *  "全部" tab + 每个 category tab 共用. */
+function JobsGrid({
+  jobs,
+  pending,
+  onAction,
+  emptyState,
+}: {
+  jobs: SchedulerJobItem[]
+  pending: ActionState
+  onAction: (jobId: string, action: ActionKey) => void
+  emptyState: React.ReactNode
+}) {
+  if (jobs.length === 0) return <>{emptyState}</>
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      {jobs.map((job) => (
+        <JobCard
+          key={job.id}
+          job={job}
+          pending={pending[job.id] ?? null}
+          onAction={onAction}
+        />
+      ))}
+    </div>
   )
 }
 
@@ -881,8 +1139,8 @@ function SummaryCard({
   hint: string
 }) {
   return (
-    <Card>
-      <CardContent className="flex items-center gap-3 py-4">
+    <Card className="border-0 bg-muted/60 shadow-none py-0">
+      <CardContent className="flex items-center gap-3 px-4 py-4">
         <div className="flex size-9 items-center justify-center rounded-xl bg-muted text-foreground">
           {icon}
         </div>

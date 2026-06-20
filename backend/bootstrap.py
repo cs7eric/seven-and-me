@@ -61,6 +61,18 @@ from backend.services.scheduler.ths_industry_constituents_scheduler import (
     is_ths_industry_constituents_scheduler_enabled,
     start_ths_industry_constituents_scheduler,
 )
+from backend.services.scheduler.style_risk_appetite_scheduler import (
+    is_style_risk_appetite_scheduler_enabled,
+    start_style_risk_appetite_scheduler,
+)
+from backend.services.scheduler.profit_effect_scheduler import (
+    is_profit_effect_scheduler_enabled,
+    start_profit_effect_scheduler,
+)
+from backend.services.scheduler.market_sentiment_index_scheduler import (
+    is_market_sentiment_index_scheduler_enabled,
+    start_market_sentiment_index_scheduler,
+)
 from backend.services.scheduler.ths_industry_constituents_daily_scheduler import (
     is_ths_industry_constituents_daily_scheduler_enabled,
     start_ths_industry_constituents_daily_scheduler,
@@ -166,3 +178,18 @@ def register_blueprints(app: Flask) -> None:
             start_volatility_sentiment_scheduler()
         except Exception as exc:
             logger.exception('Volatility Sentiment scheduler start failed: %s', exc)
+    if is_style_risk_appetite_scheduler_enabled():
+        try:
+            start_style_risk_appetite_scheduler()
+        except Exception as exc:
+            logger.exception('Style Risk Appetite scheduler start failed: %s', exc)
+    if is_profit_effect_scheduler_enabled():
+        try:
+            start_profit_effect_scheduler()
+        except Exception as exc:
+            logger.exception('Profit Effect scheduler start failed: %s', exc)
+    if is_market_sentiment_index_scheduler_enabled():
+        try:
+            start_market_sentiment_index_scheduler()
+        except Exception as exc:
+            logger.exception('Market Sentiment Index scheduler start failed: %s', exc)
