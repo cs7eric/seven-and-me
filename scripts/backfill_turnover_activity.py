@@ -32,13 +32,18 @@ log = logging.getLogger("backfill_turnover_activity")
 from backend.adapters.market.duckdb_store import init_schema
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """成交活跃度 duckdb 回填入口.
+
+    `argv` 默认 None → 走 sys.argv. 接受 list 给 in-process 调用方传参
+    (e.g. daily_eod_incremental 调它, 避免 subprocess 再开 duckdb 撞锁).
+    """
     ap = argparse.ArgumentParser(description="成交活跃度 duckdb 回填")
     ap.add_argument("--days", type=int, default=60, help="回填最近 N 天 (默认 60)")
     ap.add_argument("--start", type=str, default=None, help="起始日 YYYY-MM-DD")
     ap.add_argument("--end", type=str, default=None, help="结束日 YYYY-MM-DD")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划, 不执行")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     init_schema()
 

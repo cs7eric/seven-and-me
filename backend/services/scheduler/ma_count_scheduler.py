@@ -41,6 +41,8 @@ from backend.config.settings import (
     SCHEDULER_MA_COUNT_JOB_FILE,
 )
 from backend.services.stock.trading_calendar import is_trading_day
+from backend.services.scheduler.job_history import record_run, trigger_type
+from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 from backend.utils.json_io import read_json_file
 
 logger = logging.getLogger(__name__)
@@ -151,15 +153,26 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 # Job 函数
 # ---------------------------------------------------------------------------
 def _job_run_backfill() -> None:
-    """17:06 跑 backfill_ma_count_and_returns.py --days=2 --force (subprocess)."""
+    """17:06 跑 backfill_ma_count_and_returns.py --days=2 --force (subprocess).
+
+    周末 / 节假日不 skip, 改按最近一个交易日 (target_date) 跑, 避免 cron 漏跑.
+    """
     now = _beijing_now()
-    if not is_trading_day(now.date()):
-        logger.info("ma_count skipped: %s not trading day", now.date())
-        return
+    today = now.date()
+    target_date = resolve_target_trading_day(today)
 
     status = _load_job_status()
     t0 = time.time()
     status["lastRunAt"] = now.isoformat(timespec="seconds")
+    start_at_iso = now.isoformat(timespec="seconds")
+    if target_date != today:
+        status["lastTargetTradeDate"] = target_date.isoformat()
+        logger.info(
+            "ma_count: today=%s 非交易日, 改按 target=%s 跑",
+            today, target_date,
+        )
+    else:
+        status["lastTargetTradeDate"] = target_date.isoformat()
 
     script_path = status.get(_SCRIPT_PATH_KEY) or _default_script_path()
     script = Path(script_path)
@@ -173,15 +186,28 @@ def _job_run_backfill() -> None:
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
+        record_run(
+            "ma_count_refresh",
+            status="failed",
+            duration_seconds=status.get("lastDurationSeconds"),
+            start_at=start_at_iso,
+            end_at=datetime.now().isoformat(timespec="seconds"),
+            error=status.get("lastRunError"),
+        )
         return
 
     try:
+        script_env = {
+            **os.environ,
+            "MINIMAX_TARGET_TRADE_DATE": target_date.isoformat(),
+        }
         r = subprocess.run(
             [sys.executable, "-u", str(script), "--days=2", "--force"],
             cwd=str(_repo_root()),
             check=False,
             capture_output=True,
             text=True,
+            env=script_env,
             timeout=_JOB_TIMEOUT_SECONDS,
         )
         elapsed = time.time() - t0
@@ -233,6 +259,15 @@ def _job_run_backfill() -> None:
         logger.warning("ma_count crashed: %s\n%s", exc, traceback.format_exc())
 
     _save_job_status(status)
+
+    record_run(
+        "ma_count_refresh",
+        status="success" if status.get("lastRunOk") else "failed",
+        duration_seconds=status.get("lastDurationSeconds"),
+        start_at=start_at_iso,
+        end_at=datetime.now().isoformat(timespec="seconds"),
+        error=status.get("lastRunError"),
+    )
 
 
 def _refresh_coverage(status: dict[str, Any]) -> None:
@@ -321,6 +356,8 @@ def stop_ma_count_scheduler() -> None:
     status["stoppedAt"] = _beijing_now().isoformat(timespec="seconds")
     _save_job_status(status)
 
+    
+
 
 def get_ma_count_scheduler_status() -> dict[str, Any]:
     status = _load_job_status()
@@ -329,8 +366,9 @@ def get_ma_count_scheduler_status() -> dict[str, Any]:
 
 
 def run_ma_count_now() -> dict[str, Any]:
-    """手动触发一次 (供 API 测试 / 前端按钮用)."""
-    _job_run_backfill()
+    """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
+    with trigger_type("manual"):
+        _job_run_backfill()
     status = get_ma_count_scheduler_status()
     return {
         "ok": bool(status.get("lastRunOk")),

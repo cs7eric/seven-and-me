@@ -168,7 +168,8 @@ def backfill(limit: int | None = None,
     print(f"  rows inserted: {inserted_rows:,}")
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> int:
+    """CLI 入口, 接受 argv 给 in-process 调用方 (避免 subprocess 撞 duckdb 锁)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None,
                     help="Process only first N files (smoke test).")
@@ -177,7 +178,12 @@ if __name__ == "__main__":
                     help="Force unit_scale on every file (default 1 = spec).")
     ap.add_argument("--no-resume", action="store_true",
                     help="Process all files, ignoring ingest_state.")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     markets = ("sh", "sz", "bj") if args.market == "all" else (args.market,)
     backfill(limit=args.limit, markets=markets, unit_scale=args.unit_scale,
              resume=not args.no_resume)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

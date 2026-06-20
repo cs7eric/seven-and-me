@@ -165,11 +165,31 @@ class ApplicationAnalysisScheduler:
                     self._inflight.pop(target_id, None)
 
     def trigger_all(self, source: str = 'manual_all') -> list[dict[str, Any]]:
+        """手动触发一次 (前端"立即触发"按钮) — 落一条 history entry."""
+        start_at = datetime.now().isoformat(timespec='seconds')
+        t0 = time.time()
         results: list[dict[str, Any]] = []
+        error_msg: str | None = None
         for item in load_targets().get('items', []):
             if not item.get('enabled'):
                 continue
             results.append(self.trigger_target(item.get('id'), source=source))
+        elapsed = time.time() - t0
+        end_at = datetime.now().isoformat(timespec='seconds')
+        succeeded = sum(1 for r in results if isinstance(r, dict) and r.get('ok'))
+        if results and succeeded == 0:
+            error_msg = 'all targets failed'
+        elif results and succeeded < len(results):
+            error_msg = f'partial: {succeeded}/{len(results)} ok'
+        self._record_history(
+            status='success' if error_msg is None else 'failed',
+            duration_seconds=elapsed,
+            start_at=start_at,
+            end_at=end_at,
+            error=error_msg,
+            target_count=len(results),
+            succeeded=succeeded,
+        )
         return results
 
     def _run_loop(self) -> None:
@@ -294,6 +314,19 @@ class ApplicationAnalysisScheduler:
 
     def _persist_status(self) -> None:
         try:
+            # 保留磁盘上已存在的 history (前端渲染用), 不要被本次 _persist_status 覆盖.
+            # _status_lock 是保护 self._status 的内存态, 但 history 是从 disk 读出来后才追加
+            # 的, 所以我们手动用 lock 串行化读 + 写.
+            existing_history: list = []
+            try:
+                with self._status_lock:
+                    prev = load_scheduler_status() or {}
+                existing = prev.get('history') if isinstance(prev, dict) else None
+                if isinstance(existing, list):
+                    existing_history = existing
+            except Exception:
+                pass
+
             payload = {
                 'running': self.is_running(),
                 'started_at': self._started_at.isoformat() if self._started_at else None,
@@ -302,10 +335,59 @@ class ApplicationAnalysisScheduler:
                 'last_tick_at': datetime.now().isoformat(),
                 'last_run': dict(self._last_run),
                 'targets_total': len(load_targets().get('items', [])),
+                'history': existing_history,
             }
             save_scheduler_status(payload)
         except Exception as exc:
             print(f'[ApplicationAnalysisScheduler] persist status error: {exc}', flush=True)
+
+    def _record_history(
+        self,
+        *,
+        status: str,
+        duration_seconds: float,
+        start_at: str,
+        end_at: str,
+        error: str | None = None,
+        target_count: int = 0,
+        succeeded: int = 0,
+    ) -> None:
+        """写一条 history entry. 内存追加 + 落盘 (走 _persist_status, 保留 history)."""
+        from backend.services.scheduler.job_history import get_trigger_type
+        entry = {
+            'start_at': start_at,
+            'end_at': end_at,
+            'trigger_type': get_trigger_type(),
+            'status': status,
+            'error': error,
+            'duration_seconds': round(duration_seconds, 2),
+            'target_count': target_count,
+            'succeeded': succeeded,
+        }
+        with self._status_lock:
+            prev = load_scheduler_status() or {}
+            history = prev.get('history') if isinstance(prev, dict) else None
+            if not isinstance(history, list):
+                history = []
+            history.append(entry)
+            # FIFO 截断 50
+            if len(history) > 50:
+                history = history[-50:]
+            # 重新写整个 payload
+            payload = {
+                'running': self.is_running(),
+                'started_at': self._started_at.isoformat() if self._started_at else None,
+                'tick_count': self._tick_count,
+                'runs_count': self._runs_count,
+                'last_tick_at': datetime.now().isoformat(),
+                'last_run': dict(self._last_run),
+                'targets_total': len(load_targets().get('items', [])),
+                'history': history,
+            }
+            try:
+                save_scheduler_status(payload)
+            except Exception as exc:
+                print(f'[ApplicationAnalysisScheduler] record_history persist error: {exc}', flush=True)
 
 
 scheduler = ApplicationAnalysisScheduler()

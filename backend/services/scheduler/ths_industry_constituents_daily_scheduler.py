@@ -244,29 +244,60 @@ class ThsIndustryConstituentsDailyScheduler:
         hh, mm = (int(x) for x in target_time.split(":"))
         if not (now_beijing.hour == hh and now_beijing.minute == mm):
             return
-        if sched.get("trading_day_only", True) and not is_trading_day(now_beijing.date()):
-            # 周末 / 节假日: 跳过, 同时记录 skipped 计数
-            today_iso = now_beijing.date().isoformat()
-            if cfg.get("last_run_date") != today_iso:
-                cfg["last_run_at"] = datetime.now().isoformat()
-                cfg["last_run_date"] = today_iso
-                cfg["last_status"] = "skipped_non_trading_day"
-                cfg["total_skipped_non_trading_day"] = (
-                    int(cfg.get("total_skipped_non_trading_day", 0)) + 1
-                )
-                _save_job_config(cfg)
-                print(
-                    f"[ThsIndustryConstituentsDailyScheduler] {today_iso} is not a trading day, skip",
-                    flush=True,
-                )
+        today = now_beijing.date()
+        # 周末 / 节假日: 改按最近一个交易日 (target_date) 跑, 避免 cron 漏跑
+        # (e.g. 周五 cron 没触发 / 周一 17:00 节假日, 一并按上一个交易日补齐)
+        target_date = today
+        if sched.get("trading_day_only", True) and not is_trading_day(today):
+            from backend.services.stock.trading_day_resolver import resolve_target_trading_day
+            target_date = resolve_target_trading_day(today)
+            print(
+                f"[ThsIndustryConstituentsDailyScheduler] {today.isoformat()} 非交易日, "
+                f"改按 {target_date.isoformat()} 跑",
+                flush=True,
+            )
+        # 同日(以上一次 target_date 计)只跑一次
+        target_iso = target_date.isoformat()
+        if cfg.get("last_run_date") == target_iso:
             return
-        # 同日只跑一次
-        today_iso = now_beijing.date().isoformat()
-        if cfg.get("last_run_date") == today_iso:
-            return
-        self._run_once()
+        self._run_once(target_date=target_date)
 
-    def _run_once(self, *, force: bool = False) -> dict[str, Any]:
+    def _run_once(self, *, force: bool = False, target_date: date | None = None) -> dict[str, Any]:
+        # 包裹: 跑完后写一条 history entry. 跨 try/finally 跨返回点.
+        from backend.services.scheduler.job_history import get_trigger_type
+        start_at_iso = datetime.now().isoformat(timespec="seconds")
+        start_dt = datetime.now()
+        _hist_status = "failed"
+        _hist_error: str | None = None
+        try:
+            return self._run_once_inner(force=force, target_date=target_date)
+        except Exception as exc:
+            _hist_error = f"{type(exc).__name__}: {exc}"[:300]
+            raise
+        finally:
+            # 读 cfg 取最终 status
+            try:
+                cfg = _load_job_config()
+                # last_status: success | partial_failed | failed | skipped_non_trading_day
+                ls = str(cfg.get("last_status") or "")
+                if "success" in ls and "partial" not in ls:
+                    _hist_status = "success"
+                elif ls:
+                    _hist_status = "failed"
+            except Exception:
+                pass
+            from backend.services.scheduler.job_history import record_run
+            record_run(
+                "ths_industry_constituents_daily",
+                status=_hist_status,
+                duration_seconds=(datetime.now() - start_dt).total_seconds(),
+                start_at=start_at_iso,
+                end_at=datetime.now().isoformat(timespec="seconds"),
+                error=_hist_error,
+                trigger_type=get_trigger_type(),
+            )
+
+    def _run_once_inner(self, *, force: bool = False, target_date: date | None = None) -> dict[str, Any]:
         with self._lock:
             if self._inflight:
                 print(
@@ -351,7 +382,10 @@ class ThsIndustryConstituentsDailyScheduler:
             cfg = _load_job_config()
             now_beijing = _beijing_now()
             cfg["last_run_at"] = datetime.now().isoformat()
-            cfg["last_run_date"] = now_beijing.date().isoformat()
+            # last_run_date 记录"这次跑覆盖了哪个交易日":
+            # - 正常交易日跑 → 用 today
+            # - 周末/节假日 cron 触发, 走 resolver 改跑 target_date → 用 target_date
+            cfg["last_run_date"] = (target_date or now_beijing.date()).isoformat()
             cfg["last_status"] = status
             cfg["last_industry_count"] = len(ok_codes)
             cfg["last_total_rows"] = total_rows

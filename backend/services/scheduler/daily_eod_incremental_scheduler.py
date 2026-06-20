@@ -34,6 +34,8 @@ from backend.config.settings import (
     SCHEDULER_JOBS_FILE,
 )
 from backend.services.stock.trading_calendar import is_trading_day
+from backend.services.stock.trading_day_resolver import resolve_target_trading_day
+from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.utils.json_io import read_json_file
 
 logger = logging.getLogger(__name__)
@@ -136,15 +138,32 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 # Job 函数
 # ---------------------------------------------------------------------------
 def _job_run_incremental() -> None:
-    """17:00 跑 daily_eod_incremental.py (subprocess, 不阻塞 scheduler)."""
+    """17:00 跑 daily_eod_incremental.py (subprocess, 不阻塞 scheduler).
+
+    行为:
+      - 今天 = 交易日 → 直接跑
+      - 今天 ≠ 交易日 (周末/节假日) → 找最近一个交易日作为 target_date 跑
+        (避免周五 cron 漏跑 / 节假日 cron 没触发, 周一 17:00 一并补齐)
+
+    每次跑完 (不管成功失败 / script not found) 都写一条 history entry,
+    供前端 /settings/scheduler 渲染"最近 50 次"列表.
+    """
     now = _beijing_now()
-    if not is_trading_day(now.date()):
-        logger.info("daily_eod_incremental skipped: %s not trading day", now.date())
-        return
+    today = now.date()
+    target_date = resolve_target_trading_day(today)
 
     status = _load_job_status()
     t0 = time.time()
-    status["lastRunAt"] = now.isoformat(timespec="seconds")
+    start_at_iso = now.isoformat(timespec="seconds")
+    status["lastRunAt"] = start_at_iso
+    if target_date != today:
+        status["lastTargetTradeDate"] = target_date.isoformat()
+        logger.info(
+            "daily_eod_incremental: today=%s 非交易日, 改按 target=%s 跑",
+            today, target_date,
+        )
+    else:
+        status["lastTargetTradeDate"] = target_date.isoformat()
 
     # 脚本路径: 状态文件可覆盖 (测试用), 默认走 repo root
     script_path = status.get(_SCRIPT_PATH_KEY) or _default_script_path()
@@ -159,15 +178,29 @@ def _job_run_incremental() -> None:
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
+        record_run(
+            _JOB_ID,
+            status="failed",
+            duration_seconds=status["lastDurationSeconds"],
+            start_at=start_at_iso,
+            end_at=datetime.now().isoformat(timespec="seconds"),
+            error=msg,
+        )
         return
 
     try:
+        # 把 target_date 通过 env 传给子脚本, 避免它再用 date.today() 算出错的窗口
+        script_env = {
+            **os.environ,
+            "MINIMAX_TARGET_TRADE_DATE": target_date.isoformat(),
+        }
         r = subprocess.run(
             [sys.executable, "-u", str(script)],
             cwd=str(_repo_root()),
             check=False,
             capture_output=True,
             text=True,
+            env=script_env,
             timeout=600,  # 10 分钟硬上限 (initial_backfill ~4 min + limit 50s + 余量)
         )
         elapsed = time.time() - t0
@@ -207,6 +240,14 @@ def _job_run_incremental() -> None:
         )
 
     _save_job_status(status)
+    record_run(
+        _JOB_ID,
+        status="success" if status.get("lastRunOk") else "failed",
+        duration_seconds=status.get("lastDurationSeconds"),
+        start_at=start_at_iso,
+        end_at=datetime.now().isoformat(timespec="seconds"),
+        error=status.get("lastRunError"),
+    )
 
 
 def _refresh_max_dates(status: dict[str, Any]) -> None:
@@ -306,6 +347,7 @@ def get_daily_eod_incremental_scheduler_status() -> dict[str, Any]:
 
 
 def run_daily_eod_incremental_now() -> dict[str, Any]:
-    """手动触发一次 (供 API 测试 / 前端按钮用)."""
-    _job_run_incremental()
+    """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
+    with trigger_type("manual"):
+        _job_run_incremental()
     return get_daily_eod_incremental_scheduler_status()

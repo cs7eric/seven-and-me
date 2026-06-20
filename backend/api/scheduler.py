@@ -134,6 +134,270 @@ _KNOWN_JOB_IDS = {
 _application_analysis_status_lock = threading.Lock()
 
 
+# ---------------------------------------------------------------------------
+# Last-run 字段归一化
+# ---------------------------------------------------------------------------
+# 仓库里 scheduler 的状态字段名不统一 (历史原因):
+#   - 老的 (turnover / auction / stock_universe / ths_industry_*):
+#       snake_case: last_run_at / last_status / last_targets_processed /
+#                   last_duration_seconds / last_error / total_runs
+#   - 新的 (daily_eod_incremental / market_overview_daily / market_overview /
+#     market_pulse / risk_appetite / ma_count / volatility_sentiment /
+#     tdx_hsjday_download / ths_industry_fund_flow_daily):
+#       camelCase: lastRunAt / lastRunOk (bool) / lastRunError / lastDurationSeconds /
+#                  totalRuns / totalFailures + 各 job 特定的 lastXxxUpserted 字段
+#   - 内存 only: application_analysis (有 per-target last_run map)
+#   - 外部脚本: market_sentiment_index / profit_effect / style_risk_appetite
+#     (config 文件无 last_run 字段)
+#
+# 前端 ``/settings/scheduler`` 统一只读 ``item.last_run.*`` 六个字段, 由本函数
+# 集中从各 scheduler 的 status / config 抽出. 缺数据时返 None, 不抛错.
+
+def _coerce_str(v: Any) -> str | None:
+    if v is None:
+        return None
+    if isinstance(v, str) and v.strip():
+        return v
+    return None
+
+
+def _coerce_num(v: Any) -> float | None:
+    if v is None or v == "":
+        return None
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    if n != n or n in (float("inf"), float("-inf")):
+        return None
+    return n
+
+
+def _first_str(*sources: dict | None, keys: tuple[str, ...]) -> str | None:
+    """从多个 dict 里按顺序取第一个非空字符串字段."""
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for k in keys:
+            v = _coerce_str(src.get(k))
+            if v is not None:
+                return v
+    return None
+
+
+def _first_num(*sources: dict | None, keys: tuple[str, ...]) -> float | None:
+    """从多个 dict 里按顺序取第一个可解析为数字的字段."""
+    for src in sources:
+        if not isinstance(src, dict):
+            continue
+        for k in keys:
+            v = _coerce_num(src.get(k))
+            if v is not None:
+                return v
+    return None
+
+
+def _normalize_status_from_bool(ok_val: Any) -> str | None:
+    """``lastRunOk`` (True/False/None) → 统一 status 字符串."""
+    if ok_val is None:
+        return None
+    return "success" if bool(ok_val) else "failed"
+
+
+def _normalize_last_run(job_id: str, status: dict, config: dict) -> dict[str, Any]:
+    """把各 scheduler 的异构 status/config 字段归一化为六个标准字段.
+
+    返回 ``{last_run_at, last_status, last_targets_processed, last_duration_seconds,
+    last_error, total_runs}`` (可能含 None).
+
+    字段语义:
+      - last_run_at: 上次运行完成时间 (ISO 字符串)
+      - last_status: "success" | "failed" | "partial_failed" | "skipped_non_trading_day" | "idle" | "unknown"
+      - last_targets_processed: 处理的标的数 (按各 job 含义解释: 标的 / 行业 / 行 / 天 / 文件数)
+      - last_duration_seconds: 上次耗时
+      - last_error: 上次错误信息
+      - total_runs: 累计运行次数
+    """
+    # 通用: 从 status + config 联合抽基础字段
+    last_run_at = _first_str(status, config, keys=("last_run_at", "lastRunAt"))
+    last_status_raw = _first_str(
+        status, config,
+        keys=("last_status", "lastStatus"),
+    )
+    last_error = _first_str(
+        status, config,
+        keys=("last_error", "lastError", "last_run_error", "lastRunError"),
+    )
+    last_duration = _first_num(
+        status, config,
+        keys=("last_duration_seconds", "lastDurationSeconds"),
+    )
+    total_runs = _first_num(
+        status, config,
+        keys=("total_runs", "totalRuns"),
+    )
+
+    # lastRunOk (bool) → status 字符串 (与 last_status 互斥, 优先取字符串, 否则 bool 转换)
+    if last_status_raw is None:
+        last_status_raw = _normalize_status_from_bool(
+            _first_num(status, config, keys=("last_run_ok", "lastRunOk", "lastConstituentsOk"))
+        )
+
+    # 处理标的: 各 job 含义不同, 集中映射
+    targets: float | None = None
+
+    if job_id in {
+        "turnover_refresh", "auction_ai_analysis",
+    }:
+        targets = _first_num(
+            config, status,
+            keys=("last_targets_processed", "lastTargetsProcessed"),
+        )
+    elif job_id == "application_analysis":
+        # 内存 last_run 是 dict[target_id -> {status, finished_at, ...}]
+        # 这里统计: 总 target 数 / 成功数, 取出最后一次 finished_at 当 last_run_at
+        last_run_map = status.get("last_run") if isinstance(status, dict) else None
+        if isinstance(last_run_map, dict) and last_run_map:
+            total = 0
+            succeeded = 0
+            latest_finished: str | None = None
+            for info in last_run_map.values():
+                if not isinstance(info, dict):
+                    continue
+                total += 1
+                if info.get("status") == "success":
+                    succeeded += 1
+                finished_at = _coerce_str(info.get("finished_at"))
+                if finished_at and (latest_finished is None or finished_at > latest_finished):
+                    latest_finished = finished_at
+            targets = float(total) if total else None
+            if last_run_at is None:
+                last_run_at = latest_finished
+            if last_status_raw is None and total > 0:
+                last_status_raw = "success" if succeeded == total else "partial_failed"
+    elif job_id == "stock_universe_refresh":
+        # 三个维度: 股票 / 行业 / 题材. 取总和.
+        s = _first_num(config, status, keys=("last_stock_count",))
+        i = _first_num(config, status, keys=("last_industry_count",))
+        t = _first_num(config, status, keys=("last_topic_count",))
+        parts = [n for n in (s, i, t) if n is not None]
+        targets = sum(parts) if parts else None
+    elif job_id in {
+        "ths_industry_constituents_weekly", "ths_industry_constituents_daily",
+    }:
+        rows = _first_num(config, status, keys=("last_total_rows",))
+        ind = _first_num(config, status, keys=("last_industry_count",))
+        # 优先用 last_total_rows (更精确), 缺则用 last_industry_count
+        targets = rows if rows is not None else ind
+    elif job_id in {
+        "market_pulse_inside", "market_pulse_close", "market_pulse_constituents",
+    }:
+        # market_pulse 共享一份 status. 三个 job 取各自最近刷新时间
+        # 标的数: totalInside / totalClose 是累计次数, 不是标的数
+        # 用 lastTopN 长度 (排名榜条数, 通常 5) 或 lastConstituentsIndustriesOk
+        if job_id == "market_pulse_constituents":
+            targets = _first_num(status, keys=("lastConstituentsIndustriesOk", "lastConstituentsIndustriesTotal"))
+        else:
+            top = status.get("lastTopN") if isinstance(status, dict) else None
+            targets = float(len(top)) if isinstance(top, list) else None
+        # 三个 job 各自的最近运行时间
+        job_specific_at = _first_str(
+            status,
+            keys=(
+                {"market_pulse_inside": "lastInsideRefreshAt",
+                 "market_pulse_close": "lastCloseSnapshotAt",
+                 "market_pulse_constituents": "lastConstituentsAt"}.get(job_id, "lastLimitEmotionDailyAt"),
+            ),
+        )
+        if last_run_at is None and job_specific_at is not None:
+            last_run_at = job_specific_at
+        # market_pulse_constituents 单独有 lastConstituentsOk
+        if last_status_raw is None:
+            ok = _first_num(status, keys=("lastConstituentsOk",))
+            if ok is not None:
+                last_status_raw = _normalize_status_from_bool(ok)
+    elif job_id in {
+        "market_overview_inside", "market_overview_close", "market_overview_warmup",
+        "eltdx_overview_inside", "eltdx_overview_close", "eltdx_overview_warmup",
+    }:
+        # 共用 market_overview_scheduler. 标的数 = lastInside / lastClose / lastWarmup
+        # 里的 stockCount / industryCount (eltdx snapshot 字段)
+        slot_key = {
+            "market_overview_inside": "lastInside",
+            "market_overview_close": "lastClose",
+            "market_overview_warmup": "lastWarmup",
+            "eltdx_overview_inside": "lastInside",
+            "eltdx_overview_close": "lastClose",
+            "eltdx_overview_warmup": "lastWarmup",
+        }.get(job_id)
+        slot_obj = status.get(slot_key) if isinstance(status, dict) else None
+        if isinstance(slot_obj, dict):
+            # market_overview (akshare) 字段: tradingDate (1 天), 没标的数
+            # eltdx_overview 字段: totalAmount, risingCount, fallingCount, stockCount, limitUpCount
+            cand = (
+                _first_num(slot_obj, keys=("stockCount", "stock_count")) or
+                _first_num(slot_obj, keys=("risingCount", "rising_count")) or
+                _first_num(slot_obj, keys=("industryCount", "industry_count"))
+            )
+            targets = cand
+        if last_run_at is None:
+            # 没 lastRunAt 但有 lastInsideRefreshAt / lastCloseSnapshotAt / lastWarmupAt
+            slot_at_key = {
+                "market_overview_inside": "lastInsideRefreshAt",
+                "market_overview_close": "lastCloseSnapshotAt",
+                "market_overview_warmup": "lastWarmupAt",
+                "eltdx_overview_inside": "lastInsideRefreshAt",
+                "eltdx_overview_close": "lastCloseSnapshotAt",
+                "eltdx_overview_warmup": "lastWarmupAt",
+            }.get(job_id)
+            if slot_at_key:
+                v = _first_str(status, keys=(slot_at_key,))
+                if v is not None:
+                    last_run_at = v
+    elif job_id == "daily_eod_incremental":
+        # 没有明确的"标的"概念. 用 lastMaxTradeDate / lastLimitEmotionMaxDate 计数
+        # 这里 last_targets_processed 留 None (用 lastMaxTradeDate 在前端另算)
+        targets = None
+    elif job_id == "tdx_hsjday_download":
+        targets = _first_num(config, status, keys=("lastDayFileCount",))
+    elif job_id == "market_overview_daily":
+        akshare = _first_num(config, status, keys=("lastAkshareUpserted",))
+        eltdx = _first_num(config, status, keys=("lastEltdxUpserted",))
+        sector_days = _first_num(config, status, keys=("lastSectorDays",))
+        parts = [n for n in (akshare, eltdx, sector_days) if n is not None]
+        targets = sum(parts) if parts else None
+    elif job_id == "ths_industry_fund_flow_daily":
+        rows = _first_num(config, status, keys=("lastRowsUpserted",))
+        days = _first_num(config, status, keys=("lastDaysUpserted",))
+        targets = rows if rows is not None else days
+    elif job_id in {"risk_appetite", "ma_count", "volatility_sentiment"}:
+        # risk_appetite / volatility_sentiment 有 lastRowsUpserted / lastCoverage
+        # ma_count 有 lastMaUpserted + lastIrUpserted
+        rows = _first_num(config, status, keys=("lastRowsUpserted",))
+        ma = _first_num(config, status, keys=("lastMaUpserted",))
+        ir = _first_num(config, status, keys=("lastIrUpserted",))
+        cov = _first_num(config, status, keys=("lastCoverage"))
+        parts = [n for n in (rows, ma, ir, cov) if n is not None]
+        targets = sum(parts) if parts else None
+    elif job_id in {
+        "market_sentiment_index_refresh", "profit_effect_refresh",
+        "style_risk_appetite_refresh",
+    }:
+        # 外部脚本 (subprocess 调 python -u scripts/...), 状态文件无 last_run 字段
+        # targets 留 None, 前端显示 "—"
+        targets = None
+    # test_scheduler_demo 没有 status / config, 全部 None
+
+    return {
+        "last_run_at": last_run_at,
+        "last_status": last_status_raw,
+        "last_targets_processed": targets,
+        "last_duration_seconds": last_duration,
+        "last_error": last_error,
+        "total_runs": int(total_runs) if total_runs is not None else None,
+    }
+
+
 def _jobs_registry_path() -> Path:
     return BASE_DIR / 'scheduler' / 'jobs.json'
 
@@ -300,7 +564,17 @@ def _stop_scheduler(job_id: str) -> None:
 
 
 def _trigger_scheduler(job_id: str) -> dict[str, Any]:
-    """手动触发一次。返回 dict 给前端展示。"""
+    """手动触发一次。返回 dict 给前端展示。
+
+    整段包在 ``trigger_type("manual")`` context 里, 让所有子调用的 scheduler /
+    record_run 都标记 trigger=manual, 区分 cron 自动跑和用户手动跑.
+    """
+    from backend.services.scheduler.job_history import trigger_type
+    with trigger_type("manual"):
+        return _trigger_scheduler_inner(job_id)
+
+
+def _trigger_scheduler_inner(job_id: str) -> dict[str, Any]:
     if job_id == 'turnover_refresh':
         sched = get_turnover_scheduler()
         if sched is None:
@@ -415,6 +689,54 @@ def _set_application_analysis_enabled(enabled: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+@scheduler_bp.route('/api/scheduler/jobs/<job_id>/history', methods=['GET'])
+def get_job_history(job_id: str):
+    """读指定 job 的 history 列表 (新→旧, 限 limit 条, 默认 50, 上限 200).
+
+    Response shape::
+
+        {
+            "ok": true,
+            "job_id": "...",
+            "items": [
+                {
+                    "start_at": "2026-06-20T17:00:12",
+                    "end_at": "2026-06-20T17:01:30",
+                    "trigger_type": "auto" | "manual",
+                    "status": "success" | "failed" | "skipped" | "running",
+                    "error": "..." | null,
+                    "duration_seconds": 78.4,
+                    // application_analysis 还会带:
+                    "target_count": 5,
+                    "succeeded": 4,
+                },
+                ...
+            ],
+            "count": N,
+            "error": "...",  // 仅失败时
+        }
+    """
+    from backend.services.scheduler.job_history import get_history
+    try:
+        limit = int(request.args.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+    limit = max(1, min(limit, 200))
+    if job_id not in _KNOWN_JOB_IDS:
+        return jsonify({"ok": False, "error": f"unknown job_id: {job_id}"}), 404
+    try:
+        items = get_history(job_id, limit=limit)
+    except Exception as exc:
+        traceback.print_exc()
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 200
+    return jsonify({
+        "ok": True,
+        "job_id": job_id,
+        "items": items,
+        "count": len(items),
+    })
+
+
 @scheduler_bp.route('/api/scheduler/jobs', methods=['GET'])
 def list_jobs():
     """列出所有 job + 各自 config + 实时 status。
@@ -475,6 +797,8 @@ def list_jobs():
             'config_enabled': bool(config_enabled) if config_enabled is not None else True,
             'config': config,
             'live': live,
+            # 归一化的上次运行摘要: 前端只读这六个字段, 不用关心各 scheduler 内部字段名差异
+            'last_run': _normalize_last_run(job_id, live or {}, config or {}),
         })
 
     return jsonify({'ok': True, 'items': items, 'count': len(items)})
@@ -505,6 +829,7 @@ def get_job(job_id: str):
             'config_enabled': bool(config.get('enabled', True)) if job_id != 'application_analysis' else True,
             'config': config,
             'live': live,
+            'last_run': _normalize_last_run(job_id, live or {}, config or {}),
         },
     })
 

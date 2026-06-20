@@ -3,29 +3,57 @@
 Single source of truth: F:/dev-repo/mp4-to-word-new/reference/stock/duckdb/market_data.duckdb
 Schema: see reference/stock/duckdb/schema.sql
 
-Usage:
-    from backend.adapters.market.duckdb_store import get_conn, init_schema
-    init_schema()  # idempotent
+DuckDB 跨进程锁说明 (重要):
+  DuckDB 是嵌入式数据库, 不是 client/server. 同一个 .duckdb 文件**不能**多进程同时
+  以 read_write 模式打开 — 第二个进程会撞 OS-level 文件锁抛 _duckdb.IOException.
+
+  老实现用 process-wide 单例 ``_conn`` + retry-with-backoff, 后果:
+    - Flask / scheduler 进程一启动就常驻连接, 文件一直被这个进程锁住
+    - 任何想开第二个 read_write 连接的进程 (e.g. daily_eod_incremental 脚本) 永远打不开
+    - retry 多久都没用, 永久锁就是永久锁
+
+  新实现改成**短连接** (按需 open, 用完 close):
+    - ``with conn(read_only=False) as con: ...`` — 显式 scope, 块结束自动 close, 立刻释放文件锁
+    - ``get_conn(read_only=False)`` — 兼容旧 API, 返回的连接在 GC (``__del__``) 时自动 close
+      (CPython 引用计数立刻触发, 实际上等同于"函数返回就 close")
+    - 多进程冲突场景变成**协作式**: Flask 只在处理 HTTP 时瞬间持锁, 中间空闲期
+      daily 脚本就能拿到锁. 真要双方同时写, 任一方还是会撞锁, 这是 DuckDB 本身限制.
+
+用法 (推荐):
+    from backend.adapters.market.duckdb_store import conn, get_conn, init_schema
+
+    # 写入 (read_write, 独占)
+    with conn(read_only=False) as con:
+        con.execute("INSERT INTO ... SELECT ...")
+
+    # 只读 (可多个进程同时 read_only)
+    with conn(read_only=True) as con:
+        rows = con.execute("SELECT * FROM daily_raw").fetchall()
+
+用法 (兼容旧 API, 不推荐新代码用):
+    con = get_conn()              # 返回的连接 GC 时自动 close
+    con.execute("...")
+
+    # 旧风格的 "裸" 短连接 (跟 get_conn 等价, 但不包装 __del__):
     con = get_conn()
-    con.execute("SELECT count(*) FROM daily_raw").fetchone()
-
-Connection model:
-  - 单 process-wide connection (DuckDB 不允许同进程对同一 .duckdb 文件开多个连接 —
-    OS-level 文件锁冲突).
-  - get_conn() 返回一个 _LockedConnection 包装对象, 每次 .execute() / .executemany()
-    自动获取 process-wide 锁, 兼容旧代码 (原 `con = get_conn(); con.execute(...)` 风格).
-  - 多请求线程安全 (Flask `threaded=True` 下 Werkzeug 每个请求一个新线程).
-
-  - 也提供 `conn()` context manager (高级用法): 同一块内多次 query 共用 1 把锁.
+    try:
+        con.execute("...")
+    finally:
+        con.close()
 """
 from __future__ import annotations
 
+import logging
+import os
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
 import duckdb
+
+logger = logging.getLogger(__name__)
 
 # Repo root: F:\dev-repo\mp4-to-word-new
 # __init__.py lives at backend/adapters/market/duckdb_store/__init__.py
@@ -34,11 +62,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _DB_PATH = _REPO_ROOT / "reference" / "stock" / "duckdb" / "market_data.duckdb"
 _SCHEMA_PATH = _REPO_ROOT / "reference" / "stock" / "duckdb" / "schema.sql"
 
-# 单 connection per process + 单 lock 保护. 替代原来的 thread-local
-# (threaded Flask 会让每个请求线程都试图开连接 → duckdb 文件锁冲突).
-_conn: duckdb.DuckDBPyConnection | None = None
-_conn_lock = threading.Lock()
-_conn_init_lock = threading.Lock()
+# 锁冲突重试配置: 跟 process-wide 单例时一样, 解决**短时**锁冲突
+# (e.g. scheduler tick 1-2s 写完). 永久锁靠协作 (短连接) 解决, 不靠重试.
+_MAX_LOCK_CONFLICT_RETRIES = 6
+_LOCK_BACKOFFS = (0.5, 1.0, 2.0, 4.0, 4.0, 4.0)  # 累计 ≈ 15.5s
 
 
 def get_db_path() -> Path:
@@ -49,73 +76,143 @@ def get_schema_path() -> Path:
     return _SCHEMA_PATH
 
 
-def _ensure_conn() -> duckdb.DuckDBPyConnection:
-    """Lazy-init process-wide connection (双锁, 防止 init 竞态)."""
-    global _conn
-    if _conn is not None:
-        return _conn
-    with _conn_init_lock:
-        if _conn is None:
-            _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-            _conn = duckdb.connect(str(_DB_PATH))
-    return _conn
+# ---------------------------------------------------------------------------
+# Lock-conflict 短时重试
+# ---------------------------------------------------------------------------
+# DuckDB OS-level 文件锁等待默认 ~5s 就抛. 包一层 retry, 让"scheduler 短持锁"
+# 这类瞬态冲突不会硬失败. 注意这只解决**短时**冲突 — 永久锁永远 retry 也救不了,
+# 靠"短连接 + 进程间协作"消化, 见文件顶部 docstring.
+
+def _is_lock_conflict_msg(msg: str) -> bool:
+    return (
+        "另一个程序正在使用此文件" in msg
+        or "File is already open" in msg
+        or "Could not set lock" in msg
+    )
 
 
-class _LockedConnection:
-    """Thread-safe wrapper around a process-wide DuckDB connection.
+def _connect_with_lock_retry(read_only: bool) -> duckdb.DuckDBPyConnection:
+    """duckdb.connect() 包一层重试, 处理"另一进程刚 hold 锁 ~1-2s" 这种瞬态冲突."""
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_LOCK_CONFLICT_RETRIES):
+        try:
+            return duckdb.connect(str(_DB_PATH), read_only=read_only)
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            msg = str(exc)
+            is_lock = _is_lock_conflict_msg(msg)
+            if not is_lock or attempt == _MAX_LOCK_CONFLICT_RETRIES - 1:
+                logger.warning(
+                    "duckdb connect(read_only=%s) failed (attempt %d/%d): %s",
+                    read_only, attempt + 1, _MAX_LOCK_CONFLICT_RETRIES, exc,
+                )
+                raise
+            backoff = _LOCK_BACKOFFS[attempt]
+            logger.info(
+                "duckdb lock held by another process, retry in %.1fs (attempt %d/%d): %s",
+                backoff, attempt + 1, _MAX_LOCK_CONFLICT_RETRIES, msg.strip().splitlines()[0][:200],
+            )
+            time.sleep(backoff)
+    raise last_exc  # type: ignore[misc]
 
-    Each .execute() / .executemany() acquires the process-wide lock for its
-    duration. For short queries this is cheap (~µs); long operations (bulk
-    inserts spanning multiple execute calls) should use `conn()` context
-    manager instead to hold the lock once for the entire block.
-    """
 
-    __slots__ = ("_inner",)
-
-    def __init__(self, inner: duckdb.DuckDBPyConnection):
-        self._inner = inner
-
-    def execute(self, sql: str, params: Any = None):
-        with _conn_lock:
-            if params is None:
-                return self._inner.execute(sql)
-            return self._inner.execute(sql, params)
-
-    def executemany(self, sql: str, params: Any = None):
-        with _conn_lock:
-            if params is None:
-                return self._inner.executemany(sql)
-            return self._inner.executemany(sql, params)
-
-    def __getattr__(self, name: str):
-        # 委托其它方法 (commit, rollback, close, fetchone, fetchall...) 给底层连接,
-        # 但调用时自动包一层锁.
-        attr = getattr(self._inner, name)
-
-        def locked_call(*args, **kwargs):
-            with _conn_lock:
-                return attr(*args, **kwargs)
-
-        return locked_call
-
+# ---------------------------------------------------------------------------
+# 公开 API: 短连接 (per-call)
+# ---------------------------------------------------------------------------
 
 @contextmanager
-def conn() -> Iterator[duckdb.DuckDBPyConnection]:
-    """Process-wide DuckDB connection (BARE, 取锁请用 get_conn()).
+def conn(read_only: bool = False) -> Iterator[duckdb.DuckDBPyConnection]:
+    """短连接 context manager — 强烈推荐.
 
-    高级用法: 同一块多次 query 共用 1 把锁 (比每次 query 单独取锁快).
+    ```python
+    with conn(read_only=False) as con:
+        con.execute("INSERT INTO ...")
+    ```
+    块结束自动 close, 立刻释放 OS 文件锁, 让其他 Python 进程能拿到.
+
+    DuckDB 不允许同进程同一文件开多个 read_write 连接, 但允许只读连接多个并存.
+    跨进程 read_write 互斥 (DuckDB 嵌入式本质, 见文件顶部 docstring).
     """
-    c = _ensure_conn()
-    yield c
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = _connect_with_lock_retry(read_only=read_only)
+    try:
+        yield con
+    finally:
+        try:
+            con.close()
+        except Exception:  # noqa: BLE001
+            pass
 
+
+class _AutoCloseConn:
+    """包装 duckdb connection, 在 GC (__del__) 时自动 close, 兼容 ``con = get_conn(); con.execute(...)`` 风格.
+
+    CPython 引用计数让 __del__ 在变量出 scope 时立刻触发, 实际行为 = "函数返回就 close".
+    新代码请用 ``with conn() as con:`` 更显式.
+
+    同时实现 __enter__/__exit__, 让它本身也能当 context manager (跟 ``conn()`` 等价).
+
+    ⚠️ 不要用链式 ``get_conn().execute().fetchone()`` 模式:
+        CPython 表达式求值时, 中间 result 对象会持有底层 conn 的反向引用. __del__
+        触发顺序不保证, 可能 wrapper 早于 result 被回收, 关掉连接后 result 再用
+        就会抛 ``Connection already closed``. 30+ caller 中只有 1 处 (limit_emotion_service
+        的 _latest_trade_date) 用了链式, 已改成显式 try/finally close.
+    """
+
+    __slots__ = ("_con", "_closed")
+
+    def __init__(self, con: duckdb.DuckDBPyConnection):
+        self._con = con
+        self._closed = False
+
+    def __enter__(self) -> duckdb.DuckDBPyConnection:
+        if self._closed:
+            raise RuntimeError("connection already closed")
+        return self._con
+
+    def __exit__(self, *exc_info: Any) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._con.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def __getattr__(self, name: str) -> Any:
+        # 大部分方法 (execute / executemany / fetchone / fetchall / commit) 走这里
+        if name in ("_con", "_closed", "close", "__enter__", "__exit__"):
+            raise AttributeError(name)
+        return getattr(self._con, name)
+
+    def __del__(self) -> None:
+        # CPython 引用计数触发: 函数返回 / 出 scope 时 close
+        self.close()
+
+
+def get_conn(read_only: bool = False) -> _AutoCloseConn:
+    """开一条**短连接**, 兼容旧 ``con = get_conn(); con.execute(...)`` 风格.
+
+    返回的连接在 GC 时 (CPython 上 = 函数返回时) 自动 close, 释放文件锁.
+    新代码推荐用 ``with conn(read_only=...) as con:`` 更显式.
+    """
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = _connect_with_lock_retry(read_only=read_only)
+    return _AutoCloseConn(con)
+
+
+# ---------------------------------------------------------------------------
+# 便利函数: 一次性脚本
+# ---------------------------------------------------------------------------
 
 def init_schema() -> None:
     """Run schema.sql. Idempotent (CREATE TABLE IF NOT EXISTS)."""
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     sql = _SCHEMA_PATH.read_text(encoding="utf-8")
-    with _conn_lock:
-        c = _ensure_conn()
-        c.execute(sql)
+    with conn() as con:
+        con.execute(sql)
 
 
 def table_stats() -> dict[str, int]:
@@ -135,25 +232,13 @@ def table_stats() -> dict[str, int]:
         "index_returns_daily",
     ]
     out: dict[str, int] = {}
-    with _conn_lock:
-        c = _ensure_conn()
+    with conn() as con:
         for t in targets:
             try:
-                out[t] = c.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+                out[t] = con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
             except duckdb.CatalogException:
                 out[t] = -1  # table not yet created
     return out
-
-
-# 兼容旧 API: get_conn() 返回 _LockedConnection, 每次 .execute() 自动取锁.
-def get_conn() -> _LockedConnection:
-    """返回 process-wide connection 的线程安全包装. 调用方无需手动加锁.
-
-    Example:
-        con = get_conn()
-        rows = con.execute("SELECT * FROM ma_count_daily").fetchall()
-    """
-    return _LockedConnection(_ensure_conn())
 
 
 if __name__ == "__main__":

@@ -1278,9 +1278,16 @@ def _duckdb_latest_trading_day() -> date | None:
     """从 daily_raw 找最近一个有数据的交易日 (兜底给非交易日用)."""
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        r = get_conn().execute(
-            "SELECT MAX(trade_date) FROM daily_raw WHERE volume > 0"
-        ).fetchone()
+        # 不要用 get_conn().execute().fetchone() 链式 — CPython GC 顺序会让 wrapper
+        # __del__ 在 result 之前跑, 关掉连接导致 "Connection already closed".
+        # 总是先把 wrapper 绑到变量, 用完 GC 关闭.
+        con = get_conn()
+        try:
+            r = con.execute(
+                "SELECT MAX(trade_date) FROM daily_raw WHERE volume > 0"
+            ).fetchone()
+        finally:
+            con.close()
         return r[0] if r and r[0] is not None else None
     except Exception as exc:
         logger.debug("duckdb latest trade date failed: %s", exc)

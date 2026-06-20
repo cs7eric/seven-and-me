@@ -1,4 +1,5 @@
 ﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import { useCallback, useEffect, useMemo, useState } from "react"
+import { cn } from "@/lib/utils"
 import {
   Activity,
   AlertTriangle,
@@ -8,6 +9,8 @@ import {
   CirclePause,
   Clock,
   FileCode2,
+  Hand,
+  History as HistoryIcon,
   ListChecks,
   Play,
   Power,
@@ -39,10 +42,12 @@ import {
 } from "@/components/ui/dialog"
 import DogLoader from "@/components/loader/dog-loader"
 import {
+  type SchedulerJobHistoryItem,
   type SchedulerJobItem,
   deleteSchedulerJob,
   disableSchedulerJob,
   enableSchedulerJob,
+  fetchSchedulerJobHistory,
   fetchSchedulerJobs,
   startSchedulerJob,
   stopSchedulerJob,
@@ -100,22 +105,58 @@ interface JobCardProps {
 function JobCard({ job, pending, onAction }: JobCardProps) {
   // 默认折叠 (collapsed=true), 用户点 chevron 展开看完整详情
   const [expanded, setExpanded] = useState(false)
+  // 历史记录: 展开后才拉, 5s 自动 refresh (跟父级同步)
+  const [history, setHistory] = useState<SchedulerJobHistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
   const live = job.live || {}
   const config = job.config || {}
   const isRunning = Boolean(pickValue<boolean>(live, "running"))
   const tickCount = pickValue<number>(live, "tick_count")
   const runsCount = pickValue<number>(live, "runs_count")
   const startedAt = pickValue<string>(live, "started_at")
-  const lastRunAt = pickValue<string>(config, "last_run_at") ?? pickValue<string>(config, "last_run_at")
-  const lastStatus = pickValue<string>(config, "last_status")
-  const lastError = pickValue<string>(config, "last_error")
-  const lastDuration = pickValue<number>(config, "last_duration_seconds")
-  const lastTargets = pickValue<number>(config, "last_targets_processed")
-  const totalRuns = pickValue<number>(config, "total_runs")
+  // "上次运行" 摘要: 优先走后端归一化的 last_run 字段 (cover 各 scheduler 异构字段名),
+  // 缺数据时再回退到 config (兼容后端未升级版本).
+  const lastRunSummary = job.last_run
+  const lastRunAt = lastRunSummary?.last_run_at ?? pickValue<string>(config, "last_run_at")
+  const lastStatus = lastRunSummary?.last_status ?? pickValue<string>(config, "last_status")
+  const lastError = lastRunSummary?.last_error ?? pickValue<string>(config, "last_error")
+  const lastDuration =
+    lastRunSummary?.last_duration_seconds ?? pickValue<number>(config, "last_duration_seconds")
+  const lastTargets =
+    lastRunSummary?.last_targets_processed ?? pickValue<number>(config, "last_targets_processed")
+  const totalRuns = lastRunSummary?.total_runs ?? pickValue<number>(config, "total_runs")
   const inflight = pickValue<Record<string, string>>(live, "inflight")
   const lastRun = pickValue<Record<string, unknown>>(live, "last_run")
 
   const isActionPending = (action: ActionKey) => pending === action
+
+  // history: 展开时才拉, 5s 轮询. action 后立即重拉 (看到刚刚那次的结果).
+  useEffect(() => {
+    if (!expanded) {
+      setHistory([])
+      return
+    }
+    let cancelled = false
+    const load = () => {
+      setHistoryLoading(true)
+      fetchSchedulerJobHistory(job.id, 20)
+        .then((res) => {
+          if (!cancelled) setHistory(res.items || [])
+        })
+        .catch(() => {
+          if (!cancelled) setHistory([])
+        })
+        .finally(() => {
+          if (!cancelled) setHistoryLoading(false)
+        })
+    }
+    load()
+    const t = window.setInterval(load, REFRESH_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(t)
+    }
+  }, [expanded, job.id, pending])  // pending 变化 (用户点了 trigger) 时也立即重拉一次
 
   return (
     <Card>
@@ -336,6 +377,9 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
           ) : null}
 
           <Separator />
+          <JobHistorySection items={history} loading={historyLoading} />
+
+          <Separator />
 
           <div className="flex flex-wrap items-center gap-2">
             {job.supports_enable ? (
@@ -388,6 +432,121 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
         </CardContent>
       ) : null}
     </Card>
+  )
+}
+
+/** Job 历史记录 section. 每行: 开始时间 + 触发方式 (自动/手动) + 状态 (成功/失败/跳过) + 错误 + 耗时. */
+function JobHistorySection({
+  items,
+  loading,
+}: {
+  items: SchedulerJobHistoryItem[]
+  loading: boolean
+}) {
+  return (
+    <div className="space-y-1.5 text-sm">
+      <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <HistoryIcon className="size-3.5" />
+        <span>历史记录</span>
+        <span className="text-[10px] text-muted-foreground/60">
+          (最近 20 次, 每 5s 自动刷新)
+        </span>
+        {loading ? (
+          <RefreshCw className="size-3 animate-spin text-muted-foreground/60" />
+        ) : null}
+      </div>
+
+      {items.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border/40 bg-background/30 px-3 py-4 text-center text-xs text-muted-foreground">
+          {loading ? "加载中…" : "暂无历史记录 (等下次 cron 触发 或 点 \"立即触发\")"}
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border/30">
+          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 bg-muted/30 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span>开始时间</span>
+            <span>触发</span>
+            <span>状态</span>
+            <span>耗时</span>
+          </div>
+          <div className="divide-y divide-border/30">
+            {items.map((it, idx) => (
+              <HistoryRow key={`${it.start_at}-${idx}`} item={it} />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
+  const [expanded, setExpanded] = useState(false)
+  const isFailed = item.status === "failed"
+  const isManual = item.trigger_type === "manual"
+  const hasError = isFailed && item.error
+
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-2 py-1.5 text-xs",
+        isFailed && "bg-red-50/50 dark:bg-red-950/10",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        {hasError ? (
+          <button
+            type="button"
+            aria-label={expanded ? "收起错误" : "展开错误"}
+            onClick={() => setExpanded((v) => !v)}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+          >
+            {expanded ? (
+              <ChevronDown className="size-3" />
+            ) : (
+              <ChevronRight className="size-3" />
+            )}
+          </button>
+        ) : (
+          <span className="w-3" />
+        )}
+        <span className="truncate font-mono tabular-nums" title={item.start_at}>
+          {formatDateTime(item.start_at)}
+        </span>
+      </div>
+      <Badge
+        variant={isManual ? "secondary" : "outline"}
+        className="px-1.5 py-0 text-[10px]"
+        title={isManual ? "用户手动触发" : "cron 自动触发"}
+      >
+        {isManual ? (
+          <>
+            <Hand className="mr-0.5 size-2.5" />
+            手动
+          </>
+        ) : (
+          "自动"
+        )}
+      </Badge>
+      <Badge variant={statusBadgeVariant(item.status)} className="px-1.5 py-0 text-[10px]">
+        {item.status}
+      </Badge>
+      <span className="font-mono tabular-nums text-muted-foreground">
+        {formatSeconds(item.duration_seconds)}
+      </span>
+
+      {hasError && expanded ? (
+        <div className="col-span-4 mt-1 flex items-start gap-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] leading-5 text-destructive">
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+          <span className="break-all whitespace-pre-wrap">{item.error}</span>
+        </div>
+      ) : null}
+
+      {!isFailed && item.target_count != null && item.target_count > 0 ? (
+        <div className="col-span-4 mt-0.5 text-[10px] text-muted-foreground">
+          处理标的 {item.target_count} 个, 成功 {item.succeeded ?? 0}
+        </div>
+      ) : null}
+    </div>
   )
 }
 

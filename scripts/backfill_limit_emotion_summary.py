@@ -65,12 +65,17 @@ def _walk_trading_days(start: date, end: date) -> list[date]:
     return out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """回填 limit_emotion_summary_daily 到 duckdb.
+
+    `argv` 默认 None → 走 sys.argv. 接受 list 给 in-process 调用方传参
+    (e.g. daily_eod_incremental 调它, 避免 subprocess 再开 duckdb 撞锁).
+    """
     ap = argparse.ArgumentParser(description="回填 limit_emotion_summary_daily 到 duckdb")
     ap.add_argument("--days", type=int, default=60,
                     help="回填窗口天数 (默认 60, 内部会过滤非交易日)")
     ap.add_argument("--force", action="store_true", help="覆盖已有记录")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     today = date.today()
     start = today - timedelta(days=args.days)

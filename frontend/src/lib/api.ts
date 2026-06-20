@@ -3873,6 +3873,15 @@ export interface SchedulerJobItem {
   config_enabled: boolean
   config: Record<string, unknown>
   live: Record<string, unknown>
+  /** 后端归一化的"上次运行"摘要, 前端只读这六个字段, 不用管各 scheduler 异构字段名. */
+  last_run?: {
+    last_run_at: string | null
+    last_status: string | null
+    last_targets_processed: number | null
+    last_duration_seconds: number | null
+    last_error: string | null
+    total_runs: number | null
+  }
 }
 
 export interface SchedulerJobsResponse {
@@ -3897,6 +3906,44 @@ export interface SchedulerJobActionResponse {
   result?: Record<string, unknown> | { ok: boolean; items?: unknown[]; count?: number; error?: string }
   config?: Record<string, unknown>
   error?: string
+}
+
+/** 单条 job run history (来自 /api/scheduler/jobs/<id>/history). */
+export interface SchedulerJobHistoryItem {
+  start_at: string
+  end_at: string
+  /** 触发方式: "auto" = cron 自动 / "manual" = 手动点"立即触发" */
+  trigger_type: "auto" | "manual" | string
+  /** 运行结果: success / failed / skipped / running */
+  status: "success" | "failed" | "skipped" | "running" | string
+  /** 失败时的错误信息 (成功时为 null) */
+  error: string | null
+  /** 耗时 (秒) */
+  duration_seconds: number | null
+  /** application_analysis 专用: 本次触发的标的数 / 成功数 */
+  target_count?: number
+  succeeded?: number
+}
+
+export interface SchedulerJobHistoryResponse {
+  ok: boolean
+  job_id?: string
+  items: SchedulerJobHistoryItem[]
+  count: number
+  error?: string
+}
+
+export async function fetchSchedulerJobHistory(
+  jobId: string,
+  limit = 50,
+): Promise<SchedulerJobHistoryResponse> {
+  const res = await fetchWithRetry(
+    `${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}/history?limit=${encodeURIComponent(String(limit))}`,
+    { cache: "no-store" },
+  )
+  const data = (await res.json().catch(() => null)) as SchedulerJobHistoryResponse | null
+  if (!res.ok || !data) throw new Error(`获取 job history 失败: ${res.status}`)
+  return data
 }
 
 async function postSchedulerAction(

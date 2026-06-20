@@ -157,7 +157,12 @@ def _scan_rotation(days: int) -> dict[str, list[dict]]:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """回填大盘概况 / 市场脉搏 90 行业 到 duckdb.
+
+    `argv` 默认 None → 走 sys.argv. 接受 list 给 in-process 调用方传参
+    (e.g. daily_eod_incremental 调它, 避免 subprocess 再开 duckdb 撞锁).
+    """
     ap = argparse.ArgumentParser(description="回填大盘概况 / 市场脉搏 90 行业 到 duckdb")
     ap.add_argument("--days", type=int, default=60,
                     help="回填最近 N 天 (默认 60)")
@@ -166,7 +171,7 @@ def main() -> int:
     ap.add_argument("--source", choices=["all", "akshare", "eltdx", "sector"], default="all",
                     help="只回填某个数据源 (默认 all)")
     ap.add_argument("--dry-run", action="store_true", help="只看计划, 不写入")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     log.info("start: days=%s source=%s dry_run=%s", args.days, args.source, args.dry_run)
 

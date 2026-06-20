@@ -9,16 +9,33 @@
   },
   "timezone_offset_hours": 8,
   "tick_seconds": 60,
-  "lastRunAt": null,
-  "lastRunOk": null,
+  "lastRunAt": "2026-06-20T10:41:03",
+  "lastRunOk": true,
   "lastRunError": null,
-  "lastDurationSeconds": null,
-  "lastDaysRequested": null,
+  "lastDurationSeconds": 7.3,
+  "lastDaysRequested": 60,
   "lastDaysUpserted": null,
   "lastRowsUpserted": null,
-  "lastCoverage": null,
-  "totalRuns": 0,
+  "lastCoverage": {
+    "firstDate": "2026-06-09",
+    "lastDate": "2026-06-18",
+    "rowCount": 721,
+    "tradeDayCount": 8
+  },
+  "totalRuns": 1,
   "totalFailures": 0,
-  "schedulerStartedAt": "2026-06-20T01:33:35",
-  "running": true
+  "schedulerStartedAt": "2026-06-20T10:41:03",
+  "running": true,
+  "lastTargetTradeDate": "2026-06-18",
+  "lastSectorBreadthDays": 8,
+  "history": [
+    {
+      "start_at": "2026-06-20T10:41:03",
+      "end_at": "2026-06-20T10:41:13",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 7.3
+    }
+  ]
 }

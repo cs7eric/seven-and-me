@@ -2,13 +2,22 @@
 
 逻辑:
   1. 查 duckdb daily_raw 当前最大 trade_date
-  2. 与今天对比, 缺 N 天 → 调 initial_backfill.py (INSERT OR IGNORE 幂等,
+  2. 与今天对比, 缺 N 天 → in-process 调 initial_backfill (INSERT OR IGNORE 幂等,
      重复跑不会写脏数据, 会自动补齐缺的日期)
-  3. 跑完 → 调 backfill_limit_emotion_summary.py --days=N+2 回算
+  3. 跑完 → in-process 调 backfill_limit_emotion_summary --days=N+2 回算
      缺日的 limit_emotion_summary_daily (涨跌停情绪综合分)
   4. qfq/hfq 对账: 找 daily_raw 有但 daily_qfq/hfq 缺的 trade_date, 逐日
-     调 fetch_one_date_eltdx.py 补拉 (防 daily_eod step 2 漏跑导致 last day 没 qfq)
-  5. backfill_market_overview_daily (大盘 / 行业 90)
+     in-process 调 fetch_one_date_eltdx (防 daily_eod step 2 漏跑导致 last day 没 qfq)
+  5. in-process 调 backfill_market_overview_daily (大盘 / 行业 90)
+  6. in-process 调 backfill_turnover_activity (成交活跃度)
+
+in-process 调用原因: DuckDB 同一 .duckdb 文件不支持多进程同时写, subprocess 子进程
+会再开一次连接 → 撞 OS 文件锁 → "另一个程序正在使用此文件" 报错.
+
+duckdb_store 现在用**短连接** (per-call 打开, 函数返回 GC 自动 close), 跨进程冲突变成
+"协作式": Flask server 只在处理 HTTP 时瞬间持锁, 中间空闲期 daily 脚本就能拿到锁.
+本脚本 in-process 调用也是同一思路: 一个 process 内 5 个子步骤共享 1 个 connection,
+期间别的 process 能用 DuckDB 文件.
 
 跟 daily_eod.py 区别:
   - daily_eod.py 跑全套 8 步 (qfq/hfq/validate/MA 计数等), 是手动一次性
@@ -31,7 +40,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import subprocess
 import sys
 import time
 from datetime import date, timedelta
@@ -129,24 +137,38 @@ def _missing_hfq_dates() -> list[date]:
     for r in rows:
         v = r[0]
         out.append(v.date() if hasattr(v, "date") else v)
-    return []
+    return out
 
 
-def _run(cmd: list[str], label: str) -> bool:
+def _run_in_process(label: str, fn, argv) -> bool:
+    """In-process 调子脚本 main(argv). 跟原 subprocess 区别:
+    - 共用同一个 duckdb 连接 (没有 OS 文件锁竞争)
+    - 输出直接进当前 logger
+    - 失败 / 异常被捕获, 不让一个子步骤把整个编排搞崩
+
+    返回: True=OK, False=FAIL.
+    """
     print()
     print("=" * 70)
     print(f"  {label}")
     print("=" * 70)
     t0 = time.time()
     try:
-        r = subprocess.run([sys.executable, "-u", *cmd], check=False)
+        rc = fn(argv) if argv is not None else fn()
+        el = time.time() - t0
+        ok = (rc == 0 or rc is None)
+        log.info("[%s] %s  in %.1fs (rc=%s)", fn.__module__, "OK" if ok else f"FAIL(rc={rc})", el, rc)
+        return ok
+    except SystemExit as exc:
+        el = time.time() - t0
+        rc = exc.code
+        ok = (rc == 0 or rc is None)
+        log.info("[%s] SystemExit %s  in %.1fs", fn.__module__, "OK" if ok else f"FAIL(rc={rc})", el)
+        return ok
     except Exception as exc:  # noqa: BLE001
+        el = time.time() - t0
         log.error("%s crashed: %s: %s", label, type(exc).__name__, exc)
         return False
-    el = time.time() - t0
-    ok = r.returncode == 0
-    log.info("[%s] %s  in %.1fs", Path(cmd[0]).name, "OK" if ok else f"FAIL({r.returncode})", el)
-    return ok
 
 
 def main() -> int:
@@ -159,7 +181,22 @@ def main() -> int:
     ap.add_argument("--no-qfq", action="store_true", help="跳过 qfq/hfq 对账步骤")
     args = ap.parse_args()
 
-    today = date.today()
+    # today 默认 date.today(), 但 scheduler 调度时 (周末/节假日 cron 触发)
+    # 会通过环境变量 MINIMAX_TARGET_TRADE_DATE 传入上一个交易日, 这里优先用 env.
+    import os as _os
+    env_target = _os.environ.get("MINIMAX_TARGET_TRADE_DATE")
+    if env_target:
+        try:
+            today = date.fromisoformat(env_target)
+            log.info("today (from MINIMAX_TARGET_TRADE_DATE env)=%s", today.isoformat())
+        except ValueError:
+            log.warning(
+                "MINIMAX_TARGET_TRADE_DATE=%s 不是合法 ISO 日期, 回退 date.today()",
+                env_target,
+            )
+            today = date.today()
+    else:
+        today = date.today()
     log.info("today=%s  dry-run=%s", today.isoformat(), args.dry_run)
 
     # 1. 当前 max(trade_date)
@@ -211,14 +248,18 @@ def main() -> int:
         return 0
 
     ok = True
+
+    # ── Step 1: initial_backfill (in-process, 共用当前 duckdb 连接) ──
     if need_backfill and not args.no_backfill:
-        ok &= _run(
-            [str(SCRIPTS / "initial_backfill.py")],
-            "Step 1  initial_backfill.py  (全量重 parse, INSERT OR IGNORE 补齐缺日)",
+        from scripts import initial_backfill as _initial_backfill_mod
+        ok &= _run_in_process(
+            "Step 1  initial_backfill.main()  (全量重 parse, INSERT OR IGNORE 补齐缺日)",
+            _initial_backfill_mod.main,
+            [],  # argv=[], 用 default 参数
         )
 
+    # ── Step 2: qfq/hfq 对账 (in-process, 逐日) ──
     if not args.no_qfq and missing_adj:
-        # 逐日 in-process 调 fetch_one_date_eltdx.run() (避免 subprocess 的 duckdb 文件锁冲突)
         from scripts.fetch_one_date_eltdx import run as _run_fetch_adj
         for td in missing_adj:
             td_str = td.isoformat()
@@ -239,26 +280,32 @@ def main() -> int:
                 log.error("fetch_adj %s crashed: %s: %s", td_str, type(exc).__name__, exc)
                 ok = False
 
+    # ── Step 3: limit_emotion_summary (in-process) ──
     if not args.no_summary and les_gap > 0:
-        # 留 1 天 buffer 防 weekday 错位
-        days = min(les_gap + 2, 60)
-        ok &= _run(
-            [str(SCRIPTS / "backfill_limit_emotion_summary.py"), f"--days={days}"],
-            f"Step 3  backfill_limit_emotion_summary.py --days={days}  (回算 limit 综合分)",
+        from scripts import backfill_limit_emotion_summary as _les_mod
+        days = min(les_gap + 2, 60)  # 留 1 天 buffer 防 weekday 错位
+        ok &= _run_in_process(
+            f"Step 3  backfill_limit_emotion_summary.main() --days={days}  (回算 limit 综合分)",
+            _les_mod.main,
+            [f"--days={days}"],
         )
 
-    # Step 4: 大盘概况 / 行业 90 回填 duckdb (双保险, 主调度在 17:10 market_overview_daily_scheduler)
+    # ── Step 4: 大盘概况 / 行业 90 (in-process) ──
     if not args.no_overview:
-        ok &= _run(
-            [str(SCRIPTS / "backfill_market_overview_daily.py"), "--days=3"],
-            "Step 4  backfill_market_overview_daily.py --days=3  (大盘 / 行业 90 → duckdb)",
+        from scripts import backfill_market_overview_daily as _movd_mod
+        ok &= _run_in_process(
+            "Step 4  backfill_market_overview_daily.main() --days=3  (大盘 / 行业 90 → duckdb)",
+            _movd_mod.main,
+            ["--days=3"],
         )
 
-    # Step 5: 成交活跃度回填 duckdb (市场温度指标)
+    # ── Step 5: 成交活跃度 (in-process) ──
     if not args.no_turnover:
-        ok &= _run(
-            [str(SCRIPTS / "backfill_turnover_activity.py"), "--days=3"],
-            "Step 5  backfill_turnover_activity.py --days=3  (成交活跃度 → duckdb)",
+        from scripts import backfill_turnover_activity as _ta_mod
+        ok &= _run_in_process(
+            "Step 5  backfill_turnover_activity.main() --days=3  (成交活跃度 → duckdb)",
+            _ta_mod.main,
+            ["--days=3"],
         )
 
     log.info("daily_eod_incremental done.  ok=%s", ok)

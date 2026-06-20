@@ -38,6 +38,8 @@ from backend.config.settings import (
     SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE,
 )
 from backend.services.stock.trading_calendar import is_trading_day
+from backend.services.scheduler.job_history import record_run, trigger_type
+from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 from backend.utils.json_io import read_json_file
 
 logger = logging.getLogger(__name__)
@@ -148,16 +150,28 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 # Job 函数
 # ---------------------------------------------------------------------------
 def _job_run_download() -> None:
-    """16:30 跑 download_tdx_hsjday.py (subprocess, 不阻塞 scheduler)."""
+    """16:30 跑 download_tdx_hsjday.py (subprocess, 不阻塞 scheduler).
+
+    周末 / 节假日不 skip, 改按最近一个交易日 (target_date) 跑, 避免 cron 漏跑.
+    TDX hsjday.zip 每个交易日发布一次, 上一个交易日有最新数据.
+    """
     now = _beijing_now()
-    if not is_trading_day(now.date()):
-        logger.info("tdx_hsjday_download skipped: %s not trading day", now.date())
-        return
+    today = now.date()
+    target_date = resolve_target_trading_day(today)
 
     status = _load_job_status()
     t0 = time.time()
     status["lastRunAt"] = now.isoformat(timespec="seconds")
-    status["lastRunDate"] = now.date().isoformat()
+    start_at_iso = now.isoformat(timespec="seconds")
+    status["lastRunDate"] = target_date.isoformat()
+    if target_date != today:
+        status["lastTargetTradeDate"] = target_date.isoformat()
+        logger.info(
+            "tdx_hsjday_download: today=%s 非交易日, 改按 target=%s 跑",
+            today, target_date,
+        )
+    else:
+        status["lastTargetTradeDate"] = target_date.isoformat()
 
     # 脚本路径: 状态文件可覆盖 (测试用), 默认走 repo root
     script_path = status.get(_SCRIPT_PATH_KEY) or _default_script_path()
@@ -172,15 +186,28 @@ def _job_run_download() -> None:
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
+        record_run(
+            "tdx_hsjday_download",
+            status="failed",
+            duration_seconds=status.get("lastDurationSeconds"),
+            start_at=start_at_iso,
+            end_at=datetime.now().isoformat(timespec="seconds"),
+            error=status.get("lastRunError"),
+        )
         return
 
     try:
+        script_env = {
+            **os.environ,
+            "MINIMAX_TARGET_TRADE_DATE": target_date.isoformat(),
+        }
         r = subprocess.run(
-            [sys.executable, "-u", str(script)],
+            [sys.executable, "-u", str(script), f"--date={target_date.isoformat()}"],
             cwd=str(_repo_root()),
             check=False,
             capture_output=True,
             text=True,
+            env=script_env,
             timeout=_JOB_TIMEOUT_SECONDS,
         )
         elapsed = time.time() - t0
@@ -234,6 +261,15 @@ def _job_run_download() -> None:
         )
 
     _save_job_status(status)
+
+    record_run(
+        "tdx_hsjday_download",
+        status="success" if status.get("lastRunOk") else "failed",
+        duration_seconds=status.get("lastDurationSeconds"),
+        start_at=start_at_iso,
+        end_at=datetime.now().isoformat(timespec="seconds"),
+        error=status.get("lastRunError"),
+    )
 
 
 def _grep_path(stdout: str, key: str) -> str | None:
@@ -346,6 +382,8 @@ def stop_tdx_hsjday_download_scheduler() -> None:
     status["stoppedAt"] = _beijing_now().isoformat(timespec="seconds")
     _save_job_status(status)
 
+    
+
 
 def get_tdx_hsjday_download_scheduler_status() -> dict[str, Any]:
     status = _load_job_status()
@@ -354,8 +392,9 @@ def get_tdx_hsjday_download_scheduler_status() -> dict[str, Any]:
 
 
 def run_tdx_hsjday_download_now() -> dict[str, Any]:
-    """手动触发一次 (供 API 测试 / 前端按钮用)."""
-    _job_run_download()
+    """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
+    with trigger_type("manual"):
+        _job_run_download()
     status = get_tdx_hsjday_download_scheduler_status()
     # 包装成前端友好的 {ok, count, failed_count} 形态 (跟其他 scheduler 一致)
     return {
