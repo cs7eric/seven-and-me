@@ -49,20 +49,22 @@ export function MarketBreadthCard({ date }: { date: string | null }) {
   const adv = data?.pctAdvancing ?? 0
   const ma20 = data?.pctAboveMa20 ?? 0
   const ma60 = data?.pctAboveMa60 ?? 0
-  const composite = w1 * adv + w2 * ma20 + w3 * ma60
+  const rawComposite = w1 * adv + w2 * ma20 + w3 * ma60
+  // 优先用后端 percentile score (跟 MSI 一致), 无则 fallback 本地 raw 值
+  const composite = data?.breadthScore ?? rawComposite
 
   const tone =
     composite == null || data == null
       ? "text-slate-700"
-      : composite >= 60
+      : composite >= 70
         ? "text-red-600"
         : composite >= 40
           ? "text-amber-600"
           : "text-emerald-600"
   const levelLabel =
-    composite >= 60 ? "强势" : composite >= 40 ? "中性" : "弱势"
+    composite >= 70 ? "强势" : composite >= 40 ? "中性" : "弱势"
   const levelBadge =
-    composite >= 60
+    composite >= 70
       ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
       : composite >= 40
         ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
@@ -70,7 +72,7 @@ export function MarketBreadthCard({ date }: { date: string | null }) {
 
   const sparkData = toSparkData(
     history,
-    (it) => w1 * (it.pctAdvancing ?? 0) + w2 * (it.pctAboveMa20 ?? 0) + w3 * (it.pctAboveMa60 ?? 0),
+    (it) => it.breadthScore ?? (w1 * (it.pctAdvancing ?? 0) + w2 * (it.pctAboveMa20 ?? 0) + w3 * (it.pctAboveMa60 ?? 0)),
   )
 
   const rows: Array<{ label: string; pct: number; weight: number }> = [
@@ -139,8 +141,8 @@ export function MarketBreadthCard({ date }: { date: string | null }) {
 
             {/* 等级说明 */}
             <div className="flex gap-3 text-[10px] text-muted-foreground">
-              <span className="text-red-600/70">≥60 强势</span>
-              <span className="text-amber-600/70">40-60 中性</span>
+              <span className="text-red-600/70">≥70 强势</span>
+              <span className="text-amber-600/70">40-70 中性</span>
               <span className="text-emerald-600/70">＜40 弱势</span>
             </div>
           </div>

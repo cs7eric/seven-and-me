@@ -30,7 +30,7 @@
   },
   "totalRuns": 1,
   "totalFailures": 0,
-  "schedulerStartedAt": "2026-06-20T22:38:39",
+  "schedulerStartedAt": "2026-06-20T23:10:32",
   "running": true,
   "lastTargetTradeDate": "2026-06-18",
   "history": [
@@ -41,6 +41,14 @@
       "status": "success",
       "error": null,
       "duration_seconds": 6.3
+    },
+    {
+      "start_at": "2026-06-21T02:45:58",
+      "end_at": "2026-06-21T02:46:04",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 6.2
     }
   ]
 }

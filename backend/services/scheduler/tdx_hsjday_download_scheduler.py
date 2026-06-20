@@ -17,7 +17,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
@@ -32,15 +31,10 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE,
-)
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.utils.json_io import read_json_file
 
 logger = logging.getLogger(__name__)
 
@@ -75,75 +69,83 @@ def _default_script_path() -> str:
 # ---------------------------------------------------------------------------
 # Job 状态
 # ---------------------------------------------------------------------------
+def _job_default_status() -> dict[str, Any]:
+    return {
+        "name": _JOB_ID,
+        "lastRunAt": None,
+        "lastRunOk": None,
+        "lastRunError": None,
+        "lastRunDate": None,
+        "lastStatus": None,                # "success" | "failed" | "skipped"
+        "lastSkipped": False,
+        "lastSkipReason": None,
+        # ---- 交易日校验 ----
+        "lastTradingDayCheck": None,       # {ok, latestDataDate, checked, error}
+        "lastTradingDayChecked": False,
+        # ---- 存量数据 ----
+        "lastExistingDataDate": None,       # 存量 .day 文件最新日期
+        "lastAlreadyHaveData": False,
+        # ---- 下载 ----
+        "lastZipPath": None,
+        "lastZipName": None,
+        "lastZipBytes": None,
+        "lastDownloadNote": None,          # "已存在, 跳过下载"
+        "lastDownloadError": None,
+        # ---- 解压 ----
+        "lastExtractOk": None,
+        # ---- 重命名 ----
+        "lastRenameOk": None,
+        # ---- 文件列表 ----
+        "lastDayFileCount": None,
+        "lastFileSamples": None,           # [str] 采样文件名
+        # ---- 下载字节数 (旧字段兼容) ----
+        "lastDownloadBytes": None,
+        "lastDurationSeconds": None,
+        # ---- 验证字段 ----
+        "lastVerifyOk": None,
+        "lastVerifyTotalFiles": None,
+        "lastVerifyTotalBytes": None,
+        "lastVerifyPerMarket": None,      # {sh: {files, bytes}, sz: ..., bj: ...}
+        "lastVerifySamples": None,         # [{code, market, firstDate, lastDate, records, ok}, ...]
+        "lastVerifySampleOk": None,        # 通过采样的数量
+        "lastVerifySampleTotal": None,     # 总采样数
+        "lastVerifyTradingDay": None,      # 验证的目标交易日
+        "lastVerifyErrors": None,          # [str] 验证失败详情
+        "totalRuns": 0,
+        "totalFailures": 0,
+        "schedulerStartedAt": None,
+    }
+
+
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE.exists():
-        return {
-            "name": _JOB_ID,
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastRunDate": None,
-            "lastZipPath": None,
-            "lastDayFileCount": None,
-            "lastDownloadBytes": None,
-            "lastDurationSeconds": None,
-            "totalRuns": 0,
-            "totalFailures": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("tdx_hsjday_download job status read failed: %s", exc)
-        return {}
+    status = load_config("tdx_hsjday_download")
+    if status:
+        return status
+    return _job_default_status()
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE)
+    save_config("tdx_hsjday_download", status)
 
 
 # ---------------------------------------------------------------------------
 # Jobs.json 注册
 # ---------------------------------------------------------------------------
-def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": data}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
+def _register_job(job_id: str, name: str) -> None:
+    register_job(
+        code=job_id,
+        name=name,
+        description=(
             "工作日 16:30 触发, 调 scripts/download_tdx_hsjday.py 下载 TDX hsjday.zip (~538MB), "
             "解压到 reference/stock/download/{date}/, 备份旧 reference/tdx/day/hsjday, "
             "mv 新 hsjday 覆盖 target; 失败回滚; 周末 / 节假日由 is_trading_day 拦下; "
             "预计耗时 3-5 min (下载 30-60s + 解压 1-2 min + 替换 5-10s)"
         ),
-        "config_file": _STATUS_FILE_NAME,
-        "service_module": "backend.services.scheduler.tdx_hsjday_download_scheduler",
-        "service_class": "TdxHsjdayDownloadScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        "module": "backend.services.scheduler.tdx_hsjday_download_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+        service_module="backend.services.scheduler.tdx_hsjday_download_scheduler",
+        service_class="TdxHsjdayDownloadScheduler",
+        config_file=_STATUS_FILE_NAME,
+        default_config=_job_default_status(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +207,8 @@ def _job_run_download() -> None:
             [sys.executable, "-u", str(script), f"--date={target_date.isoformat()}"],
             cwd=str(_repo_root()),
             check=False,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # stderr → stdout: JSON 块和错误消息都在一条流里
             text=True,
             env=script_env,
             timeout=_JOB_TIMEOUT_SECONDS,
@@ -213,37 +216,179 @@ def _job_run_download() -> None:
         elapsed = time.time() - t0
         status["lastDurationSeconds"] = round(elapsed, 1)
 
-        # 从 stdout 抓关键信息 (脚本会 log.info "[download] / [extract]")
+        # 所有输出 (日志 + JSON 块) 都在 stdout
         stdout = r.stdout or ""
-        status["lastZipPath"] = _grep_path(stdout, "zip_path=")
-        # 写当日预期目录 (脚本默认行为)
-        status["lastZipPath"] = status["lastZipPath"] or str(
-            _repo_root() / "reference" / "stock" / "download" / now.date().isoformat() / "hsjday.zip"
-        )
-        # 文件数 / 字节数
-        day_count = _grep_int(stdout, "含 ")
-        if day_count is not None:
-            status["lastDayFileCount"] = day_count
-        zip_bytes = _grep_bytes_from_log(stdout)
-        if zip_bytes is not None:
-            status["lastDownloadBytes"] = zip_bytes
+        stderr = ""  # 已合并到 stdout
 
-        if r.returncode == 0:
+        # 0) 交易日校验
+        td_data = _parse_json_block(stdout, "---begin-trading-day-json---", "---end-trading-day-json---")
+        if td_data:
+            status["lastTradingDayCheck"] = td_data
+            status["lastTradingDayChecked"] = td_data.get("checked")
+
+        # 1) 存量数据检查
+        existing_data = _parse_json_block(stdout, "---begin-existing-data-json---", "---end-existing-data-json---")
+        if existing_data:
+            status["lastExistingDataDate"] = existing_data.get("latestDate")
+            status["lastAlreadyHaveData"] = existing_data.get("alreadyHaveData")
+
+        # 2) 下载结果 JSON
+        download_data = _parse_json_block(stdout, "---begin-download-json---", "---end-download-json---")
+        if download_data:
+            status["lastZipName"] = download_data.get("fileName")
+            status["lastZipPath"] = download_data.get("filePath")
+            status["lastZipBytes"] = download_data.get("fileBytes")
+            if download_data.get("alreadyExisted"):
+                status["lastDownloadNote"] = "已存在, 跳过下载"
+            if download_data.get("error"):
+                status["lastDownloadError"] = download_data.get("error")
+
+        # 3) 解压结果 JSON
+        extract_data = _parse_json_block(stdout, "---begin-extract-json---", "---end-extract-json---")
+        if extract_data:
+            status["lastExtractOk"] = extract_data.get("ok")
+            if extract_data.get("totalDayFiles"):
+                status["lastDayFileCount"] = extract_data.get("totalDayFiles")
+
+        # 4) 验证 JSON
+        verify_data = _parse_json_block(stdout, "---begin-verify-json---", "---end-verify-json---")
+        if verify_data:
+            status["lastVerifyOk"] = verify_data.get("ok")
+            status["lastVerifyTotalFiles"] = verify_data.get("totalFiles")
+            status["lastVerifyTotalBytes"] = verify_data.get("totalBytes")
+            status["lastVerifyPerMarket"] = verify_data.get("perMarket")
+            status["lastVerifySamples"] = verify_data.get("samples")
+            status["lastVerifySampleOk"] = verify_data.get("sampleOkCount")
+            status["lastVerifySampleTotal"] = verify_data.get("sampleTotalCount")
+            status["lastVerifyTradingDay"] = verify_data.get("targetTradingDay")
+            status["lastVerifyErrors"] = verify_data.get("errors")
+
+        # 5) 重命名结果 JSON
+        rename_data = _parse_json_block(stdout, "---begin-rename-json---", "---end-rename-json---")
+        if rename_data:
+            status["lastRenameOk"] = rename_data.get("ok")
+
+        # 6) 文件列表 JSON
+        files_data = _parse_json_block(stdout, "---begin-files-json---", "---end-files-json---")
+        if files_data:
+            status["lastDayFileCount"] = files_data.get("totalDayFiles")
+            status["lastFileSamples"] = files_data.get("samples")
+
+        # 兼容旧格式 (grep 兜底)
+        if not status.get("lastZipPath"):
+            status["lastZipPath"] = _grep_path(stdout, "zip_path=") or str(
+                _repo_root() / "reference" / "stock" / "download" / now.date().isoformat() / "hsjday.zip"
+            )
+
+        # ═══════════════════════════════════════════════════════════════
+        # 成功 / 失败判定
+        # ═══════════════════════════════════════════════════════════════
+        verify_ok = bool(verify_data and verify_data.get("ok"))
+
+        if r.returncode == 0 and not verify_data and not download_data:
+            # 脚本成功退出但没有 download/verify JSON → 跳过了
+            # (非交易日 或 已有最新数据)
+            skip_reason = ""
+            if td_data and not td_data.get("ok"):
+                skip_reason = f"非交易日 (目标={status.get('lastRunDate')}, K线最新={td_data.get('latestDataDate') or '?'})"
+            elif existing_data and existing_data.get("alreadyHaveData"):
+                skip_reason = f"已有最新数据 (最新={existing_data.get('latestDate')})"
+            else:
+                skip_reason = "跳过 (无下载/验证输出)"
             status["lastRunOk"] = True
             status["lastRunError"] = None
+            status["lastSkipped"] = True
+            status["lastSkipReason"] = skip_reason
+            status["lastStatus"] = "skipped_non_trading_day" if (td_data and not td_data.get("ok")) else "skipped"
             status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
             logger.info(
-                "tdx_hsjday_download ok in %.1fs: day_files=%s zip_bytes=%s",
-                elapsed, status.get("lastDayFileCount"), status.get("lastDownloadBytes"),
+                "tdx_hsjday_download skipped: %s (%.1fs)", skip_reason, elapsed,
             )
-        else:
-            err_tail = (r.stderr or r.stdout or "")[-500:].strip()
+        elif r.returncode == 0 and verify_ok:
+            status["lastRunOk"] = True
+            status["lastRunError"] = None
+            status["lastSkipped"] = False
+            status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
+            logger.info(
+                "tdx_hsjday_download ok in %.1fs: file=%s (%s) day_files=%s verify=%s/%s",
+                elapsed,
+                status.get("lastZipName"), _fmt_status_bytes(status.get("lastZipBytes")),
+                status.get("lastDayFileCount"),
+                status.get("lastVerifySampleOk"), status.get("lastVerifySampleTotal"),
+            )
+        elif r.returncode == 2:
+            # 下载失败
+            dl_err = status.get("lastDownloadError") or _grep_last_error(stdout) or (stderr or stdout)[-400:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or f"exit={r.returncode}"
+            status["lastRunError"] = f"[下载失败] {dl_err[:500]}"
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
-                "tdx_hsjday_download failed in %.1fs: exit=%d\n%s",
-                elapsed, r.returncode, err_tail,
+                "tdx_hsjday_download download failed in %.1fs: file=%s error=%s",
+                elapsed, status.get("lastZipName") or "?", status.get("lastRunError"),
+            )
+        elif r.returncode == 3:
+            # 验证未通过
+            verify_errors = status.get("lastVerifyErrors") or []
+            if verify_errors:
+                err_detail = "; ".join(str(e) for e in verify_errors[:5])
+            else:
+                err_detail = _grep_verify_fail(stdout) or "最新交易日数据缺失"
+            status["lastRunOk"] = False
+            status["lastRunError"] = f"[验证失败] {err_detail}"
+            status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+            logger.warning(
+                "tdx_hsjday_download verify failed in %.1fs: exit=3 file=%s (%s) errors=%s",
+                elapsed,
+                status.get("lastZipName") or "?",
+                _fmt_status_bytes(status.get("lastZipBytes")),
+                status.get("lastRunError"),
+            )
+        elif r.returncode == 4:
+            # 解压失败
+            extract_err = (extract_data or {}).get("error") if extract_data else None
+            err_msg = extract_err or _grep_last_error(stdout) or (stderr or stdout)[-400:].strip()
+            status["lastRunOk"] = False
+            status["lastRunError"] = f"[解压失败] {err_msg[:500]}"
+            status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+            logger.warning(
+                "tdx_hsjday_download extract failed in %.1fs: exit=4 file=%s error=%s",
+                elapsed, status.get("lastZipName") or "?", status.get("lastRunError"),
+            )
+        elif r.returncode == 5:
+            # 重命名失败
+            rename_err = (rename_data or {}).get("error") if rename_data else None
+            err_msg = rename_err or _grep_last_error(stdout) or f"exit=5"
+            status["lastRunOk"] = False
+            status["lastRunError"] = f"[替换失败] {err_msg[:500]}"
+            status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+            logger.warning(
+                "tdx_hsjday_download rename failed in %.1fs: exit=5 file=%s error=%s",
+                elapsed, status.get("lastZipName") or "?", status.get("lastRunError"),
+            )
+        else:
+            # 其他错误
+            phase_hint = _grep_last_error(stdout)
+            err_tail = (stderr or stdout)[-600:].strip()
+            err_msg = phase_hint or err_tail or f"exit={r.returncode}"
+            if phase_hint:
+                if any(tag in phase_hint for tag in ("下载", "download", "JS challenge", "urlopen")):
+                    phase = "[下载失败]"
+                elif any(tag in phase_hint for tag in ("解压", "extract", "zipfile")):
+                    phase = "[解压失败]"
+                elif any(tag in phase_hint for tag in ("替换", "重命名", "rename", "rename")):
+                    phase = "[替换失败]"
+                else:
+                    phase = "[运行失败]"
+            else:
+                phase = "[运行失败]"
+            status["lastRunOk"] = False
+            status["lastRunError"] = f"{phase} {err_msg[:500]}"
+            status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+            logger.warning(
+                "tdx_hsjday_download failed in %.1fs: exit=%d file=%s error=%s",
+                elapsed, r.returncode,
+                status.get("lastZipName") or "?",
+                status.get("lastRunError"),
             )
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
@@ -262,9 +407,15 @@ def _job_run_download() -> None:
 
     _save_job_status(status)
 
+    if status.get("lastSkipped"):
+        hist_status = "skipped"
+    elif status.get("lastRunOk"):
+        hist_status = "success"
+    else:
+        hist_status = "failed"
     record_run(
         "tdx_hsjday_download",
-        status="success" if status.get("lastRunOk") else "failed",
+        status=hist_status,
         duration_seconds=status.get("lastDurationSeconds"),
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
@@ -356,7 +507,6 @@ def start_tdx_hsjday_download_scheduler() -> None:
         _register_job(
             _JOB_ID,
             "tdx_hsjday_download (16:30 工作日, 下 hsjday.zip + 覆盖 reference/tdx/day/hsjday)",
-            None,
         )
         logger.info(
             "tdx_hsjday_download_scheduler started: cron=%s (workday only via is_trading_day)",
@@ -403,3 +553,87 @@ def run_tdx_hsjday_download_now() -> dict[str, Any]:
         "count": 1,
         "failed_count": 0 if status.get("lastRunOk") else 1,
     }
+
+
+def _parse_verify_json(stdout: str) -> dict[str, Any] | None:
+    """从 stdout 提取 ``---begin-verify-json--- ... ---end-verify-json---`` 块并解析 JSON.
+
+    脚本 ``download_tdx_hsjday.py`` 在替换后输出这个结构化块.
+    解析失败返回 None (不抛异常).
+    """
+    import json as _json
+    try:
+        start_marker = "---begin-verify-json---"
+        end_marker = "---end-verify-json---"
+        start_idx = stdout.find(start_marker)
+        if start_idx == -1:
+            return None
+        start_idx += len(start_marker)
+        end_idx = stdout.find(end_marker, start_idx)
+        if end_idx == -1:
+            return None
+        body = stdout[start_idx:end_idx].strip()
+        if not body:
+            return None
+        return dict(_json.loads(body))
+    except Exception:
+        return None
+
+def _parse_json_block(stdout: str, start_marker: str, end_marker: str) -> dict[str, Any] | None:
+    """从 stdout 提取 start_marker ... end_marker 块并解析 JSON. 解析失败返回 None."""
+    import json as _json
+    try:
+        start_idx = stdout.find(start_marker)
+        if start_idx == -1:
+            return None
+        start_idx += len(start_marker)
+        end_idx = stdout.find(end_marker, start_idx)
+        if end_idx == -1:
+            return None
+        body = stdout[start_idx:end_idx].strip()
+        if not body:
+            return None
+        return dict(_json.loads(body))
+    except Exception:
+        return None
+
+
+def _grep_last_error(stdout: str) -> str | None:
+    """从脚本 stdout 中提取最后一个 ERROR/CRITICAL/Traceback 附近的错误消息."""
+    lines = stdout.splitlines()
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i]
+        if any(tag in line for tag in ("[ERROR]", "[CRITICAL]", "ERROR:", "CRITICAL:")):
+            ctx = lines[i: i + 4]
+            return " | ".join(s.strip() for s in ctx if s.strip())
+    for i in range(len(lines) - 1, -1, -1):
+        if "Traceback" in lines[i]:
+            ctx = lines[i: i + 4]
+            return " | ".join(s.strip() for s in ctx if s.strip())
+    return None
+def _grep_verify_fail(stdout: str) -> str | None:
+    """从 stdout 提取 "验证未通过: ..." 行中的具体消息."""
+    for line in stdout.splitlines():
+        if "验证未通过" in line:
+            # "2026-06-20 12:00:00,123 [ERROR] 验证未通过: 2/9 采样文件缺少 2026-06-20 交易日数据, 退出码=3"
+            # 取 "验证未通过" 之后、最后一个逗号之前的部分
+            idx = line.find("验证未通过")
+            if idx >= 0:
+                msg = line[idx:].rstrip()
+                # 截掉末尾的 ", 退出码=3" / ", retcode=3"
+                for suffix in (", 退出码=3", ", exit=3", ", retcode=3"):
+                    if msg.endswith(suffix):
+                        msg = msg[: -len(suffix)]
+                if msg:
+                    return msg
+    return None
+def _fmt_status_bytes(n) -> str:
+    """把字节数格式化为人类可读字符串, None 安全."""
+    if n is None:
+        return "0 B"
+    n = int(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n}{unit}"
+        n //= 1024
+    return f"{n}TB"

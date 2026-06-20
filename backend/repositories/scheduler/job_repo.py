@@ -195,12 +195,12 @@ class SchedulerJobRepository:
         rows = self.db.execute(
             select(SchedulerJobCategory.id)
             .join(
-                SchedulerJob,
-                SchedulerJob.id == SchedulerJobCategoryMapping.job_id,
-            )
-            .join(
                 SchedulerJobCategoryMapping,
                 SchedulerJobCategoryMapping.category_id == SchedulerJobCategory.id,
+            )
+            .join(
+                SchedulerJob,
+                SchedulerJob.id == SchedulerJobCategoryMapping.job_id,
             )
             .where(
                 SchedulerJob.deleted_at.is_(None),

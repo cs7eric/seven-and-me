@@ -9,17 +9,17 @@
   },
   "timezone_offset_hours": 8,
   "tick_seconds": 60,
-  "lastRunAt": "2026-06-20T10:40:30",
+  "lastRunAt": "2026-06-20T22:55:03",
   "lastRunOk": true,
   "lastRunError": null,
   "lastMaxTradeDate": "2026-06-17",
   "lastLimitEmotionMaxDate": "2026-06-18",
   "lastBackfillOk": null,
   "lastSummaryOk": null,
-  "lastDurationSeconds": 4.9,
-  "totalRuns": 4,
+  "lastDurationSeconds": 4.5,
+  "totalRuns": 5,
   "totalFailures": 3,
-  "schedulerStartedAt": "2026-06-20T22:38:39",
+  "schedulerStartedAt": "2026-06-20T23:09:17",
   "running": true,
   "stoppedAt": "2026-06-17T21:39:07",
   "job_name": "daily_eod_incremental",
@@ -41,6 +41,22 @@
       "status": "success",
       "error": null,
       "duration_seconds": 4.9
+    },
+    {
+      "start_at": "2026-06-20T22:55:03",
+      "end_at": "2026-06-20T22:55:08",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 4.5
+    },
+    {
+      "start_at": "2026-06-21T02:45:33",
+      "end_at": "2026-06-21T02:45:38",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 4.6
     }
   ]
 }

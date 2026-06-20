@@ -1,8 +1,8 @@
 # MSI 9 Factor 技术设计文档 (TAD)
 
 > 维护人: cs7eric
-> 更新: 2026-06-19
-> 用途: 描述市场情绪指数 (MSI) 9 个子因子的实现逻辑、公式、数据源、取值方式、前端接口
+> 更新: 2026-06-21
+> 用途: 描述市场情绪指数 (MSI) 9 个子因子的实现逻辑、公式、数据源、取值方式、前端接口、调度链
 
 ---
 
@@ -255,33 +255,51 @@ score = percentile_score("style_risk_appetite_daily", "spread", td, spread)
 
 ---
 
-## 4. 数据流与 cache-aside 模式
+## 4. 数据流与调度链
+
+### 4.1 收盘后 cron 调度链（完整 pipeline）
 
 ```
-每日 17:00 scheduler 触发各子卡 save
-    │
-    ├─ volatility_sentiment_scheduler   → save_volatility_sentiment()
-    ├─ turnover_activity_scheduler     → save_turnover_activity()
-    ├─ risk_appetite_scheduler         → save_risk_appetite()
-    ├─ ma_count_scheduler               → save_ma_count()
-    ├─ limit_emotion_scheduler          → save_limit_emotion_summary()
-    ├─ profit_effect_scheduler         → save_profit_effect()
-    ├─ sector_breadth_scheduler         → upsert_sector_breadth()
-    └─ style_risk_scheduler             → save_style_risk_appetite()
-
-用户请求 MSI
-    │
-    └─ calc_market_sentiment_index_cached(td)
-           │
-           ├─ get_market_sentiment_index(td)  ← cache-aside 优先查表
-           │   (命中则直接返回，无则往下)
-           │
-           └─ calc_market_sentiment_index(td)  ← 各因子调 percentile_score 实时算
-                   │
-                   └─ save_market_sentiment_index()  ← 算完写入 cache
+16:30  tdx_hsjday_download           → download_tdx_hsjday.py → 全A日线 hsjday.zip (~538MB)
+16:45  initial_backfill              → initial_backfill.py → TDX .day 解析 → duckdb daily_raw (INSERT OR IGNORE)
+16:50  qfq_reconciliation            → fetch_one_date_eltdx.py → qfq/hfq 复权对账补拉 (daily_qfq / daily_hfq)
+-----  daily_eod_incremental 已废弃, 所有步骤拆分到上面 3 个独立 job -----
+17:03  limit_emotion                 → backfill_limit_emotion_summary.py → limit_emotion_summary_daily
+17:05  risk_appetite                 → backfill_risk_appetite.py → risk_appetite_daily
+17:06  ma_count                      → backfill_ma_count_and_returns.py → ma_count_daily + index_returns_daily
+17:07  volatility_sentiment          → backfill_volatility_sentiment.py → volatility_sentiment_daily
+17:08  style_risk_appetite           → backfill_style_risk_appetite.py → style_risk_appetite_daily
+17:09  profit_effect                 → backfill_profit_effect.py → profit_effect_daily
+17:10  market_overview_daily         → backfill_market_overview_daily.py → total_amount (成交额) 等大盘数据
+17:12  turnover_activity             → backfill_turnover_activity.py → total_amount/20日均 → turnover_activity_daily
+17:15  ths_industry_fund_flow        → backfill_ths_industry_fund_flow.py (不再算 sector_breadth)
+17:17  sector_breadth                → backfill_sector_breadth.py → market_pulse_sector_breadth_daily
+17:20  market_sentiment_index        → backfill_market_sentiment_index.py --require-full
+                                       ↑ 前置检查: 8 张子表全部有当天数据; 不全则 skip
 ```
 
-**cache-aside 保证**: 任何读过的日期都会进表，下次命中 O(<10ms)
+每个 job 只负责一件事。加上 `turnover` (个股换手率, F10 数据) 线程常驻盘内刷新 (与 MSI 无关)。
+
+### 4.2 Market Sentiment Category（DB `app.scheduler_jobs` 注册, 14 个 job）
+
+| Job | Cron | MSI 角色 |
+|-----|------|----------|
+| `tdx_hsjday_download` | 16:30 | **上游**: 原始数据下载 |
+| `initial_backfill_refresh` | 16:45 | **上游**: TDX .day → duckdb daily_raw |
+| `qfq_reconciliation_refresh` | 16:50 | **上游**: qfq/hfq 复权对账 |
+| `limit_emotion_refresh` | 17:03 | **Factor 6**: limit_emotion 涨跌停情绪, weight 15% |
+| `risk_appetite_refresh` | 17:05 | **Factor 4**: risk_appetite 风险偏好, weight 10% |
+| `ma_count` | 17:06 | **Factor 3+5**: price_strength(10%) + breadth(15%) |
+| `volatility_sentiment_refresh` | 17:07 | **Factor 1**: vol 波动率情绪, weight 15% |
+| `style_risk_appetite_refresh` | 17:08 | **Factor 9**: style_risk 风格风险偏好, weight 5% |
+| `profit_effect_refresh` | 17:09 | **Factor 7**: profit_effect 赚钱效应, weight 10% |
+| `market_overview_daily` | 17:10 | **Factor 2 数据源**: total_amount 全市场成交额 |
+| `turnover_activity_refresh` | 17:12 | **Factor 2**: turnover 成交活跃度, weight 15% |
+| `sector_breadth_refresh` | 17:17 | **Factor 8**: sector_breadth 板块扩散, weight 5% |
+| `market_sentiment_index_refresh` | 17:20 | **Composite**: 9 factor weighted sum → 0-100 |
+| `daily_eod_incremental` | (废弃) | 所有子步骤已拆分到独立 job |
+
+### 4.3 cache-aside 模式
 
 ---
 
@@ -295,6 +313,11 @@ score = percentile_score("style_risk_appetite_daily", "spread", td, spread)
 | 2026-06-18 | `limit_emotion` 的 `composite_score` 自身也做百分位 | 原 raw 值在涨停潮时饱和到 100，无法区分极端情况 |
 | 2026-06-18 | `breadth_raw = 0.40×pctAdvancing + 0.35×pctMA20 + 0.25×pctMA60` | 原来用 `pct_both`（站双均线比例），覆盖不足 |
 | 2026-06-16 | `turnover` 数据从 sh000001 + sz399001 TDX amount 回填 | `market_overview_daily` 只有 2023-06 以降数据，20日均值严重偏低 |
+| 2026-06-21 | 全部 14 个 job 归入 market-sentiment category | 统一管理 MSI 9 factor 全链路: 上游数据 + 9 factor + composite |
+| 2026-06-21 | initial_backfill / qfq_reconciliation / turnover_activity 拆成独立 cron job | 从 daily_eod_incremental 拆出, 每个 job 只做一件事; daily_eod_incremental 废弃 |
+| 2026-06-21 | limit_emotion / sector_breadth 拆成独立 scheduler job | 原来寄生在 daily_eod_incremental / ths_industry_fund_flow_daily 里, 没有独立 cron |
+| 2026-06-21 | breadth / profit_effect 子卡改用百分位 | 原来子卡显示 raw 值, MSI composite 用 percentile, 不一致 |
+| 2026-06-21 | MSI cron 17:10 → 17:20 + 前置检查 9 factor 全就绪 | turnover_activity 17:12 才跑完, MSI 必须在所有 factor 之后; 不全则 skip |
 
 ---
 
@@ -312,6 +335,20 @@ score = percentile_score("style_risk_appetite_daily", "spread", td, spread)
 | `backend/repositories/market/profit_effect_repo.py` | 赚钱效应（up_5d + new_low_60d） |
 | `backend/repositories/market/sector_breadth_repo.py` | 板块扩散（同花顺行业涨跌比） |
 | `backend/repositories/market/style_risk_appetite_repo.py` | 风格风险偏好（中证1000 vs 沪深300） |
+| `backend/services/scheduler/tdx_hsjday_download_scheduler.py` | 数据下载 scheduler (16:30) |
+| `backend/services/scheduler/initial_backfill_scheduler.py` | TDX 解析入库 scheduler (16:45, 独立) |
+| `backend/services/scheduler/qfq_reconciliation_scheduler.py` | qfq/hfq 复权对账 scheduler (16:50, 独立) |
+| `backend/services/scheduler/limit_emotion_scheduler.py` | 涨跌停情绪 scheduler (17:03, 独立) |
+| `backend/services/scheduler/risk_appetite_scheduler.py` | 风险偏好 scheduler (17:05) |
+| `backend/services/scheduler/ma_count_scheduler.py` | MA 计数 + 指数收益 scheduler (17:06) |
+| `backend/services/scheduler/volatility_sentiment_scheduler.py` | 波动率情绪 scheduler (17:07) |
+| `backend/services/scheduler/style_risk_appetite_scheduler.py` | 风格风险偏好 scheduler (17:08) |
+| `backend/services/scheduler/profit_effect_scheduler.py` | 赚钱效应 scheduler (17:09) |
+| `backend/services/scheduler/market_overview_daily_scheduler.py` | 大盘概况 scheduler (17:10) |
+| `backend/services/scheduler/turnover_activity_scheduler.py` | 成交活跃度 scheduler (17:12, 独立) |
+| `backend/services/scheduler/sector_breadth_scheduler.py` | 板块扩散 scheduler (17:17, 独立) |
+| `backend/services/scheduler/market_sentiment_index_scheduler.py` | MSI composite scheduler (17:20, 前置 9/9 检查) |
+| `backend/services/scheduler/turnover_scheduler.py` | 个股换手率线程 (盘内实时, 与 MSI 无关) |
 | `backend/services/stock/trading_calendar.py` | `is_trading_day`，`WORKDAYS_OVERTIME` 清空 |
 | `scripts/backfill_turnover_from_index.py` | TDX sh+sz amount 回填 turnover_activity |
 | `scripts/backfill_limit_emotion_summary_batch.py` | expanding-window 重算 limit_emotion 4 个 score 列 |

@@ -6,7 +6,7 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from backend.config.settings import SCHEDULER_DIR, SCHEDULER_JOBS_FILE
+from backend.services.scheduler.config_store import load_config, register_job
 from backend.services.stock.application_analysis_service import run_application_analysis_target
 from backend.services.stock.application_analysis_store import (
     list_result_files,
@@ -17,39 +17,19 @@ from backend.services.stock.application_analysis_store import (
     touch_updated_marker,
     write_result,
 )
-from backend.utils.json_io import read_json_file, write_json_file
 
 
 def _register_application_analysis_job() -> None:
-    """把 application_analysis job 注册到 ``jobs.json``，与 turnover / auction 一致。幂等。"""
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        registry = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        registry = {"version": 1, "jobs": []}
-    jobs = registry.setdefault("jobs", [])
-    existing = next(
-        (item for item in jobs if item.get("id") == "application_analysis"),
-        None,
+    """把 application_analysis job 注册到 DB。幂等。"""
+    register_job(
+        code="application_analysis",
+        name="个股应用分析",
+        description="对 application-analysis targets 中 enabled 标的按 interval_minutes 节奏生成 AI 分析 + 盘后 15:30 跑 recent30 快照",
+        service_module="backend.services.stock.application_analysis_scheduler",
+        service_class="ApplicationAnalysisScheduler",
+        config_file="reference/application-analysis/scheduler.json",
+        default_config={},
     )
-    payload = {
-        "id": "application_analysis",
-        "name": "个股应用分析",
-        "description": "对 application-analysis targets 中 enabled 标的按 interval_minutes 节奏生成 AI 分析 + 盘后 15:30 跑 recent30 快照",
-        "config_file": "reference/application-analysis/scheduler.json",
-        "service_module": "backend.services.stock.application_analysis_scheduler",
-        "service_class": "ApplicationAnalysisScheduler",
-        "enabled": True,
-    }
-    if existing is None:
-        payload["registered_at"] = datetime.now().isoformat()
-        jobs.append(payload)
-    else:
-        for key, value in payload.items():
-            if key == "registered_at":
-                continue
-            existing[key] = value
-    write_json_file(SCHEDULER_JOBS_FILE, registry)
 
 
 class ApplicationAnalysisScheduler:
@@ -78,6 +58,13 @@ class ApplicationAnalysisScheduler:
             _register_application_analysis_job()
         except Exception as exc:
             print(f'[ApplicationAnalysisScheduler] register job failed: {exc}', flush=True)
+
+        # 检查 DB 中的 enabled 开关, 如果为 False 则不启动 (与其它 scheduler 一致)
+        _cfg = load_config("application_analysis")
+        if not _cfg.get("enabled", True):
+            print("[ApplicationAnalysisScheduler] disabled by config, not started", flush=True)
+            return
+
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_loop, name='ApplicationAnalysisScheduler', daemon=True)
         self._thread.start()

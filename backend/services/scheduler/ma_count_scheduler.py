@@ -35,6 +35,7 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from backend.services.scheduler.backfill_validator import validate_count, validate_scalar
 from backend.config.settings import (
     SCHEDULER_DIR,
     SCHEDULER_JOBS_FILE,
@@ -228,14 +229,28 @@ def _job_run_backfill() -> None:
             status["lastIrFailed"] = int(m2.group(3))
 
         if r.returncode == 0:
-            status["lastRunOk"] = True
-            status["lastRunError"] = None
-            status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
-            logger.info(
-                "ma_count ok in %.1fs: ma_upserted=%s ir_upserted=%s",
-                elapsed, status.get("lastMaUpserted"), status.get("lastIrUpserted"),
-            )
-            _refresh_coverage(status)
+            # DuckDB 数据校验: ma_count_daily + index_returns_daily 两表
+            _valid_ma, _err_ma = validate_scalar("ma_count_daily", "total_eligible", target_date)
+            _valid_ir, _err_ir = validate_count("index_returns_daily", target_date, min_rows=4)
+            if not _valid_ma:
+                status["lastRunOk"] = False
+                status["lastRunError"] = "[校验失败] ma_count_daily: " + str(_err_ma)
+                status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+                logger.warning("ma_count validation failed in %.1fs: %s", elapsed, _err_ma)
+            elif not _valid_ir:
+                status["lastRunOk"] = False
+                status["lastRunError"] = "[校验失败] index_returns_daily: " + str(_err_ir)
+                status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+                logger.warning("ma_count index_returns validation failed in %.1fs: %s", elapsed, _err_ir)
+            else:
+                status["lastRunOk"] = True
+                status["lastRunError"] = None
+                status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
+                logger.info(
+                    "ma_count ok in %.1fs: ma_upserted=%s ir_upserted=%s",
+                    elapsed, status.get("lastMaUpserted"), status.get("lastIrUpserted"),
+                )
+                _refresh_coverage(status)
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False

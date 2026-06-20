@@ -61,6 +61,7 @@ def main() -> int:
     ap.add_argument("--end", type=str, default=None, help="结束日 YYYY-MM-DD (默认今天)")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划, 不执行")
     ap.add_argument("--force", action="store_true", help="跳过 cache 强制重算")
+    ap.add_argument("--require-full", action="store_true", help="仅写入 9/9 component 全齐的日期")
     args = ap.parse_args()
 
     init_schema()
@@ -149,10 +150,16 @@ def main() -> int:
             if args.force:
                 payload = calc_market_sentiment_index(td)
                 if payload:
+                    if args.require_full and payload.get("componentCount", 0) < 9:
+                        fail_count += 1
+                        continue
                     save_market_sentiment_index(payload)
             else:
                 payload = calc_market_sentiment_index_cached(td, force=True)
             if payload:
+                if args.require_full and payload.get("componentCount", 0) < 9:
+                    fail_count += 1
+                    continue
                 ok_count += 1
                 if payload.get("componentCount") == 9:
                     full_count += 1

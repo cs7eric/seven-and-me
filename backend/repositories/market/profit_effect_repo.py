@@ -17,6 +17,10 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.repositories.market.percentile_helper import (
+    enrich_history_scores,
+    percentile_score,
+)
 from backend.services.stock.trading_calendar import is_trading_day
 
 logger = logging.getLogger(__name__)
@@ -153,12 +157,24 @@ def get_profit_effect_history(
         f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
         [s, e],
     ).fetchall()
-    return [_row_to_payload(r) for r in rows]
+    items = [_row_to_payload(r) for r in rows]
+    enrich_history_scores(items, "profit_effect_daily", "score", e)
+    return items
 
 
 # ---------------------------------------------------------------------------
 # 4. cache-aside
 # ---------------------------------------------------------------------------
+
+def _add_score(payload: dict, trade_date: date | str) -> None:
+    """给 payload 加 score (0-100 历史分位) + rawValue (原始 score)."""
+    raw = payload.get("score")
+    if raw is not None:
+        payload["score"] = percentile_score(
+            "profit_effect_daily", "score", trade_date, raw,
+        )
+        payload["rawValue"] = raw
+
 
 def calc_profit_effect_cached(
     trade_date: date | str,
@@ -168,6 +184,7 @@ def calc_profit_effect_cached(
     if not force:
         cached = get_profit_effect(trade_date)
         if cached is not None:
+            _add_score(cached, trade_date)
             return cached
     payload = calc_profit_effect(trade_date)
     if payload is None:
@@ -176,6 +193,7 @@ def calc_profit_effect_cached(
         save_profit_effect(payload)
     except Exception:
         logger.debug("save_profit_effect failed (non-fatal): %s", payload.get("tradeDate"))
+    _add_score(payload, trade_date)
     return payload
 
 

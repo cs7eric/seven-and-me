@@ -3,13 +3,8 @@
 逻辑:
   1. 查 duckdb daily_raw 当前最大 trade_date
   2. 与今天对比, 缺 N 天 → in-process 调 initial_backfill (INSERT OR IGNORE 幂等,
-     重复跑不会写脏数据, 会自动补齐缺的日期)
-  3. 跑完 → in-process 调 backfill_limit_emotion_summary --days=N+2 回算
-     缺日的 limit_emotion_summary_daily (涨跌停情绪综合分)
-  4. qfq/hfq 对账: 找 daily_raw 有但 daily_qfq/hfq 缺的 trade_date, 逐日
-     in-process 调 fetch_one_date_eltdx (防 daily_eod step 2 漏跑导致 last day 没 qfq)
-  5. in-process 调 backfill_market_overview_daily (大盘 / 行业 90)
-  6. in-process 调 backfill_turnover_activity (成交活跃度)
+     重复跑不会写脏数据, 会自动补齐缺的日期)  3. qfq/hfq 对账: 找 daily_raw 有但 daily_qfq/hfq 缺的 trade_date, 逐日
+     in-process 调 fetch_one_date_eltdx (防 daily_eod step 2 漏跑导致 last day 没 qfq)  4. in-process 调 backfill_market_overview_daily (大盘 / 行业 90)  5. in-process 调 backfill_turnover_activity (成交活跃度)
 
 in-process 调用原因: DuckDB 同一 .duckdb 文件不支持多进程同时写, subprocess 子进程
 会再开一次连接 → 撞 OS 文件锁 → "另一个程序正在使用此文件" 报错.
@@ -61,19 +56,6 @@ SCRIPTS = Path(__file__).resolve().parent
 def _max_trade_date() -> date | None:
     with conn() as c:
         row = c.execute("SELECT MAX(trade_date) FROM daily_raw").fetchone()
-    if row and row[0] is not None:
-        v = row[0]
-        return v.date() if hasattr(v, "date") else v
-    return None
-
-
-def _max_les_date() -> date | None:
-    """max(limit_emotion_summary_daily.trade_date) — 给 skip limit 用."""
-    try:
-        with conn() as c:
-            row = c.execute("SELECT MAX(trade_date) FROM limit_emotion_summary_daily").fetchone()
-    except Exception:
-        return None
     if row and row[0] is not None:
         v = row[0]
         return v.date() if hasattr(v, "date") else v
@@ -175,7 +157,6 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="每日 EOD 增量入 duckdb")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划, 不执行")
     ap.add_argument("--no-backfill", action="store_true", help="跳过 initial_backfill 步骤")
-    ap.add_argument("--no-summary", action="store_true", help="跳过 limit_emotion_summary 步骤")
     ap.add_argument("--no-overview", action="store_true", help="跳过 market_overview_daily 步骤")
     ap.add_argument("--no-turnover", action="store_true", help="跳过成交活跃度回填步骤")
     ap.add_argument("--no-qfq", action="store_true", help="跳过 qfq/hfq 对账步骤")
@@ -201,9 +182,7 @@ def main() -> int:
 
     # 1. 当前 max(trade_date)
     max_td = _max_trade_date()
-    max_les = _max_les_date()
     log.info("daily_raw max(trade_date)         = %s", max_td)
-    log.info("limit_emotion_summary max(td)     = %s", max_les)
 
     if max_td is None:
         log.warning("daily_raw 是空的, 请先跑 initial_backfill.py 一次性回填")
@@ -225,14 +204,7 @@ def main() -> int:
         log.info("差 %d 天 (max=%s, today=%s) — 跑 backfill (INSERT OR IGNORE 幂等)", gap_days, max_td, today)
         need_backfill = True
 
-    # 3. limit_emotion_summary 缺几天 (含今天)
-    if max_les is None:
-        les_gap = gap_days + 1
-    else:
-        les_gap = (today - max_les).days
-    log.info("limit_emotion_summary 缺 %d 天", les_gap)
-
-    # 4. qfq/hfq 对账: 找 daily_raw 有但 qfq/hfq 缺的 trade_date
+    # 3. qfq/hfq 对账: 找 daily_raw 有但 qfq/hfq 缺的 trade_date
     missing_qfq = _missing_qfq_dates() if not args.no_qfq else []
     missing_hfq = _missing_hfq_dates() if not args.no_qfq else []
     # 取并集, 一次 fetch_one_date_eltdx 跑 (脚本内部同时跑 qfq + hfq)
@@ -280,30 +252,20 @@ def main() -> int:
                 log.error("fetch_adj %s crashed: %s: %s", td_str, type(exc).__name__, exc)
                 ok = False
 
-    # ── Step 3: limit_emotion_summary (in-process) ──
-    if not args.no_summary and les_gap > 0:
-        from scripts import backfill_limit_emotion_summary as _les_mod
-        days = min(les_gap + 2, 60)  # 留 1 天 buffer 防 weekday 错位
-        ok &= _run_in_process(
-            f"Step 3  backfill_limit_emotion_summary.main() --days={days}  (回算 limit 综合分)",
-            _les_mod.main,
-            [f"--days={days}"],
-        )
-
-    # ── Step 4: 大盘概况 / 行业 90 (in-process) ──
+    # ── Step 3: 大盘概况 / 行业 90 (in-process) ──
     if not args.no_overview:
         from scripts import backfill_market_overview_daily as _movd_mod
         ok &= _run_in_process(
-            "Step 4  backfill_market_overview_daily.main() --days=3  (大盘 / 行业 90 → duckdb)",
+            f"Step 3  backfill_market_overview_daily.main() --days=3  (大盘 / 行业 90 → duckdb)",
             _movd_mod.main,
             ["--days=3"],
         )
 
-    # ── Step 5: 成交活跃度 (in-process) ──
+    # ── Step 4: 成交活跃度 (in-process) ──
     if not args.no_turnover:
         from scripts import backfill_turnover_activity as _ta_mod
         ok &= _run_in_process(
-            "Step 5  backfill_turnover_activity.main() --days=3  (成交活跃度 → duckdb)",
+            "Step 4  backfill_turnover_activity.main() --days=3  (成交活跃度 → duckdb)",
             _ta_mod.main,
             ["--days=3"],
         )

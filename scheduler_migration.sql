@@ -437,7 +437,7 @@ ON CONFLICT (job_id, started_at, trigger_type) DO NOTHING;
 
 
 -- ============================================================
--- 9. Data: app.scheduler_job_categories  (6 条)
+-- 9. Data: app.scheduler_job_categories  (7 条)
 -- ============================================================
 -- 加 code (skill §29.5): intraday / ai / data_collection / eod_backfill / composite / test.
 -- INSERT 顺序就是 UI tab 顺序, sort_order 显式指定, 不依赖 uuid 大小.
@@ -448,6 +448,7 @@ INSERT INTO app.scheduler_job_categories (code, label, icon_hint, sort_order, de
     ('data_collection',  '数据采集', 'database',  30, '爬虫 / 离线下载 (A 股全市场 / 同花顺行业成分股 / TDX 历史)'),
     ('eod_backfill',     'EOD 回填', 'refresh',   40, '工作日盘后增量回填 duckdb'),
     ('composite',        '合成指标', 'trending',  50, '多张子表加权合成 (style_risk / profit_effect / sentiment_index)'),
+    ('market_sentiment', '市场情绪', 'activity',  25, 'Market Sentiment Index 9 factor 子卡 + composite 合成'),
     ('test',             '测试',     'flask',     99, '测试用 entry, 用来演示 jobs.json 注册表 CRUD')
 ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING;
 
@@ -477,12 +478,20 @@ FROM (VALUES
     ('ths_industry_constituents_weekly',       'data_collection'),
     ('ths_industry_constituents_daily',        'data_collection'),
     ('tdx_hsjday_download',                    'data_collection'),
+    ('tdx_hsjday_download',                    'market_sentiment'),   -- 多对多
     ('daily_eod_incremental',                  'eod_backfill'),
+    ('daily_eod_incremental',                  'market_sentiment'),   -- 多对多
     ('market_overview_daily',                  'eod_backfill'),
+    ('market_overview_daily',                  'market_sentiment'),   -- 多对多
     ('ths_industry_fund_flow_daily',           'eod_backfill'),
-    ('style_risk_appetite_refresh',            'composite'),
-    ('profit_effect_refresh',                  'composite'),
-    ('market_sentiment_index_refresh',         'composite'),
+    ('volatility_sentiment_refresh',           'market_sentiment'),
+    ('ma_count',                               'market_sentiment'),
+    ('risk_appetite_refresh',                  'market_sentiment'),
+    ('limit_emotion_refresh',                  'market_sentiment'),
+    ('style_risk_appetite_refresh',            'market_sentiment'),
+    ('profit_effect_refresh',                  'market_sentiment'),
+    ('sector_breadth_refresh',                 'market_sentiment'),
+    ('market_sentiment_index_refresh',         'market_sentiment'),
     ('test_scheduler_demo',                    'test')
 ) AS m(job_code, category_code)
 JOIN app.scheduler_jobs j
@@ -498,16 +507,17 @@ ON CONFLICT (job_id, category_id) WHERE deleted_at IS NULL DO NOTHING;
 -- 11. 校验
 -- ============================================================
 -- 应该看到:
---   scheduler_jobs                : 23
---   scheduler_job_statuses        : 23
+--   scheduler_jobs                : 25 (新增 limit_emotion_refresh + sector_breadth_refresh)
+--   scheduler_job_statuses        : 25
 --   scheduler_job_run_history     :  4
---   scheduler_job_categories      :  6
---   scheduler_job_category_mappings: 23
+--   scheduler_job_categories      :  7 (新增 market_sentiment)
+--   scheduler_job_category_mappings: 31 (原 23 - 3 composite - 1 turnover + 3 new multi-category + 9 market_sentiment)
 --   mapping_by_category intraday  : 10
 --   mapping_by_category ai        :  2
 --   mapping_by_category data_collection : 4
 --   mapping_by_category eod_backfill    : 3
---   mapping_by_category composite       : 3
+--   mapping_by_category market_sentiment : 11 (9 factor jobs + composite + tdx + eod + market_overview)
+--   mapping_by_category composite       : 0 (soft-deleted)
 --   mapping_by_category test            : 1
 
 SELECT 'scheduler_jobs'                 AS table_name, COUNT(*) AS row_count FROM app.scheduler_jobs

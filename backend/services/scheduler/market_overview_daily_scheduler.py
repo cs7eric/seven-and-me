@@ -264,10 +264,18 @@ def _job_run_backfill() -> None:
         )
 
         if r.returncode == 0:
-            status["lastRunOk"] = True
-            status["lastRunError"] = None
-            status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
-            logger.info(
+            # DuckDB 数据校验: 有值且不为 0
+            _valid_ok, _valid_err = validate_scalar("market_overview_daily", "total_amount", target_date)
+            if not _valid_ok:
+                status["lastRunOk"] = False
+                status["lastRunError"] = "[校验失败] " + str(_valid_err)
+                status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+                logger.warning("market_overview_daily validation failed in %.1fs: %s", elapsed, _valid_err)
+            else:
+                status["lastRunOk"] = True
+                status["lastRunError"] = None
+                status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
+                logger.info(
                 "market_overview_daily ok in %.1fs: akshare=%s eltdx=%s sector_days=%s",
                 elapsed, status.get("lastAkshareUpserted"),
                 status.get("lastEltdxUpserted"), status.get("lastSectorDays"),

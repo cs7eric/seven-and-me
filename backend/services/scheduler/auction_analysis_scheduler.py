@@ -13,14 +13,9 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from backend.config.settings import (
-    SCHEDULER_AUCTION_ANALYSIS_JOB_FILE,
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-)
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 from backend.services.stock.application_analysis_store import load_targets
 from backend.services.stock.auction_ai_analysis_service import run_auction_ai_analysis_target
-from backend.utils.json_io import read_json_file, write_json_file
 
 
 def _beijing_now() -> datetime:
@@ -55,8 +50,8 @@ DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG: dict[str, Any] = {
 
 
 def _load_job_config() -> dict[str, Any]:
-    cfg = read_json_file(SCHEDULER_AUCTION_ANALYSIS_JOB_FILE, None)
-    if not isinstance(cfg, dict):
+    cfg = load_config("auction_ai_analysis")
+    if not cfg:
         cfg = dict(DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG)
     for key, value in DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG.items():
         cfg.setdefault(key, value)
@@ -70,41 +65,19 @@ def _load_job_config() -> dict[str, Any]:
 
 
 def _save_job_config(cfg: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    cfg["_saved_at"] = datetime.now().isoformat()
-    write_json_file(SCHEDULER_AUCTION_ANALYSIS_JOB_FILE, cfg)
-
-
-def _load_jobs_registry() -> dict[str, Any]:
-    if not SCHEDULER_JOBS_FILE.exists():
-        return {"version": 1, "jobs": []}
-    return read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
+    save_config("auction_ai_analysis", cfg)
 
 
 def _register_job() -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    registry = _load_jobs_registry()
-    jobs = registry.setdefault("jobs", [])
-    existing = next((item for item in jobs if item.get("id") == "auction_ai_analysis"), None)
-    payload = {
-        "id": "auction_ai_analysis",
-        "name": "集合竞价 AI 分析",
-        "description": DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG["description"],
-        "config_file": "auction_analysis_job.json",
-        "service_module": "backend.services.scheduler.auction_analysis_scheduler",
-        "service_class": "AuctionAnalysisScheduler",
-        # 注意: 不要在这里覆盖 enabled; 已存在 entry 的 enabled 由 UI 控制, 保留用户改过的状态
-    }
-    if existing is None:
-        payload["enabled"] = True
-        payload["registered_at"] = datetime.now().isoformat()
-        jobs.append(payload)
-    else:
-        # 已存在: 只补 name / description / config_file / service_module / service_class 字段,
-        # 不要覆盖 enabled / registered_at.
-        for key, value in payload.items():
-            existing.setdefault(key, value)
-    write_json_file(SCHEDULER_JOBS_FILE, registry)
+    register_job(
+        code="auction_ai_analysis",
+        name="集合竞价 AI 分析",
+        description=DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG["description"],
+        service_module="backend.services.scheduler.auction_analysis_scheduler",
+        service_class="AuctionAnalysisScheduler",
+        config_file="auction_analysis_job.json",
+        default_config=dict(DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG),
+    )
 
 
 def _time_reached(now: datetime, run_time: str) -> bool:

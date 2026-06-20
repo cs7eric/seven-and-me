@@ -9,19 +9,94 @@
   },
   "timezone_offset_hours": 8,
   "tick_seconds": 60,
-  "lastRunAt": "2026-06-18T16:30:00",
+  "lastRunAt": "2026-06-20T22:54:22",
   "lastRunOk": true,
   "lastRunError": null,
   "lastRunDate": "2026-06-18",
-  "lastZipPath": "F:\\dev-repo\\mp4-to-word-new\\reference\\stock\\download\\2026-06-18\\hsjday.zip",
+  "lastZipPath": "F:\\dev-repo\\mp4-to-word-new\\reference\\stock\\download\\2026-06-20\\hsjday.zip",
   "lastDayFileCount": null,
   "lastDownloadBytes": null,
-  "lastDurationSeconds": 54.9,
-  "totalRuns": 2,
+  "lastDurationSeconds": 11.1,
+  "totalRuns": 4,
   "totalFailures": 0,
-  "schedulerStartedAt": "2026-06-20T22:38:39",
+  "schedulerStartedAt": "2026-06-20T23:10:56",
   "running": true,
   "stoppedAt": "2026-06-17T21:51:58",
   "job_name": "tdx_hsjday_download",
-  "_saved_at": "2026-06-17T21:51:58.156389"
+  "_saved_at": "2026-06-17T21:51:58.156389",
+  "lastTargetTradeDate": "2026-06-18",
+  "history": [
+    {
+      "start_at": "2026-06-20T22:53:42",
+      "end_at": "2026-06-20T22:53:53",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 11.1
+    },
+    {
+      "start_at": "2026-06-20T22:54:22",
+      "end_at": "2026-06-20T22:54:34",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 11.1
+    },
+    {
+      "start_at": "2026-06-21T00:39:17",
+      "end_at": "2026-06-21T00:39:28",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 11.3
+    },
+    {
+      "start_at": "2026-06-21T01:12:54",
+      "end_at": "2026-06-21T01:13:06",
+      "trigger_type": "manual",
+      "status": "failed",
+      "error": "[验证失败] exit=3 (验证失败)",
+      "duration_seconds": 11.2
+    },
+    {
+      "start_at": "2026-06-21T01:22:13",
+      "end_at": "2026-06-21T01:22:24",
+      "trigger_type": "manual",
+      "status": "failed",
+      "error": "[验证失败] 最新交易日数据缺失",
+      "duration_seconds": 11.4
+    },
+    {
+      "start_at": "2026-06-21T01:47:22",
+      "end_at": "2026-06-21T01:47:36",
+      "trigger_type": "manual",
+      "status": "failed",
+      "error": "[验证失败] 最新交易日数据缺失",
+      "duration_seconds": 13.5
+    },
+    {
+      "start_at": "2026-06-21T01:55:51",
+      "end_at": "2026-06-21T01:56:06",
+      "trigger_type": "manual",
+      "status": "failed",
+      "error": "[验证失败] sh000001: 最后日期=20260617 < 目标日期=20260618; sh600036: 最后日期=20260617 < 目标日期=20260618; sh601318: 最后日期=20260617 < 目标日期=20260618; sz000001: 最后日期=20260617 < 目标日期=20260618; sz002415: 最后日期=20260617 < 目标日期=20260618",
+      "duration_seconds": 14.9
+    },
+    {
+      "start_at": "2026-06-21T01:58:48",
+      "end_at": "2026-06-21T01:59:02",
+      "trigger_type": "manual",
+      "status": "failed",
+      "error": "[验证失败] bj430047: 最后日期=20250930 < 目标日期=20260618; bj830799: 最后日期=20250430 < 目标日期=20260618",
+      "duration_seconds": 13.4
+    },
+    {
+      "start_at": "2026-06-21T02:02:35",
+      "end_at": "2026-06-21T02:02:49",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 13.8
+    }
+  ]
 }

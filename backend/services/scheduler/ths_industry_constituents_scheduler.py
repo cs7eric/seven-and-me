@@ -19,7 +19,6 @@ Jobs 注册表：``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -27,12 +26,7 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_THS_INDUSTRY_CONSTITUENTS_JOB_FILE,
-)
-from backend.utils.json_io import read_json_file, write_json_file
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +80,8 @@ DEFAULT_JOB_CONFIG: dict[str, Any] = {
 
 
 def _load_job_config() -> dict[str, Any]:
-    cfg = read_json_file(SCHEDULER_THS_INDUSTRY_CONSTITUENTS_JOB_FILE, None)
-    if not isinstance(cfg, dict):
+    cfg = load_config("ths_industry_constituents_weekly")
+    if not cfg:
         cfg = dict(DEFAULT_JOB_CONFIG)
     for key, value in DEFAULT_JOB_CONFIG.items():
         cfg.setdefault(key, value)
@@ -95,42 +89,22 @@ def _load_job_config() -> dict[str, Any]:
 
 
 def _save_job_config(cfg: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    cfg["_saved_at"] = datetime.now().isoformat()
-    write_json_file(SCHEDULER_THS_INDUSTRY_CONSTITUENTS_JOB_FILE, cfg)
-
-
-def _load_jobs_registry() -> dict[str, Any]:
-    if not SCHEDULER_JOBS_FILE.exists():
-        return {"version": 1, "jobs": []}
-    return read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
+    save_config("ths_industry_constituents_weekly", cfg)
 
 
 def _register_job() -> None:
-    """把 ths_industry_constituents_weekly job 注册到 jobs.json. 幂等."""
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    registry = _load_jobs_registry()
-    existing = next(
-        (item for item in registry.get("jobs", []) if item.get("id") == "ths_industry_constituents_weekly"),
-        None,
+    """把 ths_industry_constituents_weekly job 注册到 DB. 幂等."""
+    register_job(
+        code="ths_industry_constituents_weekly",
+        name="同花顺 90 行业成分股 (每周六 hexin-v 重爬)",
+        description="每周六 18:00 全量重爬 90 行业成分股 (hexin-v 破解), "
+        "落盘 reference/ths-industry/constituents/{code}.json, "
+        "API 默认从磁盘读, 周末后所有 lookups 都返最新落盘数据",
+        service_module="backend.services.scheduler.ths_industry_constituents_scheduler",
+        service_class="ThsIndustryConstituentsScheduler",
+        config_file="ths_industry_constituents_job.json",
+        default_config=dict(DEFAULT_JOB_CONFIG),
     )
-    if existing is not None:
-        return
-    registry.setdefault("jobs", []).append({
-        "id": "ths_industry_constituents_weekly",
-        "name": "同花顺 90 行业成分股 (每周六 hexin-v 重爬)",
-        "description": (
-            "每周六 18:00 全量重爬 90 行业成分股 (hexin-v 破解), "
-            "落盘 reference/ths-industry/constituents/{code}.json, "
-            "API 默认从磁盘读, 周末后所有 lookups 都返最新落盘数据"
-        ),
-        "config_file": "ths_industry_constituents_job.json",
-        "service_module": "backend.services.scheduler.ths_industry_constituents_scheduler",
-        "service_class": "ThsIndustryConstituentsScheduler",
-        "enabled": True,
-        "registered_at": datetime.now().isoformat(),
-    })
-    write_json_file(SCHEDULER_JOBS_FILE, registry)
 
 
 # ---------------------------------------------------------------------------

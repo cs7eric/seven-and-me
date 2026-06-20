@@ -10,7 +10,7 @@
   "timezone_offset_hours": 8,
   "tick_seconds": 60,
   "command": "python -u scripts/backfill_profit_effect.py --days=2 --force",
-  "schedulerStartedAt": "2026-06-20T22:38:39",
+  "schedulerStartedAt": "2026-06-20T23:08:51",
   "running": true,
   "lastRunAt": "2026-06-20T12:41:05",
   "lastTargetTradeDate": "2026-06-18",
@@ -29,6 +29,14 @@
       "status": "success",
       "error": null,
       "duration_seconds": 1.4
+    },
+    {
+      "start_at": "2026-06-21T02:46:12",
+      "end_at": "2026-06-21T02:46:12",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 0.6
     }
   ],
   "stoppedAt": "2026-06-20T12:41:35",

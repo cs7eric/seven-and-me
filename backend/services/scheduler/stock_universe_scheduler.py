@@ -25,13 +25,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from backend.config.settings import (
-    BASE_DIR,
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_STOCK_UNIVERSE_JOB_FILE,
-)
-from backend.utils.json_io import read_json_file, write_json_file
+from backend.config.settings import BASE_DIR
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 
 logger = logging.getLogger(__name__)
 
@@ -85,12 +80,9 @@ DEFAULT_JOB_CONFIG: dict[str, Any] = {
 }
 
 
-_JOB_FILE = SCHEDULER_STOCK_UNIVERSE_JOB_FILE
-
-
 def _load_job_config() -> dict[str, Any]:
-    cfg = read_json_file(_JOB_FILE, None)
-    if not isinstance(cfg, dict):
+    cfg = load_config("stock_universe_refresh")
+    if not cfg:
         cfg = dict(DEFAULT_JOB_CONFIG)
     for key, value in DEFAULT_JOB_CONFIG.items():
         cfg.setdefault(key, value)
@@ -98,37 +90,20 @@ def _load_job_config() -> dict[str, Any]:
 
 
 def _save_job_config(cfg: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    cfg["_saved_at"] = datetime.now().isoformat()
-    write_json_file(_JOB_FILE, cfg)
-
-
-def _load_jobs_registry() -> dict[str, Any]:
-    if not SCHEDULER_JOBS_FILE.exists():
-        return {"version": 1, "jobs": []}
-    return read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
+    save_config("stock_universe_refresh", cfg)
 
 
 def _register_job() -> None:
-    """把 stock_universe_refresh job 注册到 jobs.json (幂等)."""
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    registry = _load_jobs_registry()
-    existing = next(
-        (item for item in registry.get("jobs", []) if item.get("id") == "stock_universe_refresh"),
-        None,
+    """把 stock_universe_refresh job 注册到 DB (幂等)."""
+    register_job(
+        code="stock_universe_refresh",
+        name="A 股全市场持久化",
+        description="工作日 17:00 收盘后拉全 A 股行情 + 题材 + 行业归一, 持久化到 reference/stock-universe/",
+        service_module="backend.services.scheduler.stock_universe_scheduler",
+        service_class="StockUniverseRefreshScheduler",
+        config_file="stock_universe_job.json",
+        default_config=dict(DEFAULT_JOB_CONFIG),
     )
-    if existing is None:
-        registry.setdefault("jobs", []).append({
-            "id": "stock_universe_refresh",
-            "name": "A 股全市场持久化",
-            "description": "工作日 17:00 收盘后拉全 A 股行情 + 题材 + 行业归一, 持久化到 reference/stock-universe/",
-            "config_file": "stock_universe_job.json",
-            "service_module": "backend.services.scheduler.stock_universe_scheduler",
-            "service_class": "StockUniverseRefreshScheduler",
-            "enabled": True,
-            "registered_at": datetime.now().isoformat(),
-        })
-        write_json_file(SCHEDULER_JOBS_FILE, registry)
 
 
 # ---------------------------------------------------------------------------

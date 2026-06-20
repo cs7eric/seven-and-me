@@ -20,7 +20,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -36,15 +35,10 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE,
-)
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.utils.json_io import read_json_file
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 
 logger = logging.getLogger(__name__)
 
@@ -78,60 +72,42 @@ def _default_script_path() -> str:
 # ---------------------------------------------------------------------------
 # Job 状态
 # ---------------------------------------------------------------------------
+def _job_default_status() -> dict[str, Any]:
+    return {
+        "name": _JOB_ID,
+        "lastRunAt": None,
+        "lastRunOk": None,
+        "lastRunError": None,
+        "lastDurationSeconds": None,
+        "lastDaysRequested": None,
+        "lastDaysUpserted": None,
+        "lastRowsUpserted": None,
+        "lastCoverage": None,
+        "totalRuns": 0,
+        "totalFailures": 0,
+        "schedulerStartedAt": None,
+    }
+
+
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE.exists():
-        return {
-            "name": _JOB_ID,
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastDurationSeconds": None,
-            "lastDaysRequested": None,
-            "lastDaysUpserted": None,
-            "lastRowsUpserted": None,
-            "lastCoverage": None,
-            "totalRuns": 0,
-            "totalFailures": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(
-            SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE.read_text(encoding="utf-8")
-        )
-    except Exception as exc:
-        logger.warning("ths_industry_fund_flow_daily job status read failed: %s", exc)
-        return {}
+    cfg = load_config("ths_industry_fund_flow_daily")
+    if not cfg:
+        return _job_default_status()
+    return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE)
+    save_config("ths_industry_fund_flow_daily", status)
 
 
 # ---------------------------------------------------------------------------
 # Jobs.json 注册
 # ---------------------------------------------------------------------------
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": data}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
+    register_job(
+        code=job_id,
+        name=name,
+        description=(
             "工作日 17:15 触发, 调 scripts/backfill_ths_industry_fund_flow.py, "
             "扫 reference/ths-fund-flow/history/YYYY-MM-DD.json (中文 key), "
             "拆 key 落 duckdb.ths_industry_fund_flow_daily. 字段: rank/industry/industry_code/"
@@ -139,18 +115,11 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
             "跟 17:10 market_overview_daily (akshare 源) 解耦, 数据源不同 (hexin-v 同花顺), 字段一致但口径不同, 并存不覆盖. "
             "INSERT OR REPLACE 幂等; 周末 / 节假日由 is_trading_day 拦下; 预计耗时 < 5s."
         ),
-        "config_file": SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE.name,
-        "service_module": "backend.services.scheduler.ths_industry_fund_flow_daily_scheduler",
-        "service_class": "ThsIndustryFundFlowDailyScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        "module": "backend.services.scheduler.ths_industry_fund_flow_daily_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+        service_module="backend.services.scheduler.ths_industry_fund_flow_daily_scheduler",
+        service_class="ThsIndustryFundFlowDailyScheduler",
+        config_file="ths_industry_fund_flow_daily_job.json",
+        default_config=_job_default_status(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +222,6 @@ def _job_run_backfill() -> None:
                 "ths_industry_fund_flow_daily ok in %.1fs: days=%s rows=%s",
                 elapsed, status.get("lastDaysUpserted"), status.get("lastRowsUpserted"),
             )
-            # 顺手算板块扩散 (ths 数据齐后, 跨日聚合 market_pulse_sector_breadth_daily)
-            sb_count = _backfill_sector_breadth(days=60)
-            status["lastSectorBreadthDays"] = sb_count
-            logger.info("sector_breadth: upserted %d days", sb_count)
             _refresh_coverage(status)
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
@@ -308,52 +273,8 @@ def _refresh_coverage(status: dict[str, Any]) -> None:
             "rowCount": int(r[2]) if r[2] else 0,
             "tradeDayCount": int(r[3]) if r[3] else 0,
         }
-        # 同时写 sector_breadth_daily 覆盖度 (顺手, 给前端展示)
-        try:
-            r2 = c.execute(
-                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
-                "FROM market_pulse_sector_breadth_daily"
-            ).fetchone()
-            status["lastSectorBreadthCoverage"] = {
-                "firstDate": r2[0].isoformat() if r2[0] else None,
-                "lastDate": r2[1].isoformat() if r2[1] else None,
-                "rowCount": int(r2[2]) if r2[2] else 0,
-            }
-        except Exception:
-            pass  # sector_breadth 表可能还没建, 忽略
     except Exception as exc:
         logger.debug("refresh_coverage failed: %s", exc)
-
-
-def _backfill_sector_breadth(days: int = 60) -> int:
-    """ths_industry_fund_flow_daily 数据齐后, 跑板块扩散回填.
-
-    跟 ths_industry_fund_flow_daily 合并到一个 job: 不需要额外 cron.
-    失败不影响主流程 (sector_breadth 是衍生指标, 漏算 1-2 天可人工补).
-    """
-    try:
-        from datetime import date as _date, timedelta
-        from backend.adapters.market.duckdb_store import get_conn
-        from backend.repositories.market.sector_breadth_repo import upsert_sector_breadth
-
-        cutoff = _date.today() - timedelta(days=days)
-        with get_conn() as c:
-            date_rows = c.execute(
-                "SELECT DISTINCT trade_date FROM ths_industry_fund_flow_daily "
-                "WHERE trade_date >= ? ORDER BY trade_date ASC",
-                [cutoff],
-            ).fetchall()
-        n_ok = 0
-        for (td,) in date_rows:
-            try:
-                if upsert_sector_breadth(td) > 0:
-                    n_ok += 1
-            except Exception as exc:
-                logger.debug("upsert_sector_breadth(%s) failed: %s", td, exc)
-        return n_ok
-    except Exception as exc:
-        logger.warning("backfill_sector_breadth failed: %s", exc)
-        return 0
 
 
 # ---------------------------------------------------------------------------

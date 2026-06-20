@@ -96,24 +96,17 @@ THS_INDUSTRY_CONSTITUENTS_INDEX_FILE = THS_INDUSTRY_DIR / 'constituents_index.js
 
 # ---- scheduler 维护目录（F:\dev-repo\mp4-to-word-new\scheduler） ----
 SCHEDULER_DIR = BASE_DIR / 'scheduler'
+# 注: 各 job 的 config 现在存 Postgres app.scheduler_jobs.extra，
+#     不再用 *job.json 文件。SCHEDULER_DIR 仅留用于 mkdir 兼容。
+# 但 scheduler 模块仍引用这些常量 (legacy JSON read/write), 保留定义。
 SCHEDULER_JOBS_FILE = SCHEDULER_DIR / 'jobs.json'
-SCHEDULER_TURNOVER_JOB_FILE = SCHEDULER_DIR / 'turnover_job.json'
-SCHEDULER_AUCTION_ANALYSIS_JOB_FILE = SCHEDULER_DIR / 'auction_analysis_job.json'
-SCHEDULER_MARKET_PULSE_JOB_FILE = SCHEDULER_DIR / 'market_pulse_job.json'
-SCHEDULER_STOCK_UNIVERSE_JOB_FILE = SCHEDULER_DIR / 'stock_universe_job.json'
-SCHEDULER_THS_INDUSTRY_CONSTITUENTS_JOB_FILE = SCHEDULER_DIR / 'ths_industry_constituents_job.json'
-SCHEDULER_THS_INDUSTRY_CONSTITUENTS_DAILY_JOB_FILE = SCHEDULER_DIR / 'ths_industry_constituents_daily_job.json'
-SCHEDULER_MARKET_OVERVIEW_JOB_FILE = SCHEDULER_DIR / 'market_overview_job.json'
-SCHEDULER_DAILY_EOD_INCREMENTAL_JOB_FILE = SCHEDULER_DIR / 'daily_eod_incremental_job.json'
-SCHEDULER_TDX_HSJDAY_DOWNLOAD_JOB_FILE = SCHEDULER_DIR / 'tdx_hsjday_download_job.json'
-SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE = SCHEDULER_DIR / 'market_overview_daily_job.json'
-SCHEDULER_THS_INDUSTRY_FUND_FLOW_DAILY_JOB_FILE = SCHEDULER_DIR / 'ths_industry_fund_flow_daily_job.json'
-SCHEDULER_RISK_APPETITE_JOB_FILE = SCHEDULER_DIR / 'risk_appetite_job.json'
 SCHEDULER_MA_COUNT_JOB_FILE = SCHEDULER_DIR / 'ma_count_job.json'
-SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE = SCHEDULER_DIR / 'volatility_sentiment_job.json'
-SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE = SCHEDULER_DIR / 'style_risk_appetite_job.json'
-SCHEDULER_PROFIT_EFFECT_JOB_FILE = SCHEDULER_DIR / 'profit_effect_job.json'
+SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE = SCHEDULER_DIR / 'market_overview_daily_job.json'
 SCHEDULER_MARKET_SENTIMENT_INDEX_JOB_FILE = SCHEDULER_DIR / 'market_sentiment_index_job.json'
+SCHEDULER_PROFIT_EFFECT_JOB_FILE = SCHEDULER_DIR / 'profit_effect_job.json'
+SCHEDULER_RISK_APPETITE_JOB_FILE = SCHEDULER_DIR / 'risk_appetite_job.json'
+SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE = SCHEDULER_DIR / 'style_risk_appetite_job.json'
+SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE = SCHEDULER_DIR / 'volatility_sentiment_job.json'
 
 # ---- 大盘资金 / 成交额 落地 (按天归档) ----
 MARKET_OVERVIEW_FOLDER = REFERENCE_FOLDER / 'market-overview'

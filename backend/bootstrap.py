@@ -33,6 +33,14 @@ from backend.services.scheduler.daily_eod_incremental_scheduler import (
     is_daily_eod_incremental_scheduler_enabled,
     start_daily_eod_incremental_scheduler,
 )
+from backend.services.scheduler.initial_backfill_scheduler import (
+    is_initial_backfill_scheduler_enabled,
+    start_initial_backfill_scheduler,
+)
+from backend.services.scheduler.qfq_reconciliation_scheduler import (
+    is_qfq_reconciliation_scheduler_enabled,
+    start_qfq_reconciliation_scheduler,
+)
 from backend.services.scheduler.tdx_hsjday_download_scheduler import (
     is_tdx_hsjday_download_scheduler_enabled,
     start_tdx_hsjday_download_scheduler,
@@ -49,6 +57,10 @@ from backend.services.scheduler.risk_appetite_scheduler import (
     is_risk_appetite_scheduler_enabled,
     start_risk_appetite_scheduler,
 )
+from backend.services.scheduler.limit_emotion_scheduler import (
+    is_limit_emotion_scheduler_enabled,
+    start_limit_emotion_scheduler,
+)
 from backend.services.scheduler.ma_count_scheduler import (
     is_ma_count_scheduler_enabled,
     start_ma_count_scheduler,
@@ -64,6 +76,14 @@ from backend.services.scheduler.ths_industry_constituents_scheduler import (
 from backend.services.scheduler.style_risk_appetite_scheduler import (
     is_style_risk_appetite_scheduler_enabled,
     start_style_risk_appetite_scheduler,
+)
+from backend.services.scheduler.turnover_activity_scheduler import (
+    is_turnover_activity_scheduler_enabled,
+    start_turnover_activity_scheduler,
+)
+from backend.services.scheduler.sector_breadth_scheduler import (
+    is_sector_breadth_scheduler_enabled,
+    start_sector_breadth_scheduler,
 )
 from backend.services.scheduler.profit_effect_scheduler import (
     is_profit_effect_scheduler_enabled,
@@ -153,6 +173,16 @@ def register_blueprints(app: Flask) -> None:
             start_tdx_hsjday_download_scheduler()
         except Exception as exc:
             logger.exception('TDX hsjday download scheduler start failed: %s', exc)
+    if is_initial_backfill_scheduler_enabled():
+        try:
+            start_initial_backfill_scheduler()
+        except Exception as exc:
+            logger.exception('Initial Backfill scheduler start failed: %s', exc)
+    if is_qfq_reconciliation_scheduler_enabled():
+        try:
+            start_qfq_reconciliation_scheduler()
+        except Exception as exc:
+            logger.exception('QFQ Reconciliation scheduler start failed: %s', exc)
     if is_market_overview_daily_scheduler_enabled():
         try:
             start_market_overview_daily_scheduler()
@@ -163,6 +193,21 @@ def register_blueprints(app: Flask) -> None:
             start_ths_industry_fund_flow_daily_scheduler()
         except Exception as exc:
             logger.exception('THS Industry Fund Flow Daily scheduler start failed: %s', exc)
+    if is_turnover_activity_scheduler_enabled():
+        try:
+            start_turnover_activity_scheduler()
+        except Exception as exc:
+            logger.exception('Turnover Activity scheduler start failed: %s', exc)
+    if is_sector_breadth_scheduler_enabled():
+        try:
+            start_sector_breadth_scheduler()
+        except Exception as exc:
+            logger.exception('Sector Breadth scheduler start failed: %s', exc)
+    if is_limit_emotion_scheduler_enabled():
+        try:
+            start_limit_emotion_scheduler()
+        except Exception as exc:
+            logger.exception('Limit Emotion scheduler start failed: %s', exc)
     if is_risk_appetite_scheduler_enabled():
         try:
             start_risk_appetite_scheduler()

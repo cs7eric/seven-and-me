@@ -10,7 +10,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -22,16 +21,11 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_MARKET_PULSE_JOB_FILE,
-)
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 from backend.services.stock.market_pulse_service import snapshot_today_rotation
 from backend.services.stock.f10.ths_industry_constituents_service import get_all_industry_constituents as get_all_constituents
 from backend.services.stock.limit_emotion_service import snapshot_today_daily as snapshot_today_limit_emotion_daily
 from backend.services.stock.trading_calendar import is_trade_time, is_trading_day
-from backend.utils.json_io import read_json_file, write_json_file
 
 logger = logging.getLogger(__name__)
 
@@ -56,76 +50,48 @@ def _beijing_now() -> datetime:
 # ---------------------------------------------------------------------------
 # Job 状态
 # ---------------------------------------------------------------------------
+def _job_default_status() -> dict[str, Any]:
+    return {
+        "name": "market_pulse_snapshot",
+        "lastRunAt": None,
+        "lastRunOk": None,
+        "lastRunError": None,
+        "lastInsideRefreshAt": None,
+        "lastCloseSnapshotAt": None,
+        "totalInside": 0,
+        "totalClose": 0,
+        "schedulerStartedAt": None,
+    }
+
+
 def _load_job_status() -> dict[str, Any]:
-    p = SCHEDULER_MARKET_PULSE_JOB_FILE
-    p.parent.mkdir(parents=True, exist_ok=True)
-    if not p.exists():
-        return {
-            "name": "market_pulse_snapshot",
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastInsideRefreshAt": None,
-            "lastCloseSnapshotAt": None,
-            "totalInside": 0,
-            "totalClose": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("market pulse job status read failed: %s", exc)
-        return {}
+    cfg = load_config("market_pulse_inside")
+    if not cfg:
+        return _job_default_status()
+    return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    p = SCHEDULER_MARKET_PULSE_JOB_FILE
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(p)
+    save_config("market_pulse_inside", status)
 
 
 # ---------------------------------------------------------------------------
-# Job 注册 (jobs.json)
+# Job 注册 (DB)
 # ---------------------------------------------------------------------------
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    p = SCHEDULER_JOBS_FILE
-    p.parent.mkdir(parents=True, exist_ok=True)
-    if p.exists():
-        data = read_json_file(p, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    # 兼容旧版 / 其他 writer 落盘的顶层 list
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": data}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    # 去重
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
+    register_job(
+        code=job_id,
+        name=name,
+        description=(
             "交易时间内每 10 分钟刷新一次行业轮动快照；15:30 收盘后落盘当日完整 Top 10；"
             "15:35 (仅交易日) 拉 90 行业全量成分股 (Playwright 翻全页), "
             "落盘 reference/stock-universe/ths_industry/constituents/{code}.json"
         ),
-        "config_file": "market_pulse_job.json",
-        "service_module": "backend.services.scheduler.market_pulse_scheduler",
-        "service_class": "MarketPulseScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        # 兼容旧 schema 字段 (前端老 UI / 老 reader 可能还在读)
-        "module": "backend.services.scheduler.market_pulse_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    write_json_file(p, data)
+        service_module="backend.services.scheduler.market_pulse_scheduler",
+        service_class="MarketPulseScheduler",
+        config_file="market_pulse_job.json",
+        default_config=_job_default_status(),
+    )
 
 
 # ---------------------------------------------------------------------------

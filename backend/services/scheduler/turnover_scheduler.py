@@ -15,7 +15,6 @@ Jobs 注册表：``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``。
 """
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
@@ -23,15 +22,10 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from backend.config.settings import (
-    APPLICATION_ANALYSIS_TARGETS_FILE,
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_TURNOVER_JOB_FILE,
-)
+from backend.config.settings import APPLICATION_ANALYSIS_TARGETS_FILE
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 from backend.services.stock.application_analysis_store import load_targets
 from backend.services.stock.f10.turnover import refresh_all_targets_turnover
-from backend.utils.json_io import read_json_file, write_json_file
 
 
 # ---------------------------------------------------------------------------
@@ -107,47 +101,29 @@ DEFAULT_TURNOVER_JOB_CONFIG: dict[str, Any] = {
 
 
 def _load_turnover_job_config() -> dict[str, Any]:
-    cfg = read_json_file(SCHEDULER_TURNOVER_JOB_FILE, None)
-    if not isinstance(cfg, dict):
+    cfg = load_config("turnover")
+    if not cfg:
         cfg = dict(DEFAULT_TURNOVER_JOB_CONFIG)
-    # 字段补全（防止老文件缺字段）
     for key, value in DEFAULT_TURNOVER_JOB_CONFIG.items():
         cfg.setdefault(key, value)
     return cfg
 
 
 def _save_turnover_job_config(cfg: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    cfg["_saved_at"] = datetime.now().isoformat()
-    write_json_file(SCHEDULER_TURNOVER_JOB_FILE, cfg)
-
-
-def _load_jobs_registry() -> dict[str, Any]:
-    if not SCHEDULER_JOBS_FILE.exists():
-        return {"version": 1, "jobs": []}
-    return read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
+    save_config("turnover", cfg)
 
 
 def _register_turnover_job() -> None:
-    """把 turnover_refresh job 注册到 ``jobs.json``。幂等。"""
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    registry = _load_jobs_registry()
-    existing = next(
-        (item for item in registry.get("jobs", []) if item.get("id") == "turnover_refresh"),
-        None,
+    """把 turnover_refresh job 注册到 DB。幂等。"""
+    register_job(
+        code="turnover",
+        name="换手率刷新",
+        description="工作日盘内每半小时 + 16:00 收盘后，刷新 target.json 中所有标的的换手率",
+        service_module="backend.services.scheduler.turnover_scheduler",
+        service_class="TurnoverRefreshScheduler",
+        config_file="turnover_job.json",
+        default_config=dict(DEFAULT_TURNOVER_JOB_CONFIG),
     )
-    if existing is None:
-        registry.setdefault("jobs", []).append({
-            "id": "turnover_refresh",
-            "name": "换手率刷新",
-            "description": "工作日盘内每半小时 + 16:00 收盘后，刷新 target.json 中所有标的的换手率",
-            "config_file": "turnover_job.json",
-            "service_module": "backend.services.scheduler.turnover_scheduler",
-            "service_class": "TurnoverRefreshScheduler",
-            "enabled": True,
-            "registered_at": datetime.now().isoformat(),
-        })
-        write_json_file(SCHEDULER_JOBS_FILE, registry)
 
 
 # ---------------------------------------------------------------------------

@@ -8,8 +8,18 @@
   "lastCoverage": null,
   "totalRuns": 0,
   "totalFailures": 1,
-  "schedulerStartedAt": "2026-06-20T22:38:39",
+  "schedulerStartedAt": "2026-06-20T23:10:20",
   "running": true,
   "lastRowsUpserted": null,
-  "lastRowsSkipped": null
+  "lastRowsSkipped": null,
+  "history": [
+    {
+      "start_at": "2026-06-21T02:46:15",
+      "end_at": "2026-06-21T02:46:15",
+      "trigger_type": "manual",
+      "status": "success",
+      "error": null,
+      "duration_seconds": 0.2
+    }
+  ]
 }

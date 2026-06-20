@@ -14,7 +14,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
@@ -29,14 +28,10 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-)
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
-from backend.utils.json_io import read_json_file
 
 logger = logging.getLogger(__name__)
 
@@ -57,81 +52,54 @@ def _beijing_now() -> datetime:
     return datetime.utcnow() + timedelta(hours=8)
 
 
-def _status_file() -> Path:
-    return SCHEDULER_DIR / _STATUS_FILE_NAME
-
-
 # ---------------------------------------------------------------------------
 # Job 状态
 # ---------------------------------------------------------------------------
+def _job_default_status() -> dict[str, Any]:
+    return {
+        "name": _JOB_ID,
+        "lastRunAt": None,
+        "lastRunOk": None,
+        "lastRunError": None,
+        "lastMaxTradeDate": None,
+        "lastLimitEmotionMaxDate": None,
+        "lastBackfillOk": None,
+        "lastSummaryOk": None,
+        "lastDurationSeconds": None,
+        "totalRuns": 0,
+        "totalFailures": 0,
+        "schedulerStartedAt": None,
+    }
+
+
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not _status_file().exists():
-        return {
-            "name": _JOB_ID,
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastMaxTradeDate": None,
-            "lastLimitEmotionMaxDate": None,
-            "lastBackfillOk": None,
-            "lastSummaryOk": None,
-            "lastDurationSeconds": None,
-            "totalRuns": 0,
-            "totalFailures": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(_status_file().read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("daily_eod_incremental job status read failed: %s", exc)
-        return {}
+    cfg = load_config("daily_eod_incremental")
+    if not cfg:
+        return _job_default_status()
+    return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _status_file().with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(_status_file())
+    save_config("daily_eod_incremental", status)
 
 
 # ---------------------------------------------------------------------------
 # Jobs.json 注册
 # ---------------------------------------------------------------------------
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": data}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
+    register_job(
+        code="daily_eod_incremental",
+        name=name,
+        description=(
             "工作日 17:00 触发, 调 scripts/daily_eod_incremental.py, "
             "查 duckdb daily_raw.max(trade_date) vs today, 缺则跑 initial_backfill.py 补全, "
             "然后回算 limit_emotion_summary_daily 涨跌停综合分; 周末 / 节假日由 is_trading_day 二次过滤"
         ),
-        "config_file": _STATUS_FILE_NAME,
-        "service_module": "backend.services.scheduler.daily_eod_incremental_scheduler",
-        "service_class": "DailyEodIncrementalScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        "module": "backend.services.scheduler.daily_eod_incremental_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+        service_module="backend.services.scheduler.daily_eod_incremental_scheduler",
+        service_class="DailyEodIncrementalScheduler",
+        config_file="daily_eod_incremental_job.json",
+        default_config=_job_default_status(),
+    )
 
 
 # ---------------------------------------------------------------------------

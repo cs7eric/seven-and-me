@@ -655,6 +655,7 @@ _MA_COUNT_COLS = (
     "up_5d_count", "up_5d_pct", "new_low_60d_count", "new_low_60d_pct",
     "new_high_252d_count", "new_high_252d_pct",
     "advancing_count", "advancing_pct",
+    "breadth_raw",
     "by_board_json", "elapsed_ms", "source",
 )
 _MA_COUNT_SELECT = ", ".join(_MA_COUNT_COLS)
@@ -663,7 +664,8 @@ _MA_COUNT_SELECT = ", ".join(_MA_COUNT_COLS)
 def _row_to_ma_payload(row: tuple) -> dict:
     """duckdb 行 → calc_ma_count 同 shape dict."""
     import json as _json
-    by_board = _json.loads(row[16]) if row[16] else {}          # was row[14]
+    breadth_raw = float(row[16]) if row[16] is not None else None
+    by_board = _json.loads(row[17]) if row[17] else {}          # shifted by +1 (breadth_raw at 16)
     return {
         "tradeDate": row[0].isoformat(),
         "totalEligible": int(row[1]),
@@ -681,9 +683,10 @@ def _row_to_ma_payload(row: tuple) -> dict:
         "pctNewHigh252d": float(row[13]) if row[13] is not None else 0.0,
         "advancingCount": int(row[14]) if row[14] is not None else 0,
         "pctAdvancing": float(row[15]) if row[15] is not None else 0.0,
+        "breadthRaw": breadth_raw,
         "byBoard": by_board,
-        "elapsedMs": int(row[17]) if row[17] is not None else None,   # was row[15]
-        "source": str(row[18]),                                        # was row[16]
+        "elapsedMs": int(row[18]) if row[18] is not None else None,   # shifted
+        "source": str(row[19]),                                        # shifted
         "fromCache": True,
     }
 
@@ -720,6 +723,10 @@ def get_ma_count_history(start: date | str, end: date | str | None = None) -> li
         items, "ma_count_daily", "new_high_252d_pct", e,
         score_key="newHigh252dScore",
     )
+    enrich_history_scores(
+        items, "ma_count_daily", "breadth_raw", e,
+        score_key="breadthScore",
+    )
     return items
 
 
@@ -734,6 +741,16 @@ def _add_new_high_score(payload: dict, trade_date: date | str) -> None:
             "ma_count_daily", "new_high_252d_pct", trade_date, pct,
         )
         payload["newHigh252dRawValue"] = pct
+
+
+def _add_breadth_score(payload: dict, trade_date: date | str) -> None:
+    """给 payload 加 breadthScore (0-100 历史分位) + breadthRawValue."""
+    raw = payload.get("breadthRaw")
+    if raw is not None:
+        payload["breadthScore"] = percentile_score(
+            "ma_count_daily", "breadth_raw", trade_date, raw,
+        )
+        payload["breadthRawValue"] = raw
 
 
 def calc_ma_count_cached(
@@ -751,6 +768,7 @@ def calc_ma_count_cached(
         cached = get_ma_count(trade_date)
         if cached is not None:
             _add_new_high_score(cached, trade_date)
+            _add_breadth_score(cached, trade_date)
             return cached
     payload = calc_ma_count(trade_date)
     try:
@@ -759,6 +777,7 @@ def calc_ma_count_cached(
         # 落盘失败不影响返回 (calc 结果照样可用)
         pass
     _add_new_high_score(payload, trade_date)
+    _add_breadth_score(payload, trade_date)
     return payload
 
 

@@ -16,7 +16,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -28,11 +27,7 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_MARKET_OVERVIEW_JOB_FILE,
-)
+from backend.services.scheduler.config_store import load_config, save_config, register_job
 from backend.services.stock.market_overview_akshare_service import (
     capture_snapshot,
     get_latest_snapshot,
@@ -43,7 +38,6 @@ from backend.services.stock.market_overview_eltdx_service import (
     get_latest_overview,
 )
 from backend.services.stock.trading_calendar import is_trade_time, is_trading_day
-from backend.utils.json_io import read_json_file
 
 logger = logging.getLogger(__name__)
 
@@ -67,74 +61,60 @@ def _beijing_now() -> datetime:
 # ---------------------------------------------------------------------------
 # Job 状态
 # ---------------------------------------------------------------------------
+def _job_default_status() -> dict[str, Any]:
+    return {
+        "name": "market_overview_snapshot",
+        "lastRunAt": None,
+        "lastRunOk": None,
+        "lastRunError": None,
+        "lastInsideRefreshAt": None,
+        "lastCloseSnapshotAt": None,
+        "lastWarmupAt": None,
+        "totalInside": 0,
+        "totalClose": 0,
+        "totalWarmup": 0,
+        "schedulerStartedAt": None,
+    }
+
+
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCHEDULER_MARKET_OVERVIEW_JOB_FILE.exists():
-        return {
-            "name": "market_overview_snapshot",
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastInsideRefreshAt": None,
-            "lastCloseSnapshotAt": None,
-            "lastWarmupAt": None,
-            "totalInside": 0,
-            "totalClose": 0,
-            "totalWarmup": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(SCHEDULER_MARKET_OVERVIEW_JOB_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("market overview job status read failed: %s", exc)
-        return {}
+    cfg = load_config("market_overview_inside")
+    if not cfg:
+        return _job_default_status()
+    return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULER_MARKET_OVERVIEW_JOB_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(SCHEDULER_MARKET_OVERVIEW_JOB_FILE)
+    save_config("market_overview_inside", status)
 
 
 # ---------------------------------------------------------------------------
-# Job 注册 (jobs.json)
+# Job 注册 (DB)
 # ---------------------------------------------------------------------------
+_JOB_CODES = [
+    "market_overview_inside",
+    "market_overview_close",
+    "market_overview_warmup",
+    "eltdx_overview_inside",
+    "eltdx_overview_close",
+    "eltdx_overview_warmup",
+]
+
+
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": data}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
+    register_job(
+        code=job_id,
+        name=name,
+        description=(
             "盘内 5 分钟一次 (fund-flow akshare + eltdx overview) + 15:35 收盘落盘 + 09:00 开盘前 warmup, "
             "落盘 reference/market-overview/latest.json + reference/stock-universe/market_pulse/rotation/YYYY-MM-DD.json, "
             "供前端 Market Overview / Sector Rotation / 涨跌家数 视图使用"
         ),
-        "config_file": "market_overview_job.json",
-        "service_module": "backend.services.scheduler.market_overview_scheduler",
-        "service_class": "MarketOverviewScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        # 兼容旧 schema 字段 (前端老 UI / 老 reader 可能还在读)
-        "module": "backend.services.scheduler.market_overview_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+        service_module="backend.services.scheduler.market_overview_scheduler",
+        service_class="MarketOverviewScheduler",
+        config_file="market_overview_job.json",
+        default_config=_job_default_status(),
+    )
 
 
 # ---------------------------------------------------------------------------

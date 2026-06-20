@@ -222,10 +222,18 @@ def _job_run_backfill() -> None:
             status["lastRowsSkipped"] = int(m.group(2))
 
         if r.returncode == 0:
-            status["lastRunOk"] = True
-            status["lastRunError"] = None
-            status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
-            logger.info(
+            # DuckDB 数据校验: 有值且不为 0
+            _valid_ok, _valid_err = validate_scalar("volatility_sentiment_daily", "sentiment_score", target_date)
+            if not _valid_ok:
+                status["lastRunOk"] = False
+                status["lastRunError"] = "[校验失败] " + str(_valid_err)
+                status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
+                logger.warning("volatility_sentiment validation failed in %.1fs: %s", elapsed, _valid_err)
+            else:
+                status["lastRunOk"] = True
+                status["lastRunError"] = None
+                status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
+                logger.info(
                 "volatility_sentiment ok in %.1fs: upserted=%s skipped=%s",
                 elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"),
             )

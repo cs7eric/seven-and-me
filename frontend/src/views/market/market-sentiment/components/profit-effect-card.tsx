@@ -49,6 +49,7 @@ export function ProfitEffectCard({ date }: { date: string | null }) {
   }, [date])
 
   const score = data?.score ?? null
+  const rawValue = data?.rawValue ?? null
   const up5dPct = data?.up5dPct ?? null
   const newLow60dPct = data?.newLow60dPct ?? null
 
@@ -94,6 +95,12 @@ export function ProfitEffectCard({ date }: { date: string | null }) {
               </span>
               <span className={`text-xs font-medium ${tone}`}>{levelLabel}</span>
             </div>
+
+            {rawValue != null && (
+              <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+                原始合成: {rawValue.toFixed(1)} · 高于过去3年{score!.toFixed(0)}%的时间
+              </div>
+            )}
 
             <div className="mt-2 space-y-0.5 text-xs text-muted-foreground tabular-nums">
               <div>近5日上涨占比: {up5dPct != null ? `${up5dPct.toFixed(1)}%` : "—"}</div>

@@ -1423,6 +1423,10 @@ export interface MaCountResponse {
   newHigh252dScore?: number
   /** 原始 pctNewHigh252d 值 */
   newHigh252dRawValue?: number
+  /** 市场广度 0-100 历史分位情绪得分 (breadth_raw = 40%上涨 + 35%MA20 + 25%MA60) */
+  breadthScore?: number
+  /** 原始 breadth_raw 值 */
+  breadthRawValue?: number
   byBoard: Record<string, MaCountBoardStat>
   elapsedMs?: number
   source?: string
@@ -1463,6 +1467,8 @@ export async function fetchMarketSentimentMaCount(date?: string): Promise<MaCoun
     pctNewHigh252d: (data.pctNewHigh252d as number) ?? 0,
     newHigh252dScore: (data.newHigh252dScore as number) ?? undefined,
     newHigh252dRawValue: (data.newHigh252dRawValue as number) ?? undefined,
+    breadthScore: (data.breadthScore as number) ?? undefined,
+    breadthRawValue: (data.breadthRawValue as number) ?? undefined,
     advancingCount: (data.advancingCount as number) ?? 0,
     pctAdvancing: (data.pctAdvancing as number) ?? 0,
     byBoard: (data.byBoard as Record<string, MaCountBoardStat>) ?? {},
@@ -1557,6 +1563,8 @@ export interface MaCountHistoryItem {
   pctAdvancing: number
   /** 252日新高 0-100 历史分位情绪得分 */
   newHigh252dScore?: number
+  /** 市场广度 0-100 历史分位情绪得分 */
+  breadthScore?: number
   fromCache?: boolean
 }
 
@@ -1602,6 +1610,7 @@ export async function fetchMarketSentimentMaCountHistory(
       newHigh252dCount: (it.newHigh252dCount as number) ?? 0,
       pctNewHigh252d: (it.pctNewHigh252d as number) ?? 0,
       newHigh252dScore: (it.newHigh252dScore as number) ?? undefined,
+      breadthScore: (it.breadthScore as number) ?? undefined,
       advancingCount: (it.advancingCount as number) ?? 0,
       pctAdvancing: (it.pctAdvancing as number) ?? 0,
       fromCache: Boolean(it.fromCache),
@@ -2467,6 +2476,8 @@ export interface ProfitEffectResponse {
   up5dPct: number | null
   newLow60dPct: number | null
   score: number | null
+  /** 原始 score (百分位之前的 raw 合成值) */
+  rawValue?: number
   elapsedMs?: number
   source?: string
   fromCache?: boolean
@@ -2497,6 +2508,7 @@ export async function fetchMarketSentimentProfitEffect(
     up5dPct: (data.up5dPct as number | null) ?? null,
     newLow60dPct: (data.newLow60dPct as number | null) ?? null,
     score: (data.score as number | null) ?? null,
+    rawValue: (data.rawValue as number) ?? undefined,
     elapsedMs: (data.elapsedMs as number) ?? undefined,
     source: (data.source as string) ?? undefined,
     fromCache: Boolean(data.fromCache),
