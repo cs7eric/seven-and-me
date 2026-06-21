@@ -131,12 +131,12 @@ MSI Factor 2 的上游数据回填。
 3. 结果落到 duckdb.market_overview_daily，属于 MSI 成交活跃度的直接上游。
 """.strip(),
     "ths_industry_fund_flow_daily": """
-同花顺 90 行业资金流回填。
+同花顺 90 行业资金流日度抓取。
 
 执行逻辑：
-1. 工作日 17:15 解析同花顺行业资金流历史快照。
-2. 把 rank、行业名、涨跌幅、流入流出、龙头股等字段写入 duckdb.ths_industry_fund_flow_daily。
-3. 这是行业热度/板块分析的数据源，与 akshare 版 market_overview_daily 并存。
+1. 工作日 17:15 直接抓取同花顺行业资金流页面。
+2. 抓取后按交易日写入 Postgres `app.sector_fund_flow_capture_batches` 与 `app.sector_fund_flow_daily_snapshots`。
+3. 相关历史接口、Industry / Concept Application 资金流页与 sector_breadth 聚合都复用这套交易日快照。
 """.strip(),
     "style_risk_appetite_refresh": """
 MSI Factor 9: 风格风险偏好，权重 5%。

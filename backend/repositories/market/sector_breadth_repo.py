@@ -1,4 +1,7 @@
-"""板块扩散 (Market Pulse · Sector Breadth) duckdb 仓储.
+r"""板块扩散 (Market Pulse · Sector Breadth) 仓储.
+
+维护前请先看:
+`F:\dev-repo\mp4-to-word-new\design\backend\industry-concept-fund-flow-postgres-migration.md`
 
 公式 (跟 schema.sql §19 一致):
   advancing = count(industry where change_pct > 0)
@@ -7,8 +10,9 @@
   total     = count(*)  (90 行业全量, 当前 91 含重复)
   advance_pct = advancing / total
 
-数据源: ths_industry_fund_flow_daily (§18) — 同花顺 hexin-v 90 行业
-计算: SQL 一次扫, 单日 1 行, 在 ths_industry_fund_flow_daily 数据齐后跑.
+数据源: Postgres `app.sector_fund_flow_daily_snapshots` 的 alive 快照
+计算: 先从 Postgres 读指定交易日的行业涨跌分布, 再把结果落到 DuckDB 的
+`market_pulse_sector_breadth_daily` 供 MSI 现有链路复用.
 
 写入路径 (2 处, INSERT OR REPLACE 幂等):
   1. ths_industry_fund_flow_daily_scheduler._job_run_backfill() 末尾
@@ -25,6 +29,8 @@ from datetime import date
 from typing import Any
 
 from backend.adapters.market.duckdb_store import get_conn
+from backend.config.database import get_db_session
+from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
 
 logger = logging.getLogger(__name__)
 
@@ -47,31 +53,24 @@ def upsert_sector_breadth(trade_date: date | str) -> int:
     td = _to_date(trade_date)
     if td is None:
         return 0
-    con = get_conn()
     t0 = time.time()
-
-    # 单次 SQL: 一次扫 ths_industry_fund_flow_daily, 算 4 个 count
-    row = con.execute(
-        """
-        SELECT
-            SUM(CASE WHEN change_pct >  0 THEN 1 ELSE 0 END) AS advancing,
-            SUM(CASE WHEN change_pct <  0 THEN 1 ELSE 0 END) AS declining,
-            SUM(CASE WHEN change_pct =  0 THEN 1 ELSE 0 END) AS flat,
-            COUNT(*) AS total
-          FROM ths_industry_fund_flow_daily
-         WHERE trade_date = ?
-        """,
-        [td],
-    ).fetchone()
-    if not row or row[3] is None or int(row[3]) == 0:
-        # 该日 ths_industry_fund_flow_daily 没数据, 跳过 (允许 sector_breadth 滞后 1 天)
+    db = get_db_session()
+    try:
+        source = ThsIndustryFundFlowRepository(db).get_sector_breadth_input(td)
+    finally:
+        db.close()
+    if source is None:
         return 0
 
-    advancing, declining, flat, total = int(row[0] or 0), int(row[1] or 0), int(row[2] or 0), int(row[3])
+    advancing = int(source["advancing"])
+    declining = int(source["declining"])
+    flat = int(source["flat"])
+    total = int(source["total"])
     # advance_pct: 0-1, 4 位小数 (前端显示 *100 转 %)
     advance_pct = round(advancing / total, 4) if total > 0 else 0.0
     elapsed_ms = int((time.time() - t0) * 1000)
 
+    con = get_conn()
     con.execute(
         """
         INSERT OR REPLACE INTO market_pulse_sector_breadth_daily
@@ -80,7 +79,7 @@ def upsert_sector_breadth(trade_date: date | str) -> int:
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
         """,
         [td, advancing, declining, flat, total,
-         advance_pct, "ths_industry_fund_flow_daily", elapsed_ms],
+         advance_pct, "app.sector_fund_flow_daily_snapshots", elapsed_ms],
     )
     return 1
 

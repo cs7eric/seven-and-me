@@ -148,10 +148,12 @@ def f10_stock_sectors():
           "code": "000048",
           "industries": [{name, topic_id, source}],
           "concepts":   [{name, topic_id, source}],
+          "styles":     [{name, topic_id, source}],
           "source": "sectors+eltdx_helpers",
         }
     """
     from backend.services.stock.stock_universe_service import list_sectors_by_category
+    from backend.services.stock.style_sector_service import get_style_sector
 
     symbol = _symbol_arg()
     code = symbol.strip()
@@ -169,12 +171,15 @@ def f10_stock_sectors():
 
     industries: list[dict[str, Any]] = []
     concepts: list[dict[str, Any]] = []
+    styles: list[dict[str, Any]] = []
     seen_ind: set[str] = set()   # 去重 key: name
     seen_con: set[str] = set()
+    seen_style: set[str] = set()
 
     for category_raw, bucket, seen in (
         (0, industries, seen_ind),
         (2, concepts, seen_con),
+        (4, styles, seen_style),
     ):
         for sec in list_sectors_by_category(category_raw):
             stock_codes = set(sec.get("stock_codes") or [])
@@ -338,12 +343,25 @@ def f10_stock_sectors():
         if con.get("changePercent") is None:
             con["changePercent"] = _lookup_concept(con.get("name") or "")
 
+    for sty in styles:
+        if sty.get("changePercent") is not None:
+            continue
+        name = str(sty.get("name") or "").strip()
+        if not name:
+            continue
+        try:
+            style_row = get_style_sector(name)
+        except Exception:
+            style_row = None
+        sty["changePercent"] = style_row.get("change_pct") if style_row else None
+
     return jsonify({
         "code": code,
         "industries": industries,
         "concepts": concepts,
-        "count": len(industries) + len(concepts),
-        "source": "sectors+eltdx_helpers+heatmap_zdf",
+        "styles": styles,
+        "count": len(industries) + len(concepts) + len(styles),
+        "source": "sectors+eltdx_helpers+heatmap_zdf+style_sector",
     })
 
 

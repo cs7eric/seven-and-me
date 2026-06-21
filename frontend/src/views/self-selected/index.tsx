@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   type SelfSelectedGroup,
   type SelfSelectedItem,
+  type StockSectorsResponse,
   createSelfSelectedGroup,
   createSelfSelectedItem,
   deleteSelfSelectedGroup,
@@ -17,12 +18,15 @@ import {
   fetchApplicationAnalysisTargets,
   fetchSelfSelectedGroups,
   fetchSelfSelectedItems,
+  fetchStockSectors,
+  updateSelfSelectedItem,
 } from "@/lib/api"
 
 import { AddItemTile } from "./components/add-item-tile"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { CreateGroupDialog } from "./components/create-group-dialog"
 import { CreateItemDialog } from "./components/create-item-dialog"
+import { EditItemNotesDialog } from "./components/edit-item-notes-dialog"
 import { ItemRow } from "./components/item-row"
 import { getGroupColorClasses, type GroupColorKey } from "./lib/constants"
 
@@ -40,8 +44,12 @@ export default function SelfSelectedPage() {
   const [addDialogGroupId, setAddDialogGroupId] = useState<string | null>(null)
   // 当前正在打开「删分类」确认弹窗的 group
   const [confirmDeleteGroupId, setConfirmDeleteGroupId] = useState<string | null>(null)
+  const [editingItem, setEditingItem] = useState<SelfSelectedItem | null>(null)
   // 已加入「应用分析」的标的 symbol 集合（用于在 item 卡上打「已加入」徽章）
   const [inAnalysisSymbols, setInAnalysisSymbols] = useState<Set<string>>(new Set())
+  // active group 股票的 F10 板块归属缓存，用于卡片展示行业 / 概念 / 风格
+  const [sectorsBySymbol, setSectorsBySymbol] = useState<Record<string, StockSectorsResponse>>({})
+  const [loadingSectorSymbols, setLoadingSectorSymbols] = useState<Set<string>>(new Set())
 
   const loadAll = useCallback(async (withSpinner = false) => {
     if (withSpinner) setLoading(true)
@@ -199,10 +207,70 @@ export default function SelfSelectedPage() {
     [loadAll],
   )
 
+  const handleEditItemNotes = useCallback(
+    async (payload: { notes?: string }) => {
+      if (!editingItem) return
+      setPendingItem(editingItem.id)
+      try {
+        const res = await updateSelfSelectedItem(editingItem.id, { notes: payload.notes })
+        if (!res.ok) {
+          throw new Error(res.error || "更新备注失败")
+        }
+        notification.success({ title: "备注已更新" })
+        await loadAll(false)
+      } finally {
+        setPendingItem(null)
+      }
+    },
+    [editingItem, loadAll],
+  )
+
   const totalItems = useMemo(
     () => Object.values(itemsByGroup).reduce((acc, arr) => acc + arr.length, 0),
     [itemsByGroup],
   )
+
+  useEffect(() => {
+    const activeItems = activeGroupId ? (itemsByGroup[activeGroupId] ?? []) : []
+    const candidates = activeItems.filter((it) => {
+      const symbol = (it.symbol || "").trim()
+      const market = (it.market || "").toUpperCase()
+      return symbol.length === 6 && (market === "SH" || market === "SZ" || market === "")
+    })
+    const missingSymbols = Array.from(
+      new Set(
+        candidates
+          .map((it) => (it.symbol || "").trim())
+          .filter((symbol) => symbol && !sectorsBySymbol[symbol]),
+      ),
+    )
+    if (missingSymbols.length === 0) return
+
+    let active = true
+    setLoadingSectorSymbols((prev) => new Set([...prev, ...missingSymbols]))
+    Promise.allSettled(missingSymbols.map((symbol) => fetchStockSectors(symbol))).then((results) => {
+      if (!active) return
+      const next: Record<string, StockSectorsResponse> = {}
+      for (let i = 0; i < results.length; i += 1) {
+        const result = results[i]
+        const symbol = missingSymbols[i]
+        if (result.status === "fulfilled") {
+          next[symbol] = result.value
+        }
+      }
+      if (Object.keys(next).length > 0) {
+        setSectorsBySymbol((prev) => ({ ...prev, ...next }))
+      }
+      setLoadingSectorSymbols((prev) => {
+        const nextSet = new Set(prev)
+        for (const symbol of missingSymbols) nextSet.delete(symbol)
+        return nextSet
+      })
+    })
+    return () => {
+      active = false
+    }
+  }, [activeGroupId, itemsByGroup, sectorsBySymbol])
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Self-Selected">
@@ -271,6 +339,16 @@ export default function SelfSelectedPage() {
         }}
       />
 
+      <EditItemNotesDialog
+        open={editingItem !== null}
+        item={editingItem}
+        pending={pendingItem === editingItem?.id}
+        onOpenChange={(open) => {
+          if (!open) setEditingItem(null)
+        }}
+        onSubmit={handleEditItemNotes}
+      />
+
       {loading && groups.length === 0 ? (
         <DogLoader overlay size={25} label="正在加载自选分类..." />
       ) : groups.length === 0 ? (
@@ -331,9 +409,11 @@ export default function SelfSelectedPage() {
                       key={it.id}
                       item={it}
                       pending={pendingItem === it.id}
-                      accentBgClass={colors.accent}
+                      sectors={sectorsBySymbol[(it.symbol || "").trim()] ?? null}
+                      sectorsLoading={loadingSectorSymbols.has((it.symbol || "").trim())}
                       inAnalysis={inAnalysisSymbols.has((it.symbol || "").toUpperCase())}
                       onDelete={handleDeleteItem}
+                      onEdit={setEditingItem}
                     />
                   ))}
                   <AddItemTile

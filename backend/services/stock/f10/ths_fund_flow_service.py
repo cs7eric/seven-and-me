@@ -1,185 +1,184 @@
-"""同花顺全行业主力资金 (hexin-v 破解) 业务服务.
+r"""THS industry fund-flow service backed by Postgres.
 
-落盘约定:
-  ``reference/ths-fund-flow/``
-    ├─ latest.json           全量最新一份, API 直接读这份 (默认)
-    └─ history/<YYYY-MM-DD>.json  每日 15:30 盘后归档
+维护前请先看:
+`F:\dev-repo\mp4-to-word-new\design\backend\industry-concept-fund-flow-postgres-migration.md`
 
-数据来源:
-  ``backend/adapters/market/ths_fund_flow_adapter.py`` —— py_mini_racer 跑 ths.js
-  生成 hexin-v, 走 ``http://data.10jqka.com.cn/funds/hyzj1/`` 多页爬.
-
-字段口径 (与 adapter 一致):
-  rank           序号 (按净额 desc 重新排名)
-  industry       行业
-  change_pct     行业指数涨跌幅 (%)
-  inflow         流入资金 (亿)
-  outflow        流出资金 (亿)
-  net            净额 (亿)
-  company_count  公司家数
-  leader_stock   领涨股
-  leader_change  领涨股涨跌幅 (%)
-  leader_price   当前价 (元)
-
-接口:
-  - ``get_industry_fund_flow(refresh=False)`` -> dict  (读磁盘/触发刷新)
-  - ``refresh_industry_fund_flow()`` -> dict           (强制爬一遍, 写 latest+history)
-  - ``read_latest()`` -> dict | None                   (供定时任务读档)
+后续如果调整抓取写库时机、交易日判定、历史导入策略或 API 契约，
+请先更新设计文档，再改这里；改完代码后也要同步回写设计文档。
 """
 from __future__ import annotations
 
-import json
 import logging
-import threading
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Final
+from datetime import date
+from typing import Any
 
-from backend.config.settings import THS_FUND_FLOW_DIR
-from backend.utils.json_io import read_json_file, write_json_file
+from sqlalchemy.orm import Session
+
+from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
+from backend.utils.trading_day import (
+    beijing_today,
+    can_request_live_fund_flow_snapshot,
+    resolve_fund_flow_read_trade_date,
+)
 
 logger = logging.getLogger(__name__)
 
-LATEST_FILE: Final[Path] = THS_FUND_FLOW_DIR / "latest.json"
-HISTORY_DIR: Final[Path] = THS_FUND_FLOW_DIR / "history"
-HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
-# 进程级缓存 + 写锁 (避免并发触发重复爬)
-_lock = threading.Lock()
-_cache: dict[str, Any] | None = None
-_cache_at: datetime | None = None
-
-# 缓存有效期 (秒) — 盘中 5 分钟, 同花顺 hexin-v 几分钟就过期, 但 5 分钟内重复
-# 触发重爬是浪费; 盘后直接重爬
-_CACHE_TTL_SECONDS: Final[int] = 5 * 60
+def _resolve_trade_date(explicit_trade_date: date | str | None = None) -> date:
+    if explicit_trade_date is not None:
+        if isinstance(explicit_trade_date, date):
+            return explicit_trade_date
+        return date.fromisoformat(str(explicit_trade_date))
+    return beijing_today()
 
 
-def _history_path(trade_date: str | None = None) -> Path:
-    if trade_date is None:
-        trade_date = datetime.now().strftime("%Y-%m-%d")
-    return HISTORY_DIR / f"{trade_date}.json"
+def _enrich_codes(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    from backend.services.stock.f10.ths_industry_service import name_to_code
+
+    for row in rows:
+        if row.get("code"):
+            continue
+        industry_name = row.get("行业")
+        if isinstance(industry_name, str) and industry_name:
+            row["code"] = name_to_code(industry_name) or None
+    return rows
 
 
-def _serialize(payload: dict[str, Any]) -> dict[str, Any]:
-    """包装一层 ok=True, 给前端更省事."""
-    return {
-        "ok": True,
-        "rowCount": payload.get("rowCount", len(payload.get("rows") or [])),
-        "totalPages": payload.get("totalPages"),
-        "pageRowCounts": payload.get("pageRowCounts") or [],
-        "fetchedAt": payload.get("fetchedAt"),
-        "rows": payload.get("rows") or [],
-    }
+class ThsIndustryFundFlowService:
+    def __init__(self, db: Session):
+        self.db = db
+        self.repo = ThsIndustryFundFlowRepository(db)
 
+    def ensure_bootstrapped(self) -> None:
+        self.repo.ensure_bootstrapped(scope="industry")
 
-def read_latest() -> dict[str, Any] | None:
-    """读磁盘 latest.json, 不爬网络."""
-    if not LATEST_FILE.exists():
-        return None
-    try:
-        return read_json_file(LATEST_FILE)
-    except Exception as exc:
-        logger.warning("read %s failed: %s", LATEST_FILE, exc)
-        return None
+    def get_industry_fund_flow(
+        self,
+        *,
+        refresh: bool = False,
+        trade_date: date | str | None = None,
+        top: int | None = None,
+    ) -> dict[str, Any]:
+        self.ensure_bootstrapped()
+        if refresh:
+            try:
+                payload = self.refresh_industry_fund_flow(trade_date=trade_date)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("refresh_industry_fund_flow failed")
+                fallback = self.repo.get_daily_payload(
+                    resolve_fund_flow_read_trade_date(trade_date),
+                    scope="industry",
+                )
+                if fallback is None:
+                    return {
+                        "ok": False,
+                        "tradeDate": _resolve_trade_date(trade_date).isoformat(),
+                        "rowCount": 0,
+                        "rows": [],
+                        "error": str(exc),
+                    }
+                fallback = dict(fallback)
+                fallback["stale"] = True
+                fallback["staleReason"] = str(exc)
+                fallback["rows"] = _enrich_codes(list(fallback.get("rows") or []))
+                if top is not None:
+                    fallback["rows"] = fallback["rows"][:top]
+                    fallback["rowCount"] = len(fallback["rows"])
+                return fallback
+            payload["rows"] = _enrich_codes(list(payload.get("rows") or []))
+            if top is not None:
+                payload["rows"] = payload["rows"][:top]
+                payload["rowCount"] = len(payload["rows"])
+            return payload
 
-
-def _is_cache_fresh() -> bool:
-    if _cache is None or _cache_at is None:
-        return False
-    return (datetime.now() - _cache_at).total_seconds() < _CACHE_TTL_SECONDS
-
-
-def get_industry_fund_flow(*, refresh: bool = False) -> dict[str, Any]:
-    """拿全行业主力资金; refresh=True 强制重爬, 否则优先用进程内缓存 → 磁盘缓存.
-
-    返回值: ``{ok, rowCount, totalPages, pageRowCounts, fetchedAt, rows, ...}``
-    """
-    with _lock:
-        if not refresh and _is_cache_fresh() and _cache is not None:
-            return _cache
-        if not refresh:
-            disk = read_latest()
-            if disk and (disk.get("rows") or []):
-                _cache = disk
-                _cache_at = datetime.now()
-                return _cache
-        # 走网络
-        try:
-            raw = refresh_industry_fund_flow()
-        except Exception as exc:
-            logger.exception("refresh_industry_fund_flow failed: %s", exc)
-            # 失败时退到磁盘 (旧数据, 标记 stale)
-            disk = read_latest()
-            if disk:
-                disk = dict(disk)
-                disk["stale"] = True
-                disk["staleReason"] = str(exc)
-                _cache = disk
-                _cache_at = datetime.now()
-                return _cache
-            # 磁盘也没有 -> 返空 + ok=False
+        payload = self.repo.get_daily_payload(
+            resolve_fund_flow_read_trade_date(trade_date),
+            scope="industry",
+        )
+        if payload is None:
             return {
                 "ok": False,
+                "tradeDate": _resolve_trade_date(trade_date).isoformat(),
                 "rowCount": 0,
                 "rows": [],
-                "error": str(exc),
-                "fetchedAt": datetime.now().isoformat(timespec="seconds"),
+                "error": "no industry fund-flow snapshot found",
             }
-        _cache = raw
-        _cache_at = datetime.now()
-        return _cache
+        payload = dict(payload)
+        payload["rows"] = _enrich_codes(list(payload.get("rows") or []))
+        if top is not None:
+            payload["rows"] = payload["rows"][:top]
+            payload["rowCount"] = len(payload["rows"])
+        return payload
 
+    def refresh_industry_fund_flow(self, *, trade_date: date | str | None = None) -> dict[str, Any]:
+        from backend.adapters.market.ths_fund_flow_adapter import fetch_industry_fund_flow_all
 
-def refresh_industry_fund_flow() -> dict[str, Any]:
-    """强制爬一遍, 写 latest + 今日 history, 返回包装好的 dict."""
-    from backend.adapters.market.ths_fund_flow_adapter import fetch_industry_fund_flow_all
-
-    raw = fetch_industry_fund_flow_all()
-    payload = _serialize(raw)
-    # 写盘: atomic write
-    try:
-        write_json_file(LATEST_FILE, payload)
-    except Exception as exc:
-        logger.warning("write %s failed: %s", LATEST_FILE, exc)
-    # 今日归档
-    try:
-        history_blob = dict(payload)
-        history_blob["archivedAt"] = datetime.now().isoformat(timespec="seconds")
-        write_json_file(_history_path(), history_blob)
-    except Exception as exc:
-        logger.warning("write history failed: %s", exc)
-
-    # 顺手落 duckdb (写穿: 90 行业 当日快照, 字段级 INSERT OR REPLACE 幂等)
-    # 不动 latest.json / history/*.json 现有落盘, 失败不影响主流程
-    try:
-        from backend.repositories.market.ths_industry_fund_flow_repo import upsert_fund_flow
-        upsert_fund_flow(
-            payload.get("rows") or [],
-            trade_date=datetime.now().strftime("%Y-%m-%d"),
+        target_trade_date = _resolve_trade_date(trade_date)
+        if not can_request_live_fund_flow_snapshot(target_trade_date):
+            read_trade_date = resolve_fund_flow_read_trade_date(target_trade_date)
+            payload = self.repo.get_daily_payload(read_trade_date, scope="industry")
+            if payload is None:
+                return {
+                    "ok": False,
+                    "tradeDate": read_trade_date.isoformat(),
+                    "rowCount": 0,
+                    "rows": [],
+                    "error": "non-trading day or pre-market; no persisted previous trading-day snapshot",
+                }
+            payload = dict(payload)
+            payload["rows"] = _enrich_codes(list(payload.get("rows") or []))
+            payload["skippedFetch"] = True
+            payload["skipReason"] = "non_trading_day_or_pre_market"
+            return payload
+        raw = fetch_industry_fund_flow_all()
+        payload = self.repo.replace_trade_day_snapshot(
+            trade_date=target_trade_date,
+            raw_payload=raw,
+            scope="industry",
+            source_type="crawler",
             source="ths.10jqka.com.cn",
         )
-    except Exception as exc:
-        logger.debug("upsert ths_industry_fund_flow to duckdb failed (non-fatal): %s", exc)
+        payload["rows"] = _enrich_codes(list(payload.get("rows") or []))
+        return payload
 
-    return payload
+    def list_history_dates(self) -> list[str]:
+        self.ensure_bootstrapped()
+        return self.repo.list_trade_dates(scope="industry")
+
+    def read_history(self, trade_date: date | str) -> dict[str, Any] | None:
+        self.ensure_bootstrapped()
+        payload = self.repo.get_daily_payload(trade_date, scope="industry")
+        if payload is None:
+            return None
+        payload = dict(payload)
+        payload["rows"] = _enrich_codes(list(payload.get("rows") or []))
+        return payload
 
 
-def list_history_dates() -> list[str]:
-    """列出有归档的日期 (yyyy-mm-dd), 倒序."""
-    if not HISTORY_DIR.exists():
-        return []
-    return sorted(
-        (p.stem for p in HISTORY_DIR.glob("*.json")),
-        reverse=True,
+def get_industry_fund_flow(
+    db: Session,
+    *,
+    refresh: bool = False,
+    trade_date: date | str | None = None,
+    top: int | None = None,
+) -> dict[str, Any]:
+    return ThsIndustryFundFlowService(db).get_industry_fund_flow(
+        refresh=refresh,
+        trade_date=trade_date,
+        top=top,
     )
 
 
-def read_history(trade_date: str) -> dict[str, Any] | None:
-    p = _history_path(trade_date)
-    if not p.exists():
-        return None
-    try:
-        return read_json_file(p)
-    except Exception as exc:
-        logger.warning("read %s failed: %s", p, exc)
-        return None
+def refresh_industry_fund_flow(db: Session, *, trade_date: date | str | None = None) -> dict[str, Any]:
+    return ThsIndustryFundFlowService(db).refresh_industry_fund_flow(trade_date=trade_date)
+
+
+def list_history_dates(db: Session) -> list[str]:
+    return ThsIndustryFundFlowService(db).list_history_dates()
+
+
+def read_history(db: Session, trade_date: date | str) -> dict[str, Any] | None:
+    return ThsIndustryFundFlowService(db).read_history(trade_date)
+
+
+__all__ = ["ThsIndustryFundFlowService"]

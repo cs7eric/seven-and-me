@@ -1,6 +1,12 @@
 /**
  * 同花顺全行业主力资金表格
  *
+ * 维护前请先看:
+ * `F:\dev-repo\mp4-to-word-new\design\backend\industry-concept-fund-flow-postgres-migration.md`
+ *
+ * 如果改接口字段、持久化说明、历史查询入口或交互文案，先改 design 文档，再改这里；
+ * 改完代码后也要同步回写 design 文档。
+ *
  * 数据源: GET /api/stock-chart/ths-industry/fund-flow
  * 字段 (跟 guide 原文一致, 中文表头):
  *   序号 / 行业 / 行业指数涨跌幅 / 流入资金(亿) / 流出资金(亿) / 净额(亿) /
@@ -279,13 +285,17 @@ export function IndustryFundFlowTable() {
               同花顺全行业主力资金
               {data?.stale ? (
                 <Badge variant="outline" className="ml-1 border-amber-300 bg-amber-50 text-amber-700">
-                  缓存数据
+                  快照回退
                 </Badge>
               ) : null}
             </CardTitle>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
               <span>
-                数据源: <code className="rounded bg-slate-100 px-1">data.10jqka.com.cn/funds/hyzj1</code>
+                数据源: <code className="rounded bg-slate-100 px-1">data.10jqka.com.cn/funds/hyzjl/cate/3</code>
+              </span>
+              <span>·</span>
+              <span>
+                交易日: <span className="text-slate-700">{data?.tradeDate || "—"}</span>
               </span>
               <span>·</span>
               <span>
@@ -302,7 +312,7 @@ export function IndustryFundFlowTable() {
             </div>
             {data?.stale && data.staleReason ? (
               <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700">
-                最近一次抓取失败, 展示的是磁盘缓存. 原因: {data.staleReason}
+                最近一次抓取失败, 当前展示的是数据库中最近一次成功落库的交易日快照. 原因: {data.staleReason}
               </div>
             ) : null}
           </div>

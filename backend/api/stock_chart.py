@@ -2535,6 +2535,10 @@ def ths_industry_constituents_all():
 #       leader_stock/leader_change/leader_price
 # 落盘: reference/ths-fund-flow/latest.json + history/yyyy-mm-dd.json
 # ---------------------------------------------------------------------------
+# 维护前请先看:
+# F:\dev-repo\mp4-to-word-new\design\backend\industry-concept-fund-flow-postgres-migration.md
+# 如果改同花顺行业资金流的结构、历史接口、抓取写库方式或前端契约，先更新 design 文档；
+# 改完代码后也要同步回写 design 文档。
 @stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow')
 def ths_industry_fund_flow():
     """同花顺全行业主力资金动向.
@@ -2542,13 +2546,10 @@ def ths_industry_fund_flow():
     URL: ?refresh=1 (强制重爬) &top=10 (只返 top N, 按净额 desc)
 
     路由:
-      GET /api/stock-chart/ths-industry/fund-flow           读 latest.json
-      GET /api/stock-chart/ths-industry/fund-flow?refresh=1 强制重爬 + 写盘
-      GET /api/stock-chart/ths-industry/fund-flow?top=10    读 latest, 截前 10
+      GET /api/stock-chart/ths-industry/fund-flow           读 Postgres 最新交易日快照
+      GET /api/stock-chart/ths-industry/fund-flow?refresh=1 强制重爬 + 写 Postgres
+      GET /api/stock-chart/ths-industry/fund-flow?top=10    读最新快照, 截前 10
     """
-    from backend.services.stock.f10.ths_fund_flow_service import (
-        get_industry_fund_flow,
-    )
     refresh = request.args.get("refresh") == "1"
     top_param = (request.args.get("top") or "").strip()
     try:
@@ -2559,24 +2560,11 @@ def ths_industry_fund_flow():
         top = max(1, min(200, top))
 
     try:
-        payload = get_industry_fund_flow(refresh=refresh)
-        rows = payload.get("rows") or []
-        # 每行 enrich 一个 ``code`` 字段 (6 位行业 code, 从 industry_list.json 解析)
-        # 前端不再需要把中文 name 再 name→code 一次, 直接拿 code 调成分股接口
-        from backend.services.stock.f10.ths_industry_service import name_to_code
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if row.get("code"):
-                continue
-            industry_name = row.get("行业")
-            if isinstance(industry_name, str) and industry_name:
-                row["code"] = name_to_code(industry_name) or None
-        if top is not None and len(rows) > top:
-            rows = rows[:top]
-            payload = dict(payload)
-            payload["rows"] = rows
-            payload["rowCount"] = len(rows)
+        from backend.config.database import session_scope
+        from backend.services.stock.f10.ths_fund_flow_service import ThsIndustryFundFlowService
+
+        with session_scope() as db:
+            payload = ThsIndustryFundFlowService(db).get_industry_fund_flow(refresh=refresh, top=top)
         return jsonify(payload)
     except Exception as exc:
         return jsonify({
@@ -2594,12 +2582,13 @@ def ths_industry_fund_flow_refresh():
 
     URL: POST /api/stock-chart/ths-industry/fund-flow/refresh
     """
-    from backend.services.stock.f10.ths_fund_flow_service import (
-        refresh_industry_fund_flow,
-    )
     try:
-        payload = refresh_industry_fund_flow()
-        return jsonify({"ok": True, **payload})
+        from backend.config.database import session_scope
+        from backend.services.stock.f10.ths_fund_flow_service import ThsIndustryFundFlowService
+
+        with session_scope() as db:
+            payload = ThsIndustryFundFlowService(db).refresh_industry_fund_flow()
+        return jsonify(payload)
     except Exception as exc:
         return jsonify({
             "ok": False,
@@ -2611,48 +2600,46 @@ def ths_industry_fund_flow_refresh():
 
 @stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow/history')
 def ths_industry_fund_flow_history():
-    """列出 / 读取 历史归档.
+    """列出 / 读取 交易日历史快照.
 
     URL: GET /api/stock-chart/ths-industry/fund-flow/history
     URL: GET /api/stock-chart/ths-industry/fund-flow/history?date=2026-06-08
     """
-    from backend.services.stock.f10.ths_fund_flow_service import (
-        list_history_dates,
-        read_history,
-    )
     date_param = (request.args.get("date") or "").strip()
-    if date_param:
-        payload = read_history(date_param)
-        if payload is None:
-            return jsonify({
-                "ok": False,
-                "error": f"no history for {date_param}",
-                "rows": [],
-                "rowCount": 0,
-            }), 404
-        return jsonify({"ok": True, "date": date_param, **payload})
-    return jsonify({
-        "ok": True,
-        "dates": list_history_dates(),
-    })
+    from backend.config.database import session_scope
+    from backend.services.stock.f10.ths_fund_flow_service import ThsIndustryFundFlowService
+
+    with session_scope() as db:
+        service = ThsIndustryFundFlowService(db)
+        if date_param:
+            payload = service.read_history(date_param)
+            if payload is None:
+                return jsonify({
+                    "ok": False,
+                    "error": f"no history for {date_param}",
+                    "rows": [],
+                    "rowCount": 0,
+                }), 404
+            return jsonify({"ok": True, "date": date_param, **payload})
+        return jsonify({
+            "ok": True,
+            "dates": service.list_history_dates(),
+        })
 
 
 # ---------------------------------------------------------------------------
-# 同花顺 90 行业资金流 · duckdb 历史序列
-# 数据源: duckdb.ths_industry_fund_flow_daily (由 ths_fund_flow_service 写穿 + backfill 脚本回填)
-# 跟原 /fund-flow (读 JSON latest) + /fund-flow/history (读 JSON history) 独立, 不冲突
+# 同花顺 90 行业资金流 · Postgres 历史序列
+# 数据源: app.sector_fund_flow_daily_snapshots / app.sector_fund_flow_capture_batches
+# 跟原 /fund-flow 共用同一套快照, 这里只是提供 top/bottom 和跨日序列能力
 # ---------------------------------------------------------------------------
 
 @stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow/db-history')
 def ths_industry_fund_flow_db_history():
-    """读 duckdb 的近 N 天 历史序列 (新增, 不动原 /fund-flow 和 /fund-flow/history).
+    """读 Postgres 的近 N 天 历史序列.
 
     URL: ?days=10 (1-120, 默认 10) &topN=20 (None=全量 90) &date=YYYY-MM-DD
          (date 优先: 给定 date 时, 只返该日的 top/bottom)
     """
-    from backend.repositories.market.ths_industry_fund_flow_repo import (
-        get_fund_flow_daily_topn, get_fund_flow_history,
-    )
     date_str = (request.args.get("date") or "").strip()
     try:
         top_n_arg = request.args.get("topN")
@@ -2662,23 +2649,28 @@ def ths_industry_fund_flow_db_history():
     top_n = max(1, min(top_n, 90))
 
     try:
-        if date_str:
-            payload = get_fund_flow_daily_topn(date_str, top_n=top_n)
-            return jsonify({"ok": True, **payload})
-        # 没给 date: 走 days
-        try:
-            days = int(request.args.get("days") or 10)
-        except (TypeError, ValueError):
-            days = 10
-        days = max(1, min(days, 120))
-        rows = get_fund_flow_history(days=days, top_n=top_n)
-        return jsonify({
-            "ok": True,
-            "days": days,
-            "topN": top_n,
-            "count": len(rows),
-            "items": rows,
-        })
+        from backend.config.database import session_scope
+        from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
+
+        with session_scope() as db:
+            repo = ThsIndustryFundFlowRepository(db)
+            repo.ensure_bootstrapped()
+            if date_str:
+                payload = repo.get_fund_flow_daily_topn(date_str, top_n=top_n)
+                return jsonify({"ok": True, **payload})
+            try:
+                days = int(request.args.get("days") or 10)
+            except (TypeError, ValueError):
+                days = 10
+            days = max(1, min(days, 120))
+            rows = repo.get_fund_flow_history(days=days, top_n=top_n)
+            return jsonify({
+                "ok": True,
+                "days": days,
+                "topN": top_n,
+                "count": len(rows),
+                "items": rows,
+            })
     except Exception as exc:
         logger.exception("ths-industry fund-flow db-history failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc), "items": []}), 200
@@ -2686,13 +2678,10 @@ def ths_industry_fund_flow_db_history():
 
 @stock_chart_bp.route('/api/stock-chart/ths-industry/fund-flow/industry-series')
 def ths_industry_fund_flow_industry_series():
-    """单行业跨日资金流序列 (新增, 跟原 /fund-flow + /fund-flow/history + /db-history 独立).
+    """单行业跨日资金流序列.
 
     URL: ?industry=半导体 (URL encode 即可) &days=30 (1-365, 默认 30) &end=YYYY-MM-DD
     """
-    from backend.repositories.market.ths_industry_fund_flow_repo import (
-        get_fund_flow_for_industry, list_industries_with_data,
-    )
     industry = (request.args.get("industry") or "").strip()
     if not industry:
         # 没传 industry: 列所有行业, 给前端"行业选择器"用
@@ -2702,13 +2691,19 @@ def ths_industry_fund_flow_industry_series():
             days = 30
         days = max(1, min(days, 365))
         try:
-            items = list_industries_with_data(days=days)
-            return jsonify({
-                "ok": True,
-                "days": days,
-                "count": len(items),
-                "items": items,
-            })
+            from backend.config.database import session_scope
+            from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
+
+            with session_scope() as db:
+                repo = ThsIndustryFundFlowRepository(db)
+                repo.ensure_bootstrapped()
+                items = repo.list_industries_with_data(days=days)
+                return jsonify({
+                    "ok": True,
+                    "days": days,
+                    "count": len(items),
+                    "items": items,
+                })
         except Exception as exc:
             logger.exception("industry list failed: %s", exc)
             return jsonify({"ok": False, "error": str(exc), "items": []}), 200
@@ -2719,14 +2714,20 @@ def ths_industry_fund_flow_industry_series():
     days = max(1, min(days, 365))
     end_str = (request.args.get("end") or "").strip()
     try:
-        rows = get_fund_flow_for_industry(industry, days=days, end=end_str or None)
-        return jsonify({
-            "ok": True,
-            "industry": industry,
-            "days": days,
-            "count": len(rows),
-            "items": rows,
-        })
+        from backend.config.database import session_scope
+        from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
+
+        with session_scope() as db:
+            repo = ThsIndustryFundFlowRepository(db)
+            repo.ensure_bootstrapped()
+            rows = repo.get_fund_flow_for_industry(industry, days=days, end=end_str or None)
+            return jsonify({
+                "ok": True,
+                "industry": industry,
+                "days": days,
+                "count": len(rows),
+                "items": rows,
+            })
     except Exception as exc:
         logger.exception("industry-series failed: %s", exc)
         return jsonify({"ok": False, "error": str(exc), "items": []}), 200

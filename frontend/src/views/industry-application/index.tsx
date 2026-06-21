@@ -1028,7 +1028,7 @@ function EmptyHint() {
     <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
       <Building2 className="size-10 opacity-30" />
       <div className="text-sm">请从左侧加入一个行业 / 概念</div>
-      <div className="text-xs">数据源: eltdx · 持久化: reference/industry-application/</div>
+      <div className="text-xs">数据源: eltdx / THS · 运行时持久化: Postgres 交易日快照</div>
     </div>
   )
 }

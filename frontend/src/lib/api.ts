@@ -465,6 +465,7 @@ export interface StockSectorsResponse {
   code: string
   industries: StockSectorEntry[]
   concepts: StockSectorEntry[]
+  styles: StockSectorEntry[]
   count: number
   source: string
 }
@@ -3456,11 +3457,13 @@ export interface IndustryFundFlowRow {
 
 export interface IndustryFundFlowResponse {
   ok: boolean
+  tradeDate?: string | null
   rowCount: number
   totalPages: number | null
   pageRowCounts: number[]
   fetchedAt: string | null
   rows: IndustryFundFlowRow[]
+  source?: string | null
   stale?: boolean
   staleReason?: string
   error?: string
@@ -4195,6 +4198,19 @@ export async function createSelfSelectedItem(
   return selfSelectedJson<SelfSelectedItemActionResponse>(
     await fetchWithRetry(`${API_BASE}/api/self-selected/items`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+export async function updateSelfSelectedItem(
+  itemId: string,
+  payload: Partial<Pick<SelfSelectedItem, "group_id" | "symbol" | "market" | "name" | "notes" | "target_type" | "sort_order">>,
+): Promise<SelfSelectedItemActionResponse> {
+  return selfSelectedJson<SelfSelectedItemActionResponse>(
+    await fetchWithRetry(`${API_BASE}/api/self-selected/items/${encodeURIComponent(itemId)}`, {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
