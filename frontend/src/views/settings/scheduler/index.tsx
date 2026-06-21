@@ -4,6 +4,7 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  CalendarDays,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -27,14 +28,12 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react"
-import { Line, LineChart, XAxis } from "recharts"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
 import { Separator } from "@/components/ui/separator"
 import {
   Tabs,
@@ -150,9 +149,6 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   const live = job.live || {}
   const config = job.config || {}
   const isRunning = Boolean(pickValue<boolean>(live, "running"))
-  const tickCount = pickValue<number>(live, "tick_count")
-  const runsCount = pickValue<number>(live, "runs_count")
-  const startedAt = pickValue<string>(live, "started_at")
   // "上次运行" 摘要: 优先走后端归一化的 last_run 字段 (cover 各 scheduler 异构字段名),
   // 缺数据时再回退到 config (兼容后端未升级版本).
   const lastRunSummary = job.last_run
@@ -165,6 +161,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   const lastTargets =
     lastRunSummary?.last_targets_processed ?? pickValue<number>(config, "last_targets_processed")
   const totalRuns = lastRunSummary?.total_runs ?? pickValue<number>(config, "total_runs")
+  const registeredAt = job.registered_at
   const inflight = pickValue<Record<string, string>>(live, "inflight")
   const lastRun = pickValue<Record<string, unknown>>(live, "last_run")
 
@@ -199,24 +196,27 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   }, [expanded, job.id, pending])  // pending 变化 (用户点了 trigger) 时也立即重拉一次
 
   return (
-    <Card className="border-0 bg-muted/60 shadow-none">
+    <Card className="mb-4 break-inside-avoid border border-border/30 bg-gradient-to-b from-background to-muted/50 shadow-sm">
       {/* 折叠态: 显示基本信息 + 调度按钮 (start/stop + trigger) + 展开 chevron */}
       <CardHeader
-        className="cursor-pointer select-none"
+        className="cursor-pointer select-none pb-3"
         onClick={() => setExpanded((v) => !v)}
       >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex h-full flex-col gap-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-start gap-2">
             {expanded ? (
               <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
             ) : (
               <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
             )}
-            <div className="min-w-0 flex-1 space-y-1">
-              <CardTitle className="flex items-center gap-2 text-base">
+              <div className="min-w-0 flex-1 space-y-2">
+                <CardTitle className="flex flex-wrap items-center gap-2 text-base leading-6">
                 <Settings2 className="size-4 shrink-0 text-muted-foreground" />
                 <span className="truncate">{job.name}</span>
-                <span className="font-mono text-xs text-muted-foreground">({job.id})</span>
+                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    {job.id}
+                  </span>
                 {(job.categories || []).map((c) => (
                   <Badge
                     key={c}
@@ -227,60 +227,108 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                   </Badge>
                 ))}
               </CardTitle>
-              {!expanded && job.description ? (
-                <CardDescription className="line-clamp-1">{job.description}</CardDescription>
+                {!expanded && job.description ? (
+                  <CardDescription className="line-clamp-2 leading-6">
+                    {job.description}
+                  </CardDescription>
+                ) : null}
+              </div>
+            </div>
+
+            <div
+              className="flex flex-wrap items-center gap-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Badge variant={isRunning ? "default" : "secondary"}>
+                {isRunning ? "运行中" : "已停止"}
+              </Badge>
+              {job.supports_enable ? (
+                <Badge variant={job.config_enabled ? "outline" : "destructive"}>
+                  {job.config_enabled ? "已启用" : "已禁用"}
+                </Badge>
               ) : null}
             </div>
           </div>
-          <div
-            className="flex flex-wrap items-center gap-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <Badge variant={isRunning ? "default" : "secondary"}>
-              {isRunning ? "运行中" : "已停止"}
-            </Badge>
-            {job.supports_enable ? (
-              <Badge variant={job.config_enabled ? "outline" : "destructive"}>
-                {job.config_enabled ? "已启用" : "已禁用"}
-              </Badge>
-            ) : null}
 
-            {/* 调度按钮: 折叠态可见, 包含 start/stop + trigger */}
-            {isRunning ? (
-              <Button
-                size="sm"
-                variant="destructive"
-                className="rounded-xl"
-                disabled={isActionPending("stop")}
-                onClick={() => onAction(job.id, "stop")}
-              >
-                <CirclePause className="size-3.5" />
-                {isActionPending("stop") ? "停止中…" : "停止调度"}
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="default"
-                className="rounded-xl"
-                disabled={isActionPending("start")}
-                onClick={() => onAction(job.id, "start")}
-              >
-                <Play className="size-3.5" />
-                {isActionPending("start") ? "启动中…" : "启动调度"}
-              </Button>
-            )}
+          {!expanded ? (
+            <div className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <CompactMetric label="上次运行" value={formatDateTime(lastRunAt)} />
+                <CompactMetric
+                  label="运行结果"
+                  value={
+                    lastStatus ? (
+                      <Badge variant={statusBadgeVariant(lastStatus)} className="px-1.5 py-0 text-[10px]">
+                        {lastStatus}
+                      </Badge>
+                    ) : "—"
+                  }
+                />
+                <CompactMetric label="累计运行" value={totalRuns ?? "—"} />
+                <CompactMetric label="最近耗时" value={formatSeconds(lastDuration ?? null)} />
+                <CompactMetric label="处理标的" value={lastTargets ?? "—"} />
+                <CompactMetric label="注册时间" value={formatDateTime(registeredAt)} />
+              </div>
 
-            <Button
-              size="sm"
-              variant="secondary"
-              className="rounded-xl"
-              disabled={isActionPending("trigger")}
-              onClick={() => onAction(job.id, "trigger")}
-            >
-              <Zap className="size-3.5" />
-              {isActionPending("trigger") ? "触发中…" : "立即触发"}
-            </Button>
-          </div>
+              {lastError ? (
+                <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] leading-5 text-destructive">
+                  <div className="mb-1 flex items-center gap-1.5 font-medium">
+                    <AlertTriangle className="size-3.5" />
+                    最近错误
+                  </div>
+                  <div className="line-clamp-3 whitespace-pre-wrap break-all">{lastError}</div>
+                </div>
+              ) : lastMessage ? (
+                <div className="rounded-xl border border-emerald-200/50 bg-emerald-50/60 px-3 py-2 text-[11px] leading-5 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/10 dark:text-emerald-400">
+                  <div className="mb-1 flex items-center gap-1.5 font-medium">
+                    <CheckCircle2 className="size-3.5" />
+                    最近结果
+                  </div>
+                  <div className="line-clamp-3 whitespace-pre-wrap break-all">{lastMessage}</div>
+                </div>
+              ) : null}
+
+              <div
+                className="flex flex-wrap items-center gap-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {isRunning ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="rounded-xl"
+                    disabled={isActionPending("stop")}
+                    onClick={() => onAction(job.id, "stop")}
+                  >
+                    <CirclePause className="size-3.5" />
+                    {isActionPending("stop") ? "停止中…" : "停止调度"}
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="rounded-xl"
+                    disabled={isActionPending("start")}
+                    onClick={() => onAction(job.id, "start")}
+                  >
+                    <Play className="size-3.5" />
+                    {isActionPending("start") ? "启动中…" : "启动调度"}
+                  </Button>
+                )}
+
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="rounded-xl"
+                  disabled={isActionPending("trigger")}
+                  onClick={() => onAction(job.id, "trigger")}
+                >
+                  <Zap className="size-3.5" />
+                  {isActionPending("trigger") ? "触发中…" : "立即触发"}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </CardHeader>
 
@@ -303,24 +351,24 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat
-              icon={<Activity className="size-3.5" />}
-              label="tick 次数"
-              value={tickCount ?? "—"}
-            />
-            <Stat
               icon={<ListChecks className="size-3.5" />}
-              label="run 次数"
-              value={runsCount ?? totalRuns ?? "—"}
-            />
-            <Stat
-              icon={<Clock className="size-3.5" />}
-              label="启动时间"
-              value={formatDateTime(startedAt)}
+              label="累计运行"
+              value={totalRuns ?? "—"}
             />
             <Stat
               icon={<TimerReset className="size-3.5" />}
               label="最后耗时"
               value={formatSeconds(lastDuration ?? null)}
+            />
+            <Stat
+              icon={<Activity className="size-3.5" />}
+              label="处理标的"
+              value={lastTargets ?? "—"}
+            />
+            <Stat
+              icon={<Clock className="size-3.5" />}
+              label="注册时间"
+              value={formatDateTime(registeredAt)}
             />
           </div>
 
@@ -521,7 +569,7 @@ function JobHistorySection({
         <HistoryIcon className="size-3.5" />
         <span>历史记录</span>
         <span className="text-[10px] text-muted-foreground/60">
-          (最近 20 次, 每 5s 自动刷新)
+          (默认显示 3 条, 每 5s 自动刷新)
         </span>
         {loading ? (
           <RefreshCw className="size-3 animate-spin text-muted-foreground/60" />
@@ -541,12 +589,32 @@ function JobHistorySection({
             <span>耗时</span>
           </div>
           <div className="divide-y divide-border/30">
-            {items.map((it, idx) => (
+            {items.slice(0, 3).map((it, idx) => (
               <HistoryRow key={`${it.start_at}-${idx}`} item={it} />
             ))}
+            {items.length > 3 ? (
+              <div className="flex items-center justify-center bg-muted/20 px-2 py-2 text-[11px] text-muted-foreground">
+                …… 还有 {items.length - 3} 条历史记录未展开显示
+              </div>
+            ) : null}
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function CompactMetric({
+  label,
+  value,
+}: {
+  label: string
+  value: React.ReactNode
+}) {
+  return (
+    <div className="rounded-xl border border-border/30 bg-muted/30 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="mt-1 text-xs font-medium text-foreground">{value}</div>
     </div>
   )
 }
@@ -975,7 +1043,7 @@ export default function SchedulerSettingsPage() {
         />
       </div>
 
-      {/* 每日运行统计 — 双折线: 总次数 / 失败次数 */}
+      {/* 每日运行统计 */}
       {dailyStats.length > 0 ? (
         <Card className="overflow-hidden border-0 bg-muted/60 shadow-none py-0">
           <div className="flex items-center justify-between gap-4 px-4 pt-4 pb-2">
@@ -1004,42 +1072,7 @@ export default function SchedulerSettingsPage() {
             ) : null}
           </div>
           <CardContent className="px-4 pb-3">
-            <ChartContainer
-              config={{
-                total: { label: "总次数", color: "hsl(var(--chart-2))" },
-                failed: { label: "失败次数", color: "hsl(var(--chart-1))" },
-              }}
-              className="h-28"
-            >
-              <LineChart data={dailyStats} margin={{ top: 4, right: 4, bottom: 0, left: -14 }}>
-                <XAxis
-                  dataKey="date"
-                  tickLine={false}
-                  axisLine={false}
-                  fontSize={10}
-                  tickFormatter={(v: string) => v.slice(5)}
-                />
-                <ChartTooltip
-                  content={<ChartTooltipContent />}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="total"
-                  stroke="hsl(var(--chart-2))"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="failed"
-                  stroke="hsl(var(--chart-1))"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              </LineChart>
-            </ChartContainer>
+            <DailyStatsChart items={dailyStats} />
           </CardContent>
         </Card>
       ) : null}
@@ -1172,7 +1205,7 @@ function JobsGrid({
 }) {
   if (jobs.length === 0) return <>{emptyState}</>
   return (
-    <div className="grid gap-4 xl:grid-cols-2">
+    <div className="columns-1 gap-4 md:columns-2 2xl:columns-3">
       {jobs.map((job) => (
         <JobCard
           key={job.id}
@@ -1181,6 +1214,101 @@ function JobsGrid({
           onAction={onAction}
         />
       ))}
+    </div>
+  )
+}
+
+function DailyStatsChart({ items }: { items: SchedulerDailyStatItem[] }) {
+  const maxTotal = Math.max(1, ...items.map((item) => item.total || 0))
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-7 gap-2 md:grid-cols-14">
+        {items.map((item) => {
+          const totalHeight = Math.max(10, Math.round((item.total / maxTotal) * 100))
+          const failedHeight =
+            item.total > 0
+              ? Math.max(
+                  item.failed > 0 ? 6 : 0,
+                  Math.round((item.failed / maxTotal) * 100),
+                )
+              : 0
+          const skippedHeight =
+            item.total > 0
+              ? Math.max(
+                  item.skipped > 0 ? 6 : 0,
+                  Math.round((item.skipped / maxTotal) * 100),
+                )
+              : 0
+          const successHeight = Math.max(0, totalHeight - failedHeight - skippedHeight)
+
+          return (
+            <div key={item.date} className="space-y-1">
+              <div className="group flex h-36 flex-col justify-end rounded-2xl border border-border/30 bg-background/70 px-2 py-2">
+                <div className="relative mx-auto flex h-24 w-full max-w-[18px] flex-col justify-end overflow-hidden rounded-full bg-muted">
+                  {successHeight > 0 ? (
+                    <div
+                      className="w-full bg-emerald-500/85 transition-opacity group-hover:opacity-90"
+                      style={{ height: `${successHeight}px` }}
+                    />
+                  ) : null}
+                  {skippedHeight > 0 ? (
+                    <div
+                      className="w-full bg-amber-400/90 transition-opacity group-hover:opacity-95"
+                      style={{ height: `${skippedHeight}px` }}
+                    />
+                  ) : null}
+                  {failedHeight > 0 ? (
+                    <div
+                      className="w-full bg-red-500/90 transition-opacity group-hover:opacity-95"
+                      style={{ height: `${failedHeight}px` }}
+                    />
+                  ) : null}
+                </div>
+                <div className="mt-2 space-y-1 text-center">
+                  <div className="text-[11px] font-semibold tabular-nums text-foreground">
+                    {item.total}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {item.date.slice(5)}
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-xl border border-border/20 bg-muted/20 px-2 py-1 text-[10px] leading-4 text-muted-foreground">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1">
+                    <CalendarDays className="size-2.5" />
+                    成功
+                  </span>
+                  <span className="tabular-nums">{item.success}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span>失败</span>
+                  <span className="tabular-nums text-red-600">{item.failed}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span>跳过</span>
+                  <span className="tabular-nums text-amber-600">{item.skipped}</span>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block size-2 rounded-full bg-emerald-500/85" />
+          成功
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block size-2 rounded-full bg-amber-400/90" />
+          跳过
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block size-2 rounded-full bg-red-500/90" />
+          失败
+        </span>
+      </div>
     </div>
   )
 }
