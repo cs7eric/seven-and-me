@@ -155,7 +155,16 @@ export default function SelfSelectedPage() {
   )
 
   const handleCreateItem = useCallback(
-    async (groupId: string, payload: { symbol: string; market?: string; name?: string; notes?: string }) => {
+    async (
+      groupId: string,
+      payload: {
+        symbol: string
+        market?: string
+        name?: string
+        notes?: string
+        target_type?: "stock" | "hk_stock" | "etf" | "index" | "other"
+      },
+    ) => {
       const res = await createSelfSelectedItem({ group_id: groupId, ...payload })
       if (!res.ok || !res.item) {
         throw new Error(res.error || "加入自选失败")
@@ -209,8 +218,8 @@ export default function SelfSelectedPage() {
               Self-Selected
             </h1>
             <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-              自选股模块：自己创建分类作为 tab，往里面加入股票。所有数据持久化在
-              <code className="mx-1 rounded bg-muted px-1.5 py-0.5 text-xs">reference/self-selected/</code>。
+              自选股模块：自己创建分类作为 tab，往里面加入股票。运行时数据现在统一持久化到
+              PostgreSQL，并通过后端 API 提供读写能力。
               {groups.length > 0 ? (
                 <>
                   共 <span className="font-medium text-foreground">{groups.length}</span> 个分类、

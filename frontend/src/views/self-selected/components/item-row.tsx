@@ -40,7 +40,7 @@ export function ItemRow({
   // query string 带过去；该页面会按 symbol 自动定位 / 添加到 targets
   const goToChart = () => {
     const params = new URLSearchParams({
-      target_type: market === "HK" ? "hk_stock" : "stock",
+      target_type: item.target_type || (market === "HK" ? "hk_stock" : "stock"),
       symbol: item.symbol,
       name: item.name || item.symbol,
       market: market,

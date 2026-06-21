@@ -19,7 +19,7 @@ from typing import Any
 from flask import Blueprint, jsonify, request
 
 from backend.config.database import session_scope
-from backend.repositories.stock.self_selected_db_repo import SelfSelectedRepository
+from backend.services.stock.self_selected_service import SelfSelectedService
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +38,8 @@ def _err(msg: str, code: int = 500):
 def list_groups():
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            items = repo.list_groups()
+            service = SelfSelectedService(db)
+            items = service.list_groups()
         return jsonify({"ok": True, "items": items, "count": len(items)})
     except Exception as exc:  # noqa: BLE001
         logger.exception("list_groups failed")
@@ -51,8 +51,8 @@ def create_group():
     payload: dict[str, Any] = request.get_json(silent=True) or {}
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            group = repo.create_group(payload)
+            service = SelfSelectedService(db)
+            group = service.create_group(payload)
         return jsonify({"ok": True, "item": group})
     except ValueError as exc:
         return _err(str(exc), 400)
@@ -66,8 +66,8 @@ def update_group(group_id: str):
     payload: dict[str, Any] = request.get_json(silent=True) or {}
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            group = repo.update_group(group_id, payload)
+            service = SelfSelectedService(db)
+            group = service.update_group(group_id, payload)
         if group is None:
             return _err(f"group {group_id} not found", 404)
         return jsonify({"ok": True, "item": group})
@@ -82,8 +82,8 @@ def update_group(group_id: str):
 def delete_group(group_id: str):
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            ok = repo.delete_group(group_id)
+            service = SelfSelectedService(db)
+            ok = service.delete_group(group_id)
         if not ok:
             return _err(f"group {group_id} not found", 404)
         return jsonify({"ok": True, "group_id": group_id})
@@ -101,8 +101,8 @@ def list_items():
     group_id = request.args.get("group_id") or None
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            items = repo.list_items(group_id=group_id)
+            service = SelfSelectedService(db)
+            items = service.list_items(group_id=group_id)
         return jsonify({
             "ok": True,
             "items": items,
@@ -119,8 +119,8 @@ def create_item():
     payload: dict[str, Any] = request.get_json(silent=True) or {}
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            item = repo.create_item(payload)
+            service = SelfSelectedService(db)
+            item = service.create_item(payload)
         return jsonify({"ok": True, "item": item})
     except ValueError as exc:
         return _err(str(exc), 400)
@@ -134,8 +134,8 @@ def update_item(item_id: str):
     payload: dict[str, Any] = request.get_json(silent=True) or {}
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            item = repo.update_item(item_id, payload)
+            service = SelfSelectedService(db)
+            item = service.update_item(item_id, payload)
         if item is None:
             return _err(f"item {item_id} not found", 404)
         return jsonify({"ok": True, "item": item})
@@ -150,8 +150,8 @@ def update_item(item_id: str):
 def delete_item(item_id: str):
     try:
         with session_scope() as db:
-            repo = SelfSelectedRepository(db)
-            ok = repo.delete_item(item_id)
+            service = SelfSelectedService(db)
+            ok = service.delete_item(item_id)
         if not ok:
             return _err(f"item {item_id} not found", 404)
         return jsonify({"ok": True, "item_id": item_id})

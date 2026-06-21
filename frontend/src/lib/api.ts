@@ -4069,6 +4069,7 @@ export interface SelfSelectedGroup {
   name: string
   description?: string | null
   color?: string
+  list_kind?: string
   sort_order?: number
   created_at: string
   updated_at: string
@@ -4081,6 +4082,8 @@ export interface SelfSelectedItem {
   market?: string | null
   name?: string | null
   notes?: string | null
+  target_type?: "stock" | "hk_stock" | "etf" | "index" | "other"
+  source_type?: "manual" | "search" | "imported"
   sort_order?: number
   created_at: string
   updated_at: string
@@ -4180,7 +4183,14 @@ export async function fetchSelfSelectedItems(
 }
 
 export async function createSelfSelectedItem(
-  payload: { group_id: string; symbol: string; market?: string; name?: string; notes?: string },
+  payload: {
+    group_id: string
+    symbol: string
+    market?: string
+    name?: string
+    notes?: string
+    target_type?: "stock" | "hk_stock" | "etf" | "index" | "other"
+  },
 ): Promise<SelfSelectedItemActionResponse> {
   return selfSelectedJson<SelfSelectedItemActionResponse>(
     await fetchWithRetry(`${API_BASE}/api/self-selected/items`, {

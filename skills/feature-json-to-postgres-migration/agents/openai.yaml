@@ -1,0 +1,4 @@
+interface:
+  display_name: "Feature JSON to Postgres"
+  short_description: "Migrate JSON features to Postgres"
+  default_prompt: "Use $feature-json-to-postgres-migration to migrate a feature from JSON persistence to PostgreSQL with schema, ORM, API, UI, and design doc updates."

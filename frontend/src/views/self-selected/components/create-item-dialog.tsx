@@ -25,7 +25,13 @@ interface CreateItemDialogProps {
   groupName: string
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreate: (payload: { symbol: string; market?: string; name?: string; notes?: string }) => Promise<void>
+  onCreate: (payload: {
+    symbol: string
+    market?: string
+    name?: string
+    notes?: string
+    target_type?: "stock" | "hk_stock" | "etf" | "index" | "other"
+  }) => Promise<void>
 }
 
 const SEARCH_DEBOUNCE_MS = 250
@@ -115,6 +121,7 @@ export function CreateItemDialog({
         name: picked.name,
         market: inferMarketFromSymbol(picked.symbol) || undefined,
         notes: notes.trim() || undefined,
+        target_type: picked.target_type,
       })
       onOpenChange(false)
     } catch (err) {

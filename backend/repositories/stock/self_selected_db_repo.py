@@ -1,52 +1,35 @@
-"""自选股 DB 仓库 (Postgres + SQLAlchemy).
+"""Self-Selected Postgres repository.
 
-跟 :mod:`backend.repositories.stock.self_selected_repo` (JSON 版) 接口对齐,
-但是返回的字段更"裸": datetime 直接转 ISO 字符串, None 透传.
-
-约定 (跟 CLAUDE.md / 项目分层一致):
-  - repository 不做 commit: 事务边界 = ``session_scope()``
-  - repository 不做 HTTP / jsonify / 业务校验: 那层在 API
-  - repository 不 import backend.api.*
+维护前请先看:
+`F:\dev-repo\mp4-to-word-new\design\backend\self-selected-postgres-migration.md`
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
+from uuid import UUID, uuid5
 
-from sqlalchemy import select
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.orm import Session
 
 from backend.models.self_selected import SelfSelectedGroup, SelfSelectedItem
+from backend.repositories.stock import self_selected_repo as legacy_json_repo
 
 
-# ---------------------------------------------------------------------------
-# 序列化 helpers
-# ---------------------------------------------------------------------------
-
-def _group_to_dict(group: SelfSelectedGroup) -> dict[str, Any]:
-    return {
-        "id": group.id,
-        "name": group.name,
-        "description": group.description,
-        "color": group.color,
-        "sort_order": group.sort_order,
-        "created_at": group.created_at.isoformat() if group.created_at else None,
-        "updated_at": group.updated_at.isoformat() if group.updated_at else None,
-    }
+_UUID_NAMESPACE = UUID("5e7a92e0-fcd5-4ceb-9504-6f6d6e9b9196")
 
 
-def _item_to_dict(item: SelfSelectedItem) -> dict[str, Any]:
-    return {
-        "id": item.id,
-        "group_id": item.group_id,
-        "symbol": item.symbol,
-        "market": item.market,
-        "name": item.name,
-        "notes": item.notes,
-        "target_type": item.target_type,
-        "sort_order": item.sort_order,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-    }
+def _parse_uuid(value: Any, field_name: str) -> UUID:
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value).strip())
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"{field_name} must be a valid uuid") from exc
+
+
+def _legacy_uuid(prefix: str, legacy_key: str) -> UUID:
+    return uuid5(_UUID_NAMESPACE, f"{prefix}:{legacy_key}")
 
 
 def _strip(value: Any) -> str | None:
@@ -58,48 +41,145 @@ def _strip(value: Any) -> str | None:
     return value or None
 
 
-# ---------------------------------------------------------------------------
-# Repository
-# ---------------------------------------------------------------------------
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _group_to_dict(group: SelfSelectedGroup) -> dict[str, Any]:
+    return {
+        "id": str(group.id),
+        "name": group.name,
+        "description": group.description,
+        "color": group.color,
+        "list_kind": group.list_kind,
+        "status": group.status,
+        "sort_order": group.sort_order,
+        "created_at": _iso(group.created_at),
+        "updated_at": _iso(group.updated_at),
+    }
+
+
+def _item_to_dict(item: SelfSelectedItem) -> dict[str, Any]:
+    return {
+        "id": str(item.id),
+        "group_id": str(item.group_id),
+        "symbol": item.symbol,
+        "market": item.market,
+        "name": item.name,
+        "notes": item.notes,
+        "target_type": item.target_type,
+        "source_type": item.source_type,
+        "status": item.status,
+        "sort_order": item.sort_order,
+        "created_at": _iso(item.created_at),
+        "updated_at": _iso(item.updated_at),
+    }
+
 
 class SelfSelectedRepository:
-    """自选股 DB CRUD. 一个实例绑一个 Session, 一次性用."""
-
     def __init__(self, db: Session):
         self.db = db
 
-    # ---- group ----
+    def ensure_bootstrapped(self) -> None:
+        group_count = self.db.scalar(
+            select(func.count()).select_from(SelfSelectedGroup).where(SelfSelectedGroup.deleted_at.is_(None))
+        )
+        if group_count and group_count > 0:
+            return
+        legacy_groups = legacy_json_repo.list_groups()
+        legacy_items = legacy_json_repo.list_items()
+        if not legacy_groups and not legacy_items:
+            return
+        for group in legacy_groups:
+            legacy_key = _strip(group.get("id"))
+            group_id = _legacy_uuid("group", legacy_key) if legacy_key else _legacy_uuid("group", _strip(group.get("name")) or "unnamed")
+            existing = self.db.scalar(
+                self._alive_groups().where(SelfSelectedGroup.legacy_key == legacy_key)
+            ) if legacy_key else self.db.get(SelfSelectedGroup, group_id)
+            if existing is not None:
+                continue
+            self.db.add(
+                SelfSelectedGroup(
+                    id=group_id,
+                    legacy_key=legacy_key,
+                    name=_strip(group.get("name")) or "Unnamed",
+                    description=_strip(group.get("description")),
+                    color=_strip(group.get("color")) or "blue",
+                    list_kind="manual",
+                    status="active",
+                    sort_order=int(group.get("sort_order") or 0),
+                    created_at=_parse_datetime(group.get("created_at")) or datetime.utcnow(),
+                    updated_at=_parse_datetime(group.get("updated_at")) or datetime.utcnow(),
+                    remark="bootstrapped from legacy JSON",
+                )
+            )
+        self.db.flush()
+        for item in legacy_items:
+            legacy_key = _strip(item.get("id"))
+            item_id = _legacy_uuid("item", legacy_key) if legacy_key else _legacy_uuid("item", f"{item.get('group_id')}:{item.get('symbol')}")
+            group_legacy_key = _strip(item.get("group_id"))
+            group_id = _legacy_uuid("group", group_legacy_key) if group_legacy_key else None
+            existing = self.db.scalar(
+                self._alive_items().where(SelfSelectedItem.legacy_key == legacy_key)
+            ) if legacy_key else self.db.get(SelfSelectedItem, item_id)
+            if existing is not None or group_id is None:
+                continue
+            self.db.add(
+                SelfSelectedItem(
+                    id=item_id,
+                    legacy_key=legacy_key,
+                    group_id=group_id,
+                    symbol=(_strip(item.get("symbol")) or "").upper(),
+                    market=(_strip(item.get("market")) or None),
+                    name=_strip(item.get("name")),
+                    notes=_strip(item.get("notes")),
+                    target_type=_strip(item.get("target_type")) or "stock",
+                    source_type="imported",
+                    status="active",
+                    sort_order=int(item.get("sort_order") or 0),
+                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=_parse_datetime(item.get("updated_at")) or datetime.utcnow(),
+                    remark="bootstrapped from legacy JSON",
+                )
+            )
+        self.db.flush()
+
+    def _alive_groups(self) -> Select[tuple[SelfSelectedGroup]]:
+        return select(SelfSelectedGroup).where(SelfSelectedGroup.deleted_at.is_(None))
+
+    def _alive_items(self) -> Select[tuple[SelfSelectedItem]]:
+        return select(SelfSelectedItem).where(SelfSelectedItem.deleted_at.is_(None))
 
     def list_groups(self) -> list[dict[str, Any]]:
-        stmt = (
-            select(SelfSelectedGroup)
-            .order_by(
-                SelfSelectedGroup.sort_order.asc(),
-                SelfSelectedGroup.created_at.asc(),
-            )
-        )
-        return [_group_to_dict(g) for g in self.db.scalars(stmt).all()]
-
-    def get_group(self, group_id: str) -> dict[str, Any] | None:
-        g = self.db.get(SelfSelectedGroup, group_id)
-        return _group_to_dict(g) if g else None
+        stmt = self._alive_groups().order_by(SelfSelectedGroup.sort_order.asc(), SelfSelectedGroup.created_at.asc())
+        return [_group_to_dict(group) for group in self.db.scalars(stmt).all()]
 
     def create_group(self, payload: dict[str, Any]) -> dict[str, Any]:
         name = _strip(payload.get("name"))
         if not name:
             raise ValueError("group name is required")
-
-        # sort_order 默认 = max+1 (插到末尾)
         max_sort = self.db.scalar(
-            select(SelfSelectedGroup.sort_order).order_by(
-                SelfSelectedGroup.sort_order.desc()
-            ).limit(1)
+            select(SelfSelectedGroup.sort_order)
+            .where(SelfSelectedGroup.deleted_at.is_(None))
+            .order_by(SelfSelectedGroup.sort_order.desc())
+            .limit(1)
         ) or 0
-
         group = SelfSelectedGroup(
             name=name,
             description=_strip(payload.get("description")),
             color=_strip(payload.get("color")) or "blue",
+            status="active",
             sort_order=int(payload.get("sort_order") or max_sort + 1),
         )
         self.db.add(group)
@@ -107,92 +187,93 @@ class SelfSelectedRepository:
         return _group_to_dict(group)
 
     def update_group(self, group_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        g = self.db.get(SelfSelectedGroup, group_id)
-        if g is None:
+        group = self.db.get(SelfSelectedGroup, _parse_uuid(group_id, "group_id"))
+        if group is None or group.deleted_at is not None:
             return None
         if "name" in payload:
-            new_name = _strip(payload.get("name"))
-            if new_name:
-                g.name = new_name
+            name = _strip(payload.get("name"))
+            if not name:
+                raise ValueError("group name is required")
+            group.name = name
         if "description" in payload:
-            g.description = _strip(payload.get("description"))
+            group.description = _strip(payload.get("description"))
         if "color" in payload:
-            color = _strip(payload.get("color"))
-            if color:
-                g.color = color
+            group.color = _strip(payload.get("color")) or "blue"
         if "sort_order" in payload:
-            try:
-                g.sort_order = int(payload["sort_order"])
-            except (TypeError, ValueError):
-                pass
+            group.sort_order = int(payload.get("sort_order") or 0)
+        if "status" in payload:
+            status = _strip(payload.get("status")) or "active"
+            if status not in {"active", "disabled"}:
+                raise ValueError("status must be active or disabled")
+            group.status = status
+        self.db.execute(text("update app.self_selected_lists set updated_at = now() where id = :id"), {"id": group.id})
         self.db.flush()
-        return _group_to_dict(g)
+        self.db.refresh(group)
+        return _group_to_dict(group)
 
     def delete_group(self, group_id: str) -> bool:
-        g = self.db.get(SelfSelectedGroup, group_id)
-        if g is None:
+        group_uuid = _parse_uuid(group_id, "group_id")
+        group = self.db.get(SelfSelectedGroup, group_uuid)
+        if group is None or group.deleted_at is not None:
             return False
-        self.db.delete(g)  # cascade 删 items (ondelete=CASCADE)
+        self.db.execute(
+            text(
+                """
+                update app.self_selected_list_items
+                set deleted_at = now(), updated_at = now()
+                where list_id = :group_id and deleted_at is null
+                """
+            ),
+            {"group_id": group_uuid},
+        )
+        group.deleted_at = datetime.now(group.created_at.tzinfo) if group.created_at and group.created_at.tzinfo else datetime.utcnow()
+        self.db.execute(text("update app.self_selected_lists set updated_at = now() where id = :id"), {"id": group.id})
         self.db.flush()
         return True
 
-    # ---- item ----
-
     def list_items(self, group_id: str | None = None) -> list[dict[str, Any]]:
-        stmt = select(SelfSelectedItem)
+        stmt = self._alive_items()
         if group_id:
-            stmt = stmt.where(SelfSelectedItem.group_id == group_id)
-        stmt = stmt.order_by(
-            SelfSelectedItem.sort_order.asc(),
-            SelfSelectedItem.created_at.asc(),
-        )
-        return [_item_to_dict(it) for it in self.db.scalars(stmt).all()]
-
-    def get_item(self, item_id: str) -> dict[str, Any] | None:
-        it = self.db.get(SelfSelectedItem, item_id)
-        return _item_to_dict(it) if it else None
+            stmt = stmt.where(SelfSelectedItem.group_id == _parse_uuid(group_id, "group_id"))
+        stmt = stmt.order_by(SelfSelectedItem.sort_order.asc(), SelfSelectedItem.created_at.asc())
+        return [_item_to_dict(item) for item in self.db.scalars(stmt).all()]
 
     def create_item(self, payload: dict[str, Any]) -> dict[str, Any]:
         group_id = _strip(payload.get("group_id"))
-        symbol = _strip(payload.get("symbol"))
+        symbol = (_strip(payload.get("symbol")) or "").upper()
         if not group_id:
             raise ValueError("group_id is required")
         if not symbol:
             raise ValueError("symbol is required")
-
-        # group 必须存在
-        if self.db.get(SelfSelectedGroup, group_id) is None:
+        group_uuid = _parse_uuid(group_id, "group_id")
+        group = self.db.get(SelfSelectedGroup, group_uuid)
+        if group is None or group.deleted_at is not None:
             raise ValueError(f"group {group_id} not found")
-
-        # 唯一约束保护 (group_id, symbol) — 已存在就拒
         existing = self.db.scalar(
-            select(SelfSelectedItem).where(
-                SelfSelectedItem.group_id == group_id,
+            self._alive_items().where(
+                SelfSelectedItem.group_id == group_uuid,
                 SelfSelectedItem.symbol == symbol,
             )
         )
         if existing is not None:
             raise ValueError(f"symbol {symbol} already in group {group_id}")
-
-        # sort_order = 该 group 内 max+1
         max_sort = self.db.scalar(
             select(SelfSelectedItem.sort_order)
-            .where(SelfSelectedItem.group_id == group_id)
+            .where(SelfSelectedItem.deleted_at.is_(None), SelfSelectedItem.group_id == group_uuid)
             .order_by(SelfSelectedItem.sort_order.desc())
             .limit(1)
         ) or 0
-
-        market = _strip(payload.get("market"))
-        if market:
-            market = market.upper()
-
+        target_type = _strip(payload.get("target_type")) or "stock"
+        if target_type not in {"stock", "hk_stock", "etf", "index", "other"}:
+            raise ValueError("target_type is invalid")
         item = SelfSelectedItem(
-            group_id=group_id,
+            group_id=group_uuid,
             symbol=symbol,
-            market=market,
+            market=(_strip(payload.get("market")) or None),
             name=_strip(payload.get("name")),
             notes=_strip(payload.get("notes")),
-            target_type=_strip(payload.get("target_type")) or "stock",
+            target_type=target_type,
+            status="active",
             sort_order=int(payload.get("sort_order") or max_sort + 1),
         )
         self.db.add(item)
@@ -200,47 +281,62 @@ class SelfSelectedRepository:
         return _item_to_dict(item)
 
     def update_item(self, item_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
-        it = self.db.get(SelfSelectedItem, item_id)
-        if it is None:
+        item = self.db.get(SelfSelectedItem, _parse_uuid(item_id, "item_id"))
+        if item is None or item.deleted_at is not None:
             return None
-
-        if "symbol" in payload:
-            new_symbol = _strip(payload.get("symbol"))
-            if new_symbol:
-                it.symbol = new_symbol
-        if "market" in payload:
-            market = _strip(payload.get("market"))
-            if market:
-                it.market = market.upper()
-            else:
-                it.market = None
-        if "name" in payload:
-            it.name = _strip(payload.get("name"))
-        if "notes" in payload:
-            it.notes = _strip(payload.get("notes"))
+        new_group_uuid = item.group_id
         if "group_id" in payload:
             new_group_id = _strip(payload.get("group_id"))
-            if new_group_id and self.db.get(SelfSelectedGroup, new_group_id) is None:
+            if not new_group_id:
+                raise ValueError("group_id is required")
+            new_group_uuid = _parse_uuid(new_group_id, "group_id")
+            group = self.db.get(SelfSelectedGroup, new_group_uuid)
+            if group is None or group.deleted_at is not None:
                 raise ValueError(f"group {new_group_id} not found")
-            if new_group_id:
-                it.group_id = new_group_id
+            item.group_id = new_group_uuid
+        if "symbol" in payload:
+            symbol = (_strip(payload.get("symbol")) or "").upper()
+            if not symbol:
+                raise ValueError("symbol is required")
+            item.symbol = symbol
+        duplicate = self.db.scalar(
+            self._alive_items().where(
+                SelfSelectedItem.group_id == new_group_uuid,
+                SelfSelectedItem.symbol == item.symbol,
+                SelfSelectedItem.id != item.id,
+            )
+        )
+        if duplicate is not None:
+            raise ValueError(f"symbol {item.symbol} already exists in target group")
+        if "market" in payload:
+            item.market = (_strip(payload.get("market")) or None)
+        if "name" in payload:
+            item.name = _strip(payload.get("name"))
+        if "notes" in payload:
+            item.notes = _strip(payload.get("notes"))
         if "target_type" in payload:
-            tt = _strip(payload.get("target_type"))
-            if tt:
-                it.target_type = tt
+            target_type = _strip(payload.get("target_type")) or "stock"
+            if target_type not in {"stock", "hk_stock", "etf", "index", "other"}:
+                raise ValueError("target_type is invalid")
+            item.target_type = target_type
+        if "status" in payload:
+            status = _strip(payload.get("status")) or "active"
+            if status not in {"active", "disabled"}:
+                raise ValueError("status must be active or disabled")
+            item.status = status
         if "sort_order" in payload:
-            try:
-                it.sort_order = int(payload["sort_order"])
-            except (TypeError, ValueError):
-                pass
+            item.sort_order = int(payload.get("sort_order") or 0)
+        self.db.execute(text("update app.self_selected_list_items set updated_at = now() where id = :id"), {"id": item.id})
         self.db.flush()
-        return _item_to_dict(it)
+        self.db.refresh(item)
+        return _item_to_dict(item)
 
     def delete_item(self, item_id: str) -> bool:
-        it = self.db.get(SelfSelectedItem, item_id)
-        if it is None:
+        item = self.db.get(SelfSelectedItem, _parse_uuid(item_id, "item_id"))
+        if item is None or item.deleted_at is not None:
             return False
-        self.db.delete(it)
+        item.deleted_at = datetime.now(item.created_at.tzinfo) if item.created_at and item.created_at.tzinfo else datetime.utcnow()
+        self.db.execute(text("update app.self_selected_list_items set updated_at = now() where id = :id"), {"id": item.id})
         self.db.flush()
         return True
 
