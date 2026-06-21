@@ -10,7 +10,7 @@
   "timezone_offset_hours": 8,
   "tick_seconds": 60,
   "command": "python -u scripts/backfill_market_sentiment_index.py --days=2 --force",
-  "schedulerStartedAt": "2026-06-20T23:08:17",
+  "schedulerStartedAt": "2026-06-21T13:12:30",
   "running": true,
   "lastRunAt": "2026-06-20T12:45:14",
   "lastTargetTradeDate": "2026-06-18",

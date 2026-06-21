@@ -102,7 +102,7 @@ function formatDateTime(value: string | null | undefined): string {
   if (!value) return "—"
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString("zh-CN", { hour12: false })
+  return date.toLocaleString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" })
 }
 
 function formatSeconds(value: number | null | undefined): string {
@@ -159,6 +159,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   const lastRunAt = lastRunSummary?.last_run_at ?? pickValue<string>(config, "last_run_at")
   const lastStatus = lastRunSummary?.last_status ?? pickValue<string>(config, "last_status")
   const lastError = lastRunSummary?.last_error ?? pickValue<string>(config, "last_error")
+  const lastMessage = pickValue<string>(live, "lastMessage") ?? pickValue<string>(config, "lastMessage")
   const lastDuration =
     lastRunSummary?.last_duration_seconds ?? pickValue<number>(config, "last_duration_seconds")
   const lastTargets =
@@ -333,9 +334,18 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <span>{lastTargets ?? "—"} 个</span>
               </div>
               {lastError ? (
-                <div className="flex items-start gap-2 text-destructive">
+                <div className={cn(
+                  "flex items-start gap-2",
+                  lastStatus === "skipped" ? "text-amber-600" : "text-destructive",
+                )}>
                   <AlertTriangle className="mt-0.5 size-3.5" />
                   <span className="text-xs leading-5">{lastError}</span>
+                </div>
+              ) : null}
+              {!lastError && lastMessage ? (
+                <div className="flex items-start gap-2 text-emerald-600">
+                  <CheckCircle2 className="mt-0.5 size-3.5" />
+                  <span className="text-xs leading-5">{lastMessage}</span>
                 </div>
               ) : null}
             </div>
@@ -530,21 +540,25 @@ function JobHistorySection({
 function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
   const [expanded, setExpanded] = useState(false)
   const isFailed = item.status === "failed"
+  const isSkipped = item.status === "skipped"
+  const isSuccess = item.status === "success"
   const isManual = item.trigger_type === "manual"
-  const hasError = isFailed && item.error
+  const hasDetail = (isFailed || isSkipped) ? !!item.error : (isSuccess && !!item.message)
 
   return (
     <div
       className={cn(
         "grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-2 py-1.5 text-xs",
         isFailed && "bg-red-50/50 dark:bg-red-950/10",
+        isSkipped && "bg-amber-50/50 dark:bg-amber-950/10",
+        isSuccess && (item.error || item.message) && "bg-emerald-50/50 dark:bg-emerald-950/10",
       )}
     >
       <div className="flex min-w-0 items-center gap-1.5">
-        {hasError ? (
+        {hasDetail ? (
           <button
             type="button"
-            aria-label={expanded ? "收起错误" : "展开错误"}
+            aria-label={expanded ? "收起详情" : "展开详情"}
             onClick={() => setExpanded((v) => !v)}
             className="shrink-0 text-muted-foreground hover:text-foreground"
           >
@@ -582,10 +596,21 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
         {formatSeconds(item.duration_seconds)}
       </span>
 
-      {hasError && expanded ? (
-        <div className="col-span-4 mt-1 flex items-start gap-1.5 rounded border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] leading-5 text-destructive">
-          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-          <span className="break-all whitespace-pre-wrap">{item.error}</span>
+      {hasDetail && expanded ? (
+        <div className={cn(
+          "col-span-4 mt-1 flex items-start gap-1.5 rounded border px-2 py-1.5 text-[11px] leading-5",
+          isSkipped
+            ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-400"
+            : isSuccess
+              ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/20 dark:text-emerald-400"
+              : "border-destructive/30 bg-destructive/5 text-destructive",
+        )}>
+          {isSuccess ? (
+            <CheckCircle2 className="mt-0.5 size-3 shrink-0" />
+          ) : (
+            <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+          )}
+          <span className="break-all whitespace-pre-wrap">{isSuccess ? item.message : item.error}</span>
         </div>
       ) : null}
 
@@ -791,11 +816,23 @@ export default function SchedulerSettingsPage() {
           case "trigger": {
             const count = (res && (res as { count?: number }).count) ?? 0
             const failed = (res && (res as { failed_count?: number }).failed_count) ?? 0
+            // 从 items 里取具体错误, 结构: result.items[0].lastRunError 或 result.items[0].last_error
+            const resultItems = (res && (res as any).result?.items) || []
+            const detailError = resultItems.length > 0
+              ? (resultItems[0].lastRunError || resultItems[0].last_error || "")
+              : ""
             if (count > 0) {
-              notification.success({
-                title: "已触发一次",
-                description: `${count} 个标的已派发，${failed > 0 ? `其中 ${failed} 个失败` : "全部执行"}`,
-              })
+              if (failed > 0) {
+                notification.danger({
+                  title: `触发完成 — ${failed}/${count} 失败`,
+                  description: detailError || "请展开 job 卡片查看详情",
+                })
+              } else {
+                notification.success({
+                  title: "已触发一次",
+                  description: `${count} 个标的全部执行成功`,
+                })
+              }
             } else {
               notification.info({
                 title: "已触发",
@@ -856,7 +893,14 @@ export default function SchedulerSettingsPage() {
       if (key === ALL_TAB) return jobs
       const catId = Number(key)
       if (!Number.isFinite(catId)) return jobs
-      return jobs.filter((job) => (job.categories || []).includes(catId))
+      const filtered = jobs.filter((job) => (job.categories || []).includes(catId))
+      // 按 categorySortOrders 排序 (market_sentiment 等按执行顺序), 无 sortOrder 的放最后
+      filtered.sort((a, b) => {
+        const sa = (a as any).categorySortOrders?.[catId] ?? 999
+        const sb = (b as any).categorySortOrders?.[catId] ?? 999
+        return sa - sb
+      })
+      return filtered
     },
     [jobs],
   )

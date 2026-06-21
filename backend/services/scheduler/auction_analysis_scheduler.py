@@ -13,7 +13,8 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.stock.application_analysis_store import load_targets
 from backend.services.stock.auction_ai_analysis_service import run_auction_ai_analysis_target
 
@@ -50,7 +51,7 @@ DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG: dict[str, Any] = {
 
 
 def _load_job_config() -> dict[str, Any]:
-    cfg = load_config("auction_ai_analysis")
+    cfg = load_status("auction_ai_analysis")
     if not cfg:
         cfg = dict(DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG)
     for key, value in DEFAULT_AUCTION_ANALYSIS_JOB_CONFIG.items():
@@ -65,7 +66,7 @@ def _load_job_config() -> dict[str, Any]:
 
 
 def _save_job_config(cfg: dict[str, Any]) -> None:
-    save_config("auction_ai_analysis", cfg)
+    save_status("auction_ai_analysis", cfg)
 
 
 def _register_job() -> None:

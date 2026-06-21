@@ -26,7 +26,8 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Any
 
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +81,7 @@ DEFAULT_JOB_CONFIG: dict[str, Any] = {
 
 
 def _load_job_config() -> dict[str, Any]:
-    cfg = load_config("ths_industry_constituents_weekly")
+    cfg = load_status("ths_industry_constituents_weekly")
     if not cfg:
         cfg = dict(DEFAULT_JOB_CONFIG)
     for key, value in DEFAULT_JOB_CONFIG.items():
@@ -89,7 +90,7 @@ def _load_job_config() -> dict[str, Any]:
 
 
 def _save_job_config(cfg: dict[str, Any]) -> None:
-    save_config("ths_industry_constituents_weekly", cfg)
+    save_status("ths_industry_constituents_weekly", cfg)
 
 
 def _register_job() -> None:

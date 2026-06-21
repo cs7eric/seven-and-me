@@ -24,7 +24,7 @@ from backend.services.scheduler.auction_analysis_scheduler import (
     start_auction_analysis_scheduler,
     stop_auction_analysis_scheduler,
 )
-from backend.services.scheduler.config_store import load_config, save_config
+from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.daily_eod_incremental_scheduler import (
     get_daily_eod_incremental_scheduler_status,
     run_daily_eod_incremental_now,
@@ -221,7 +221,7 @@ JOB_CATEGORY_MAP: dict[str, list[int]] = {
     'profit_effect_refresh':                  [5],
     'market_sentiment_index_refresh':         [5],
     'volatility_sentiment_refresh':           [5],
-    'ma_count':                               [5],
+    'ma_count_refresh':                               [5],
     'risk_appetite_refresh':                  [5],
     'limit_emotion_refresh':                  [5],
     'sector_breadth_refresh':                 [5],
@@ -488,7 +488,7 @@ def _normalize_last_run(job_id: str, status: dict, config: dict) -> dict[str, An
         rows = _first_num(config, status, keys=("lastRowsUpserted",))
         days = _first_num(config, status, keys=("lastDaysUpserted",))
         targets = rows if rows is not None else days
-    elif job_id in {"risk_appetite", "ma_count", "volatility_sentiment"}:
+    elif job_id in {"risk_appetite", "ma_count_refresh", "volatility_sentiment"}:
         # risk_appetite / volatility_sentiment 有 lastRowsUpserted / lastCoverage
         # ma_count 有 lastMaUpserted + lastIrUpserted
         rows = _first_num(config, status, keys=("lastRowsUpserted",))
@@ -534,7 +534,7 @@ def _supports_enable(job_id: str) -> bool:
         'market_overview_daily',
         'ths_industry_fund_flow_daily',
         'style_risk_appetite_refresh', 'profit_effect_refresh', 'market_sentiment_index_refresh',
-        'ma_count', 'risk_appetite_refresh', 'volatility_sentiment_refresh',
+        'ma_count_refresh', 'risk_appetite_refresh', 'volatility_sentiment_refresh',
         'initial_backfill_refresh', 'qfq_reconciliation_refresh', 'turnover_activity_refresh',
         'limit_emotion_refresh', 'sector_breadth_refresh',
         'test_scheduler_demo',
@@ -589,7 +589,7 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         return get_profit_effect_scheduler_status()
     if job_id == 'market_sentiment_index_refresh':
         return get_market_sentiment_index_scheduler_status()
-    if job_id == 'ma_count':
+    if job_id == 'ma_count_refresh':
         return get_ma_count_scheduler_status()
     if job_id == 'risk_appetite_refresh':
         return get_risk_appetite_scheduler_status()
@@ -644,7 +644,7 @@ def _start_scheduler(job_id: str) -> None:
         start_profit_effect_scheduler()
     elif job_id == 'market_sentiment_index_refresh':
         start_market_sentiment_index_scheduler()
-    elif job_id == 'ma_count':
+    elif job_id == 'ma_count_refresh':
         start_ma_count_scheduler()
     elif job_id == 'risk_appetite_refresh':
         start_risk_appetite_scheduler()
@@ -697,7 +697,7 @@ def _stop_scheduler(job_id: str) -> None:
         stop_profit_effect_scheduler()
     elif job_id == 'market_sentiment_index_refresh':
         stop_market_sentiment_index_scheduler()
-    elif job_id == 'ma_count':
+    elif job_id == 'ma_count_refresh':
         stop_ma_count_scheduler()
     elif job_id == 'risk_appetite_refresh':
         stop_risk_appetite_scheduler()
@@ -822,7 +822,7 @@ def _trigger_scheduler_inner(job_id: str) -> dict[str, Any]:
         return run_profit_effect_now()
     if job_id == 'market_sentiment_index_refresh':
         return run_market_sentiment_index_now()
-    if job_id == 'ma_count':
+    if job_id == 'ma_count_refresh':
         return run_ma_count_now()
     if job_id == 'risk_appetite_refresh':
         return run_risk_appetite_now()
@@ -1033,31 +1033,35 @@ def list_jobs():
         if not job_id:
             continue
 
-        config = load_config(job_id)
+        config = load_status(job_id) or {}
         try:
             live = _get_live_status(job_id)
         except Exception as exc:
             live = {'error': f'get live status failed: {exc}'}
 
         categories_value = entry.get('_category_ids') or []
+        category_sort_orders = entry.get('_category_sort_orders') or {}
         enabled_in_registry = bool(entry.get('enabled', True))
-        config_enabled = config.get('enabled')
+        config_enabled = config.get('enabled') if config else None
         # 对于 application_analysis 来说，没有独立 config；显示 live.running 即可
         if job_id == 'application_analysis':
             config_enabled = enabled_in_registry
 
-        # 不要把内部字段 ``_category_ids`` 漏到 API 响应里
-        entry_for_response = {k: v for k, v in entry.items() if k != '_category_ids'}
+        # 不要把内部字段漏到 API 响应里
+        entry_for_response = {
+            k: v for k, v in entry.items()
+            if k not in ('_category_ids', '_category_sort_orders')
+        }
 
         items.append({
             **entry_for_response,
             'supports_enable': _supports_enable(job_id),
             'categories': categories_value,
+            'categorySortOrders': category_sort_orders,
             'enabled': enabled_in_registry,
             'config_enabled': bool(config_enabled) if config_enabled is not None else True,
             'config': config,
             'live': live,
-            # 归一化的上次运行摘要: 前端只读这六个字段, 不用关心各 scheduler 内部字段名差异
             'last_run': _normalize_last_run(job_id, live or {}, config or {}),
         })
 
@@ -1078,16 +1082,21 @@ def get_job(job_id: str):
     if entry is None:
         return jsonify({'ok': False, 'error': f'job {job_id} not registered'}), 404
 
-    config = load_config(job_id)
+    config = load_status(job_id) or {}
     live = _get_live_status(job_id)
     categories_value = entry.get('_category_ids') or []
-    entry_for_response = {k: v for k, v in entry.items() if k != '_category_ids'}
+    category_sort_orders = entry.get('_category_sort_orders') or {}
+    entry_for_response = {
+        k: v for k, v in entry.items()
+        if k not in ('_category_ids', '_category_sort_orders')
+    }
     return jsonify({
         'ok': True,
         'item': {
             **entry_for_response,
             'supports_enable': _supports_enable(job_id),
             'categories': categories_value,
+            'categorySortOrders': category_sort_orders,
             'enabled': bool(entry.get('enabled', True)),
             'config_enabled': bool(config.get('enabled', True)) if job_id != 'application_analysis' else True,
             'config': config,
@@ -1103,10 +1112,10 @@ def _flip_enabled(job_id: str, enabled: bool) -> dict[str, Any]:
 
     enabled_bool = bool(enabled)
 
-    config = load_config(job_id) or {}
+    config = load_status(job_id) or {}
     config['enabled'] = enabled_bool
     config['job_name'] = config.get('job_name') or job_id
-    save_config(job_id, config)
+    save_status(job_id, config)
 
     # 同步更新 is_enabled 列
     try:
@@ -1166,7 +1175,7 @@ def trigger_job(job_id: str):
             top_count = 1
             top_failed = 0 if result.get("status") == "success" else 1
         return jsonify({
-            "ok": result.get("ok", True),
+            "ok": True,
             "job_id": job_id,
             "count": top_count,
             "failed_count": top_failed,

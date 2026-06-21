@@ -26,8 +26,10 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.backfill_validator import validate_scalar
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 
@@ -68,12 +70,12 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    cfg = load_config("turnover_activity_refresh")
+    cfg = load_status("turnover_activity_refresh")
     return cfg if cfg else _job_default_status()
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("turnover_activity_refresh", status)
+    save_status("turnover_activity_refresh", status)
 
 
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
@@ -98,6 +100,7 @@ def job_run_backfill() -> dict:
     status = _load_job_status()
     t0 = time.time()
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     status["lastRunAt"] = start_at_iso
     status["lastTargetTradeDate"] = target_date.isoformat()
 
@@ -109,13 +112,14 @@ def job_run_backfill() -> dict:
         msg = "script not found: {}".format(script)
         logger.error("turnover_activity: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
         record_run(_JOB_ID, status="failed", duration_seconds=status.get("lastDurationSeconds"),
                    start_at=start_at_iso, end_at=datetime.now().isoformat(timespec="seconds"),
-                   error=status.get("lastRunError"))
+                   error=status.get("lastRunError"),
+                   message=status.get("lastMessage"))
         return {"ok": False, "error": msg}
 
     try:
@@ -133,29 +137,34 @@ def job_run_backfill() -> dict:
             valid, err_msg = validate_scalar("turnover_activity_daily", "score", target_date)
             if not valid:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] " + str(err_msg)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(err_msg)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("turnover_activity validation failed in %.1fs: %s", elapsed, err_msg)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+
+                score_val = fetch_scalar_value("turnover_activity_daily", "score", target_date)
+                parts = [f"score={score_val:.2f}"] if score_val is not None else []
+                parts.append(f"(target={target_date.isoformat()})")
+                status["lastMessage"] = " ".join(parts) if score_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
-                logger.info("turnover_activity ok in %.1fs", elapsed)
+                logger.info("turnover_activity ok in %.1fs: score=%s", elapsed, score_val)
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or "exit={}".format(r.returncode)
+            status["lastRunError"] = f"{cst_time} " + str(err_tail or "exit={}".format(r.returncode))
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning("turnover_activity failed in %.1fs: exit=%d\n%s", elapsed, r.returncode, err_tail)
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = "timeout (>{}s)".format(_JOB_TIMEOUT_SECONDS)
+        status["lastRunError"] = f"{cst_time} " + "timeout (>{}s)".format(_JOB_TIMEOUT_SECONDS)
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("turnover_activity timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = "{}: {}".format(type(exc).__name__, exc)[:300]
+        status["lastRunError"] = f"{cst_time} " + "{}: {}".format(type(exc).__name__, exc)[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("turnover_activity crashed: %s\n%s", exc, traceback.format_exc())
@@ -164,7 +173,8 @@ def job_run_backfill() -> dict:
     record_run(_JOB_ID, status="success" if status.get("lastRunOk") else "failed",
                duration_seconds=status.get("lastDurationSeconds"),
                start_at=start_at_iso, end_at=datetime.now().isoformat(timespec="seconds"),
-               error=status.get("lastRunError"))
+               error=status.get("lastRunError"),
+               message=status.get("lastMessage"))
     return {"ok": bool(status.get("lastRunOk"))}
 
 
@@ -189,8 +199,8 @@ def start_turnover_activity_scheduler() -> None:
         sched.start()
         _scheduler = sched
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(_JOB_ID, "turnover_activity_refresh (17:12, 成交活跃度回填 duckdb)", None)
+        _save_job_status(status)
         logger.info("turnover_activity_scheduler started: cron=%s", TURNOVER_ACTIVITY_CRON)
     status = _load_job_status()
     status["running"] = True

@@ -302,6 +302,17 @@ CREATE INDEX idx_scheduler_job_category_mappings_category
     ON app.scheduler_job_category_mappings (category_id)
     WHERE deleted_at IS NULL;
 
+-- 新增: 每个 mapping 的排序权重, 用于前端按执行顺序渲染
+DO $$ BEGIN
+    ALTER TABLE app.scheduler_job_category_mappings
+    ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+CREATE INDEX idx_scheduler_job_category_mappings_sort
+    ON app.scheduler_job_category_mappings (category_id, sort_order)
+    WHERE deleted_at IS NULL;
+
 CREATE TRIGGER trg_scheduler_job_category_mappings_updated_at
     BEFORE UPDATE ON app.scheduler_job_category_mappings
     FOR EACH ROW
@@ -341,7 +352,12 @@ VALUES
     ('test_scheduler_demo',                    '[测试] scheduler 删除演示',              '测试用 entry, 没有对应 scheduler 模块, 用来演示 jobs.json CRUD',                                                                       '',                                        '(无 - 测试 entry)',                                                      'TestSchedulerDemo',                 TRUE, '2026-06-15T11:00:00+08:00'),
     ('style_risk_appetite_refresh',            '风格风险偏好 duckdb 回填 (17:08)',       '工作日 17:08 增量回填风格风险偏好 (中证1000 - 沪深300 5日收益) 到 duckdb',                                                            'style_risk_appetite_job.json',            'backend.services.scheduler.style_risk_appetite_scheduler',            'style_risk_appetite_scheduler',     TRUE, '2026-06-18T13:30:00+08:00'),
     ('profit_effect_refresh',                  '赚钱效应 duckdb 回填 (17:09)',          '工作日 17:09 增量回填赚钱效应 (近5日上涨占比+60日新低反向合成) 到 duckdb',                                                            'profit_effect_job.json',                  'backend.services.scheduler.profit_effect_scheduler',                  'profit_effect_scheduler',           TRUE, '2026-06-18T13:45:00+08:00'),
-    ('market_sentiment_index_refresh',         '市场情绪指数 composite duckdb 回填 (17:10)','工作日 17:10 增量合成市场情绪指数 (9 张卡加权) 到 duckdb',                                                                            'market_sentiment_index_job.json',         'backend.services.scheduler.market_sentiment_index_scheduler',         'market_sentiment_index_scheduler',  TRUE, '2026-06-18T14:00:00+08:00')
+    ('market_sentiment_index_refresh',         '市场情绪指数 composite duckdb 回填 (17:20)','工作日 17:20 增量合成市场情绪指数 (9 factor 加权) 到 duckdb, 前置检查全部因子就绪',                                                                            'market_sentiment_index_job.json',         'backend.services.scheduler.market_sentiment_index_scheduler',         'market_sentiment_index_scheduler',  TRUE, '2026-06-18T14:00:00+08:00'),
+    ('initial_backfill_refresh',               'TDX 日线解析 duckdb 入库 (16:45)',       'MSI 上游: 工作日 16:45 解析 TDX .day 二进制 → duckdb daily_raw (INSERT OR IGNORE 幂等), 依赖 tdx_hsjday_download 16:30',                                    'initial_backfill_job.json',               'backend.services.scheduler.initial_backfill_scheduler',               'InitialBackfillScheduler',          TRUE, '2026-06-21T10:00:00+08:00'),
+    ('qfq_reconciliation_refresh',             'qfq/hfq 复权对账补拉 (16:50)',            'MSI 上游: 工作日 16:50 找 daily_raw 有但 daily_qfq/daily_hfq 缺的 trade_date 逐日补拉, 依赖 initial_backfill 16:45',                                         'qfq_reconciliation_job.json',             'backend.services.scheduler.qfq_reconciliation_scheduler',             'QfqReconciliationScheduler',        TRUE, '2026-06-21T10:00:00+08:00'),
+    ('limit_emotion_refresh',                  '涨跌停情绪 duckdb 回填 (17:03)',          'MSI Factor 6: 工作日 17:03 涨跌停比+炸板率+昨日涨停收益→composite→3年分位 0-100, 落 duckdb.limit_emotion_summary_daily',                                        'limit_emotion_job.json',                  'backend.services.scheduler.limit_emotion_scheduler',                  'LimitEmotionScheduler',             TRUE, '2026-06-21T10:00:00+08:00'),
+    ('turnover_activity_refresh',              '成交活跃度 duckdb 回填 (17:12)',          'MSI Factor 2: 工作日 17:12 从 market_overview_daily.total_amount 算 ratio=成交额/20日均→3年分位, 依赖 market_overview_daily 17:10',                            'turnover_activity_job.json',              'backend.services.scheduler.turnover_activity_scheduler',              'TurnoverActivityScheduler',         TRUE, '2026-06-21T10:00:00+08:00'),
+    ('sector_breadth_refresh',                 '板块扩散 duckdb 回填 (17:17)',            'MSI Factor 8: 工作日 17:17 同花顺90行业上涨数/总数→advance_pct*100→0-100, 落 duckdb.market_pulse_sector_breadth_daily',                                          'sector_breadth_job.json',                 'backend.services.scheduler.sector_breadth_scheduler',                 'SectorBreadthScheduler',            TRUE, '2026-06-21T10:00:00+08:00')
 ON CONFLICT (code) WHERE deleted_at IS NULL DO NOTHING;
 
 
@@ -401,7 +417,17 @@ FROM (VALUES
     -- profit_effect_refresh
     ('profit_effect_refresh',                  TRUE,  FALSE, '{"workday_only": true, "run_time": "17:09", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "profit_effect_refresh", "command": "python -u scripts/backfill_profit_effect.py --days=2 --force", "_note": "外部脚本 job, status JSON 无 last_run 字段"}'::jsonb, '2026-06-20T11:36:40+08:00'),
     -- market_sentiment_index_refresh
-    ('market_sentiment_index_refresh',         TRUE,  FALSE, '{"workday_only": true, "run_time": "17:10", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "market_sentiment_index_refresh", "command": "python -u scripts/backfill_market_sentiment_index.py --days=2 --force", "_note": "外部脚本 job, status JSON 无 last_run 字段"}'::jsonb, '2026-06-20T11:36:40+08:00'),
+    ('market_sentiment_index_refresh',         TRUE,  FALSE, '{"workday_only": true, "run_time": "17:20", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "market_sentiment_index_refresh", "command": "python -u scripts/backfill_market_sentiment_index.py --days=2 --force --require-full", "_note": "外部脚本 job, status JSON 无 last_run 字段, 前置检查 9/9 factor 全就绪"}'::jsonb, '2026-06-20T11:36:40+08:00'),
+    -- initial_backfill_refresh (新独立 job, 从 daily_eod_incremental 拆出)
+    ('initial_backfill_refresh',               TRUE,  FALSE, '{"workday_only": true, "run_time": "16:45", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "initial_backfill_refresh", "command": "python -u scripts/initial_backfill.py", "_note": "新独立 job, 从 daily_eod_incremental 拆出"}'::jsonb, '2026-06-21T10:00:00+08:00'),
+    -- qfq_reconciliation_refresh (新独立 job)
+    ('qfq_reconciliation_refresh',             TRUE,  FALSE, '{"workday_only": true, "run_time": "16:50", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "qfq_reconciliation_refresh", "command": "python -u scripts/fetch_one_date_eltdx.py --adjust=both --workers=32", "_note": "新独立 job, 从 daily_eod_incremental 拆出"}'::jsonb, '2026-06-21T10:00:00+08:00'),
+    -- limit_emotion_refresh (新独立 job)
+    ('limit_emotion_refresh',                  TRUE,  FALSE, '{"workday_only": true, "run_time": "17:03", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "limit_emotion_refresh", "command": "python -u scripts/backfill_limit_emotion_summary.py --days=2 --force", "_note": "新独立 job, 从 daily_eod_incremental 拆出"}'::jsonb, '2026-06-21T10:00:00+08:00'),
+    -- turnover_activity_refresh (新独立 job)
+    ('turnover_activity_refresh',              TRUE,  FALSE, '{"workday_only": true, "run_time": "17:12", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "turnover_activity_refresh", "command": "python -u scripts/backfill_turnover_activity.py --days=3", "_note": "新独立 job, 从 daily_eod_incremental 拆出"}'::jsonb, '2026-06-21T10:00:00+08:00'),
+    -- sector_breadth_refresh (新独立 job)
+    ('sector_breadth_refresh',                 TRUE,  FALSE, '{"workday_only": true, "run_time": "17:17", "run_once_per_day": true}'::jsonb,                                                                8,  60, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"job_name": "sector_breadth_refresh", "command": "python -u scripts/backfill_sector_breadth.py --days=2", "_note": "新独立 job, 从 ths_industry_fund_flow_daily 拆出"}'::jsonb, '2026-06-21T10:00:00+08:00'),
     -- test_scheduler_demo (无 status 文件)
     ('test_scheduler_demo',                    TRUE,  FALSE, '{}'::jsonb,                                                                                                                          NULL,NULL, NULL,                                NULL,  NULL,     NULL,   NULL, 0,   0, NULL,                                NULL,                                '{"_note": "测试 entry, 没有 status 文件"}'::jsonb, '2026-06-15T11:00:00+08:00')
 ) AS v(job_code, is_enabled, is_running, schedule, timezone_offset_hours, tick_seconds,
@@ -492,6 +518,9 @@ FROM (VALUES
     ('profit_effect_refresh',                  'market_sentiment'),
     ('sector_breadth_refresh',                 'market_sentiment'),
     ('market_sentiment_index_refresh',         'market_sentiment'),
+    ('initial_backfill_refresh',               'market_sentiment'),
+    ('qfq_reconciliation_refresh',             'market_sentiment'),
+    ('turnover_activity_refresh',              'market_sentiment'),
     ('test_scheduler_demo',                    'test')
 ) AS m(job_code, category_code)
 JOIN app.scheduler_jobs j
@@ -502,21 +531,45 @@ JOIN app.scheduler_job_categories c
    AND c.deleted_at IS NULL
 ON CONFLICT (job_id, category_id) WHERE deleted_at IS NULL DO NOTHING;
 
+-- 设置 market_sentiment 的排序权重 (按执行顺序)
+UPDATE app.scheduler_job_category_mappings SET sort_order = m.sort_order, updated_at = now()
+FROM (VALUES
+    ('tdx_hsjday_download',            'market_sentiment', 10),
+    ('initial_backfill_refresh',       'market_sentiment', 20),
+    ('qfq_reconciliation_refresh',     'market_sentiment', 30),
+    ('limit_emotion_refresh',          'market_sentiment', 40),
+    ('risk_appetite_refresh',          'market_sentiment', 50),
+    ('ma_count',                       'market_sentiment', 60),
+    ('volatility_sentiment_refresh',   'market_sentiment', 70),
+    ('style_risk_appetite_refresh',    'market_sentiment', 80),
+    ('profit_effect_refresh',          'market_sentiment', 90),
+    ('market_overview_daily',          'market_sentiment', 100),
+    ('turnover_activity_refresh',      'market_sentiment', 110),
+    ('sector_breadth_refresh',         'market_sentiment', 120),
+    ('market_sentiment_index_refresh', 'market_sentiment', 130),
+    ('daily_eod_incremental',          'market_sentiment', 999)
+) AS m(job_code, category_code, sort_order)
+JOIN app.scheduler_jobs j ON j.code = m.job_code AND j.deleted_at IS NULL
+JOIN app.scheduler_job_categories c ON c.code = m.category_code AND c.deleted_at IS NULL
+WHERE app.scheduler_job_category_mappings.job_id = j.id
+  AND app.scheduler_job_category_mappings.category_id = c.id
+  AND app.scheduler_job_category_mappings.deleted_at IS NULL;
+
 
 -- ============================================================
 -- 11. 校验
 -- ============================================================
 -- 应该看到:
---   scheduler_jobs                : 25 (新增 limit_emotion_refresh + sector_breadth_refresh)
---   scheduler_job_statuses        : 25
+--   scheduler_jobs                : 30 (原 24 + 5 新独立 job: initial_backfill/qfq/limit_emotion/turnover_activity/sector_breadth)
+--   scheduler_job_statuses        : 30
 --   scheduler_job_run_history     :  4
---   scheduler_job_categories      :  7 (新增 market_sentiment)
---   scheduler_job_category_mappings: 31 (原 23 - 3 composite - 1 turnover + 3 new multi-category + 9 market_sentiment)
+--   scheduler_job_categories      :  7 (含 market_sentiment)
+--   scheduler_job_category_mappings: 36 (原 31 + 5 新 job mapping)
 --   mapping_by_category intraday  : 10
 --   mapping_by_category ai        :  2
 --   mapping_by_category data_collection : 4
 --   mapping_by_category eod_backfill    : 3
---   mapping_by_category market_sentiment : 11 (9 factor jobs + composite + tdx + eod + market_overview)
+--   mapping_by_category market_sentiment : 14 (全链路: 上游3 + 9 factor + composite + 废弃 eod)
 --   mapping_by_category composite       : 0 (soft-deleted)
 --   mapping_by_category test            : 1
 

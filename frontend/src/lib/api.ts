@@ -3882,6 +3882,8 @@ export interface SchedulerJobItem {
   registered_at?: string
   /** 后端按 JOB_CATEGORY_MAP 注入: job 属于的所有 category id (numeric, BIGSERIAL). 多对多, 已按 sort_order 排好. */
   categories?: number[]
+  /** 每个 category 中该 job 的排序权重 (key: category_id, value: sort_order). 前端用于按执行顺序排列. */
+  categorySortOrders?: Record<number, number>
   supports_enable: boolean
   enabled: boolean
   config_enabled: boolean
@@ -3996,6 +3998,8 @@ export interface SchedulerJobHistoryItem {
   status: "success" | "failed" | "skipped" | "running" | string
   /** 失败时的错误信息 (成功时为 null) */
   error: string | null
+  /** 成功时的详情信息 (如 "ok, parsed 12236 files → daily_raw"), 失败时为 null */
+  message?: string | null
   /** 耗时 (秒) */
   duration_seconds: number | null
   /** application_analysis 专用: 本次触发的标的数 / 成功数 */

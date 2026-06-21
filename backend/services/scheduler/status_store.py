@@ -1,0 +1,236 @@
+"""DB-backed scheduler runtime status store — 替代 JSON 文件和 config_store 的状态读写.
+
+统一读写 ``app.scheduler_job_statuses`` 表.
+``config_store.register_job()`` 保留用于 job 注册 (``app.scheduler_jobs``).
+
+用法::
+
+    from backend.services.scheduler.status_store import load_status, save_status
+
+    status = load_status("ma_count_refresh") or _job_default_status()
+    status["lastRunOk"] = True
+    status["lastRunError"] = None
+    save_status("ma_count_refresh", status)
+
+字段映射 (scheduler dict key → scheduler_job_statuses column):
+
+============================  ==========================
+dict key                       column
+============================  ==========================
+enabled                        is_enabled
+running                        is_running
+lastRunAt                      last_run_at
+lastRunOk                      last_run_ok
+lastRunError                   last_run_error_message
+lastStatus                     last_run_status
+lastDurationSeconds            last_duration_seconds
+lastTargetsProcessed           last_targets_processed
+totalRuns                      total_runs
+totalFailures                  total_failures
+schedulerStartedAt             scheduler_started_at
+stoppedAt                      stopped_at
+schedule                       schedule
+============================  ==========================
+
+未映射的字段 → ``extra`` JSONB.
+
+兼容 snake_case 旧字段: ``last_run_at``, ``last_error``, ``last_duration_seconds``,
+``total_runs``, ``last_status``, ``last_targets_processed`` 等 (读取时两套都认).
+"""
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone, timedelta
+from typing import Any
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from backend.models.scheduler import SchedulerJob, SchedulerJobStatus
+
+logger = logging.getLogger(__name__)
+
+_CST = timezone(timedelta(hours=8))
+
+# Columns that store CST-origin timestamps (from _beijing_now() / cst_now_str()).
+# When the input value is a naive ISO string or naive datetime, assume CST.
+_DATETIME_CST_COLUMNS = frozenset({"last_run_at", "scheduler_started_at", "stopped_at"})
+
+# ── 字段映射 ──────────────────────────────────────────────────────────
+# scheduler dict key → SchedulerJobStatus column name
+_COLUMN_MAP: dict[str, str] = {
+    "enabled":               "is_enabled",
+    "running":               "is_running",
+    "lastRunAt":             "last_run_at",
+    "lastRunOk":             "last_run_ok",
+    "lastRunError":          "last_run_error_message",
+    "lastStatus":            "last_run_status",
+    "lastDurationSeconds":   "last_duration_seconds",
+    "lastTargetsProcessed":  "last_targets_processed",
+    "totalRuns":             "total_runs",
+    "totalFailures":         "total_failures",
+    "schedulerStartedAt":    "scheduler_started_at",
+    "stoppedAt":             "stopped_at",
+    "schedule":              "schedule",
+}
+
+# snake_case → column (读取兼容)
+_SNAKE_MAP: dict[str, str] = {
+    "last_run_at":             "last_run_at",
+    "last_error":              "last_run_error_message",
+    "last_run_error":          "last_run_error_message",
+    "last_duration_seconds":   "last_duration_seconds",
+    "total_runs":              "total_runs",
+    "total_failures":          "total_failures",
+    "last_status":             "last_run_status",
+    "last_run_ok":             "last_run_ok",
+    "last_targets_processed":  "last_targets_processed",
+    "scheduler_started_at":    "scheduler_started_at",
+    "stopped_at":              "stopped_at",
+    "is_enabled":              "is_enabled",
+    "is_running":              "is_running",
+}
+
+# 反向: column → dict key (camelCase)
+_REVERSE_MAP: dict[str, str] = {v: k for k, v in _COLUMN_MAP.items()}
+
+# 反向: column → dict key (snake_case, 兼容旧 scheduler)
+_SNAKE_REVERSE: dict[str, str] = {
+    "last_run_at":              "last_run_at",
+    "last_run_error_message":   "last_error",
+    "last_run_ok":              "last_run_ok",
+    "last_run_status":          "last_status",
+    "last_duration_seconds":    "last_duration_seconds",
+    "last_targets_processed":   "last_targets_processed",
+    "total_runs":               "total_runs",
+    "total_failures":           "total_failures",
+    "scheduler_started_at":     "scheduler_started_at",
+    "stopped_at":               "stopped_at",
+    "is_enabled":               "enabled",
+    "is_running":               "running",
+}
+
+
+def _ensure_tz(value: Any, assume_tz: timezone) -> Any:
+    """If value is a naive datetime or naive ISO string, make it tz-aware with ``assume_tz``."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=assume_tz)
+        return value
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return value
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=assume_tz)
+        return dt
+    return value
+
+
+def _session():
+    from backend.config.database import session_scope
+    return session_scope
+
+
+def _resolve_column(key: str) -> str | None:
+    """把 dict key (camelCase 或 snake_case) 映射到 column name. 未映射返 None."""
+    if key in _COLUMN_MAP:
+        return _COLUMN_MAP[key]
+    if key in _SNAKE_MAP:
+        return _SNAKE_MAP[key]
+    return None
+
+
+def load_status(code: str) -> dict[str, Any] | None:
+    """从 ``app.scheduler_job_statuses`` 读运行时状态, 返 dict (含 extra 合并).
+
+    行不存在或 DB 不可用时返 None.
+    """
+    try:
+        with _session()() as db:
+            row = db.execute(
+                select(SchedulerJobStatus)
+                .join(SchedulerJob, SchedulerJob.id == SchedulerJobStatus.job_id)
+                .where(
+                    SchedulerJob.code == code,
+                    SchedulerJob.deleted_at.is_(None),
+                    SchedulerJobStatus.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+
+            if row is None:
+                return None
+
+            # 列值 → dict (同时提供 camelCase 和 snake_case 两种 key)
+            result: dict[str, Any] = dict(row.extra or {})
+            for col_name, camel_key in _REVERSE_MAP.items():
+                val = getattr(row, col_name, None)
+                if val is not None:
+                    result[camel_key] = val
+            for col_name, snake_key in _SNAKE_REVERSE.items():
+                val = getattr(row, col_name, None)
+                if val is not None and snake_key not in result:
+                    result[snake_key] = val
+            return result
+    except Exception as exc:
+        logger.warning("status_store.load_status(%s) failed: %s", code, exc)
+        return None
+
+
+def save_status(code: str, status: dict[str, Any]) -> bool:
+    """把运行时状态写入 ``app.scheduler_job_statuses``. 返 True = 成功.
+
+    列字段走 UPDATE, 其余全部进 ``extra`` JSONB.
+    行不存在时自动 INSERT.
+    """
+    try:
+        with _session()() as db:
+            # 1) 解析 job_id
+            job_row = db.execute(
+                select(SchedulerJob.id).where(
+                    SchedulerJob.code == code,
+                    SchedulerJob.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+
+            if job_row is None:
+                logger.warning(
+                    "status_store.save_status(%s): job not found in app.scheduler_jobs", code,
+                )
+                return False
+
+            job_id = job_row
+
+            # 2) 拆字段: 已知列 vs extra
+            columns: dict[str, Any] = {"job_id": job_id}
+            extra: dict[str, Any] = {}
+
+            for key, value in status.items():
+                col = _resolve_column(key)
+                if col:
+                    # Timestamptz columns: ensure value is timezone-aware (assume CST if naive).
+                    if value is not None and col in _DATETIME_CST_COLUMNS:
+                        value = _ensure_tz(value, _CST)
+                    columns[col] = value
+                else:
+                    extra[key] = value
+
+            columns["extra"] = extra
+            columns["updated_at"] = datetime.now(timezone.utc)
+
+            # 3) UPSERT (ON CONFLICT on partial unique index)
+            stmt = pg_insert(SchedulerJobStatus).values(**columns)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["job_id"],
+                index_where=(SchedulerJobStatus.deleted_at.is_(None)),
+                set_={c: getattr(stmt.excluded, c) for c in columns if c != "job_id"},
+                where=(SchedulerJobStatus.deleted_at.is_(None)),
+            )
+
+            db.execute(stmt)
+            db.flush()
+            return True
+    except Exception as exc:
+        logger.warning("status_store.save_status(%s) failed: %s", code, exc)
+        return False

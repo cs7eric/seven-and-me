@@ -15,7 +15,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -31,14 +30,12 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE,
-)
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.utils.json_io import read_json_file
+from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
 
 logger = logging.getLogger(__name__)
 
@@ -71,71 +68,29 @@ def _default_script_path() -> str:
 # Job 状态
 # ---------------------------------------------------------------------------
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE.exists():
-        return {
-            "name": _JOB_ID,
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastDurationSeconds": None,
-            "lastDaysRequested": None,
-            "lastCoverage": None,
-            "totalRuns": 0,
-            "totalFailures": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("style_risk_appetite job status read failed: %s", exc)
-        return {}
+    s = load_status("style_risk_appetite_refresh")
+    return s if s else {
+        "name": "style_risk_appetite_refresh",
+        "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None,
+    }
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE)
+    save_status("style_risk_appetite_refresh", status)
 
 
 # ---------------------------------------------------------------------------
 # Jobs.json 注册
 # ---------------------------------------------------------------------------
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": []}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
-            "工作日 17:08 触发, 调 scripts/backfill_style_risk_appetite.py --days=2 --force, "
-            "对 index_returns_daily 算中证1000 5日收益 - 沪深300 5日收益 spread, "
-            "落 duckdb.style_risk_appetite_daily. 依赖 ma_count 17:06 必须先落 index_returns_daily."
-        ),
-        "config_file": SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE.name,
-        "service_module": "backend.services.scheduler.style_risk_appetite_scheduler",
-        "service_class": "StyleRiskAppetiteScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        "module": "backend.services.scheduler.style_risk_appetite_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+    register_job(
+        code="style_risk_appetite_refresh", name=name,
+        description="MSI Factor 9: style_risk (风格风险偏好, weight 5%%). Cron 17:08, 中证1000 5日收益 - 沪深300 5日收益 spread -> 3年分位.",
+        service_module="backend.services.scheduler.style_risk_appetite_scheduler",
+        service_class="StyleRiskAppetiteScheduler",
+        config_file="style_risk_appetite_job.json",
+        default_config={"name": "style_risk_appetite_refresh", "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +109,7 @@ def job_run_backfill() -> dict:
     status = _load_job_status()
     t0 = time.time()
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     status["lastRunAt"] = start_at_iso
     status["lastTargetTradeDate"] = target_date.isoformat()
 
@@ -165,7 +121,7 @@ def job_run_backfill() -> dict:
         msg = f"script not found: {script}"
         logger.error("style_risk_appetite: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
@@ -176,6 +132,7 @@ def job_run_backfill() -> dict:
             start_at=start_at_iso,
             end_at=datetime.now().isoformat(timespec="seconds"),
             error=status.get("lastRunError"),
+            message=status.get("lastMessage"),
         )
         return {"ok": False, "error": msg}
 
@@ -197,7 +154,7 @@ def job_run_backfill() -> dict:
         status["lastDurationSeconds"] = round(elapsed, 1)
         status["lastDaysRequested"] = 2
 
-        stdout = r.stdout or ""
+        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         m = re.search(r"完成:\s*写入\s*(\d+)\s*跳过\s*(\d+)", stdout)
         if m:
             status["lastRowsUpserted"] = int(m.group(1))
@@ -211,21 +168,29 @@ def job_run_backfill() -> dict:
             _valid_ok, _valid_err = validate_scalar("style_risk_appetite_daily", "spread", target_date)
             if not _valid_ok:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] " + str(_valid_err)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(_valid_err)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("style_risk_appetite validation failed in %.1fs: %s", elapsed, _valid_err)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+
+                spread_val = fetch_scalar_value("style_risk_appetite_daily", "spread", target_date)
+                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                parts = [f"spread={spread_val:.4f}"] if spread_val is not None else []
+                if up is not None:
+                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                parts.append(f"(target={target_date.isoformat()})")
+                status["lastMessage"] = " ".join(parts) if spread_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "style_risk_appetite ok in %.1fs: upserted=%s skipped=%s",
-                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"),
+                "style_risk_appetite ok in %.1fs: upserted=%s skipped=%s spread=%s",
+                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), spread_val,
             )
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or f"exit={r.returncode}"
+            status["lastRunError"] = f"{cst_time} " + str(err_tail or f"exit={r.returncode}")
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "style_risk_appetite failed in %.1fs: exit=%d\n%s",
@@ -233,13 +198,13 @@ def job_run_backfill() -> dict:
             )
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
+        status["lastRunError"] = f"{cst_time} " + f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("style_risk_appetite timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"{type(exc).__name__}: {exc}"[:300]
+        status["lastRunError"] = f"{cst_time} " + f"{type(exc).__name__}: {exc}"[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("style_risk_appetite crashed: %s\n%s", exc, traceback.format_exc())
@@ -252,6 +217,7 @@ def job_run_backfill() -> dict:
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
         error=status.get("lastRunError"),
+        message=status.get("lastMessage"),
     )
     return {"ok": bool(status.get("lastRunOk"))}
 
@@ -290,12 +256,12 @@ def start_style_risk_appetite_scheduler() -> None:
         _scheduler = sched
 
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(
             _JOB_ID,
             "style_risk_appetite_refresh (17:08 工作日, 风格风险偏好 spread 回填 duckdb)",
             None,
-        )
+            )
+        _save_job_status(status)
         logger.info(
             "style_risk_appetite_scheduler started: cron=%s (workday only via is_trading_day)",
             STYLE_RISK_APPETITE_CRON,

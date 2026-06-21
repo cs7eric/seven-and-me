@@ -23,7 +23,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from backend.config.settings import APPLICATION_ANALYSIS_TARGETS_FILE
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.stock.application_analysis_store import load_targets
 from backend.services.stock.f10.turnover import refresh_all_targets_turnover
 
@@ -101,7 +102,7 @@ DEFAULT_TURNOVER_JOB_CONFIG: dict[str, Any] = {
 
 
 def _load_turnover_job_config() -> dict[str, Any]:
-    cfg = load_config("turnover")
+    cfg = load_status("turnover_refresh")
     if not cfg:
         cfg = dict(DEFAULT_TURNOVER_JOB_CONFIG)
     for key, value in DEFAULT_TURNOVER_JOB_CONFIG.items():
@@ -110,13 +111,13 @@ def _load_turnover_job_config() -> dict[str, Any]:
 
 
 def _save_turnover_job_config(cfg: dict[str, Any]) -> None:
-    save_config("turnover", cfg)
+    save_status("turnover", cfg)
 
 
 def _register_turnover_job() -> None:
     """把 turnover_refresh job 注册到 DB。幂等。"""
     register_job(
-        code="turnover",
+        code="turnover_refresh",
         name="换手率刷新",
         description="工作日盘内每半小时 + 16:00 收盘后，刷新 target.json 中所有标的的换手率",
         service_module="backend.services.scheduler.turnover_scheduler",

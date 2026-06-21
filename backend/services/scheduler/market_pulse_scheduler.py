@@ -21,7 +21,8 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.stock.market_pulse_service import snapshot_today_rotation
 from backend.services.stock.f10.ths_industry_constituents_service import get_all_industry_constituents as get_all_constituents
 from backend.services.stock.limit_emotion_service import snapshot_today_daily as snapshot_today_limit_emotion_daily
@@ -65,14 +66,14 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    cfg = load_config("market_pulse_inside")
+    cfg = load_status("market_pulse_inside")
     if not cfg:
         return _job_default_status()
     return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("market_pulse_inside", status)
+    save_status("market_pulse_inside", status)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +111,9 @@ def _job_inside_refresh() -> None:
         status["lastRunAt"] = status["lastInsideRefreshAt"]
         status["lastRunOk"] = True
         status["lastRunError"] = None
+
+        top5_names = [x.get("name", "?") for x in (snap.get("items") or [])[:5]]
+        status["lastMessage"] = f"Top5: {', '.join(top5_names)}" if top5_names else "ok"
         status["totalInside"] = int(status.get("totalInside") or 0) + 1
         status["lastTopN"] = [
             {"name": x.get("name"), "changePct": x.get("changePct")} for x in (snap.get("items") or [])[:5]
@@ -137,6 +141,9 @@ def _job_close_snapshot() -> None:
         status["lastRunAt"] = status["lastCloseSnapshotAt"]
         status["lastRunOk"] = True
         status["lastRunError"] = None
+
+        top5_names = [x.get("name", "?") for x in (snap.get("items") or [])[:5]]
+        status["lastMessage"] = f"[收盘] Top5: {', '.join(top5_names)}" if top5_names else "[收盘] ok"
         status["totalClose"] = int(status.get("totalClose") or 0) + 1
         status["lastTopN"] = [
             {"name": x.get("name"), "changePct": x.get("changePct")} for x in (snap.get("items") or [])[:5]
@@ -185,6 +192,7 @@ def _job_constituents_refresh() -> None:
         status["lastConstituentsIndustriesTotal"] = 90
         status["lastRunAt"] = status["lastConstituentsAt"]
         status["lastRunOk"] = True
+        status["lastMessage"] = f"成分股刷新: {ok_count}/90行业 (耗时{elapsed}ms)"
         _save_job_status(status)
         logger.info("market_pulse constituents refresh ok: %d/90 in %dms", ok_count, elapsed)
     except Exception as exc:

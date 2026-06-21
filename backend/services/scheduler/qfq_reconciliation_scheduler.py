@@ -27,7 +27,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from backend.services.scheduler.backfill_validator import validate_count
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 
@@ -68,12 +70,12 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    cfg = load_config("qfq_reconciliation_refresh")
+    cfg = load_status("qfq_reconciliation_refresh")
     return cfg if cfg else _job_default_status()
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("qfq_reconciliation_refresh", status)
+    save_status("qfq_reconciliation_refresh", status)
 
 
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
@@ -98,6 +100,7 @@ def job_run_backfill() -> dict:
     status = _load_job_status()
     t0 = time.time()
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     status["lastRunAt"] = start_at_iso
     status["lastTargetTradeDate"] = target_date.isoformat()
 
@@ -109,26 +112,28 @@ def job_run_backfill() -> dict:
         msg = "script not found: {}".format(script)
         logger.error("qfq_reconciliation: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
         record_run(_JOB_ID, status="failed", duration_seconds=status.get("lastDurationSeconds"),
                    start_at=start_at_iso, end_at=datetime.now().isoformat(timespec="seconds"),
-                   error=status.get("lastRunError"))
+                   error=status.get("lastRunError"),
+                   message=status.get("lastMessage"))
         return {"ok": False, "error": msg}
 
     try:
         script_env = {**os.environ, "MINIMAX_TARGET_TRADE_DATE": target_date.isoformat()}
         r = subprocess.run(
-            [sys.executable, "-u", str(script), "--adjust=both", "--workers=32"],
+            [sys.executable, "-u", str(script), "--adjust=both", "--workers=32",
+             "--date={}".format(target_date.isoformat())],
             cwd=str(_repo_root()), check=False, capture_output=True, text=True,
             env=script_env, timeout=_JOB_TIMEOUT_SECONDS,
         )
         elapsed = time.time() - t0
         status["lastDurationSeconds"] = round(elapsed, 1)
 
-        stdout = r.stdout or ""
+        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         for key in ["qfq_rows", "hfq_rows", "errors"]:
             m = re.search(r"{}[=:]\s*(\d+)".format(key), stdout)
             if m:
@@ -136,21 +141,23 @@ def job_run_backfill() -> dict:
 
         if r.returncode == 0:
             # DuckDB 数据校验: daily_qfq + daily_hfq 两表都有数据
-            _valid_q, _err_q = validate_count("daily_qfq", target_date, min_rows=100)
-            _valid_h, _err_h = validate_count("daily_hfq", target_date, min_rows=100)
+            _valid_q, _err_q = validate_count("daily_qfq", target_date, min_rows=1000)
+            _valid_h, _err_h = validate_count("daily_hfq", target_date, min_rows=1000)
             if not _valid_q:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] daily_qfq: " + str(_err_q)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] daily_qfq: " + str(_err_q)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("qfq_reconciliation validation failed in %.1fs: %s", elapsed, _err_q)
             elif not _valid_h:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] daily_hfq: " + str(_err_h)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] daily_hfq: " + str(_err_h)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("qfq_reconciliation hfq validation failed in %.1fs: %s", elapsed, _err_h)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+
+                status["lastMessage"] = f"{cst_time}  ok, qfq={status.get('last_qfq_rows','?')} hfq={status.get('last_hfq_rows','?')} rows"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info("qfq_reconciliation ok in %.1fs: qfq=%s hfq=%s err=%s",
                             elapsed, status.get("last_qfq_rows"), status.get("last_hfq_rows"),
@@ -158,18 +165,18 @@ def job_run_backfill() -> dict:
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or "exit={}".format(r.returncode)
+            status["lastRunError"] = f"{cst_time} " + str(err_tail or "exit={}".format(r.returncode))
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning("qfq_reconciliation failed in %.1fs: exit=%d\n%s", elapsed, r.returncode, err_tail)
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = "timeout (>{}s)".format(_JOB_TIMEOUT_SECONDS)
+        status["lastRunError"] = f"{cst_time} " + "timeout (>{}s)".format(_JOB_TIMEOUT_SECONDS)
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("qfq_reconciliation timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = "{}: {}".format(type(exc).__name__, exc)[:300]
+        status["lastRunError"] = f"{cst_time} " + "{}: {}".format(type(exc).__name__, exc)[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("qfq_reconciliation crashed: %s\n%s", exc, traceback.format_exc())
@@ -178,7 +185,8 @@ def job_run_backfill() -> dict:
     record_run(_JOB_ID, status="success" if status.get("lastRunOk") else "failed",
                duration_seconds=status.get("lastDurationSeconds"),
                start_at=start_at_iso, end_at=datetime.now().isoformat(timespec="seconds"),
-               error=status.get("lastRunError"))
+               error=status.get("lastRunError"),
+               message=status.get("lastMessage"))
     return {"ok": bool(status.get("lastRunOk"))}
 
 
@@ -203,8 +211,8 @@ def start_qfq_reconciliation_scheduler() -> None:
         sched.start()
         _scheduler = sched
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(_JOB_ID, "qfq_reconciliation_refresh (16:50, qfq/hfq 对账补拉)", None)
+        _save_job_status(status)
         logger.info("qfq_reconciliation_scheduler started: cron=%s", QFQ_RECON_CRON)
     status = _load_job_status()
     status["running"] = True

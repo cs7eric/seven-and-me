@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from backend.config.settings import BASE_DIR
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ DEFAULT_JOB_CONFIG: dict[str, Any] = {
 
 
 def _load_job_config() -> dict[str, Any]:
-    cfg = load_config("stock_universe_refresh")
+    cfg = load_status("stock_universe_refresh")
     if not cfg:
         cfg = dict(DEFAULT_JOB_CONFIG)
     for key, value in DEFAULT_JOB_CONFIG.items():
@@ -90,7 +91,7 @@ def _load_job_config() -> dict[str, Any]:
 
 
 def _save_job_config(cfg: dict[str, Any]) -> None:
-    save_config("stock_universe_refresh", cfg)
+    save_status("stock_universe_refresh", cfg)
 
 
 def _register_job() -> None:

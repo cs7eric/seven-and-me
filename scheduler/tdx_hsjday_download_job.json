@@ -97,6 +97,30 @@
       "status": "success",
       "error": null,
       "duration_seconds": 13.8
+    },
+    {
+      "start_at": "2026-06-21T03:25:42",
+      "end_at": "2026-06-21T03:25:43",
+      "trigger_type": "manual",
+      "status": "skipped",
+      "error": null,
+      "duration_seconds": 0.6
+    },
+    {
+      "start_at": "2026-06-21T12:43:03",
+      "end_at": "2026-06-21T12:43:04",
+      "trigger_type": "manual",
+      "status": "skipped",
+      "error": null,
+      "duration_seconds": 0.6
+    },
+    {
+      "start_at": "2026-06-21T12:48:23",
+      "end_at": "2026-06-21T12:48:24",
+      "trigger_type": "manual",
+      "status": "skipped",
+      "error": "已有最新数据 (最新=20260618)",
+      "duration_seconds": 0.6
     }
   ]
 }

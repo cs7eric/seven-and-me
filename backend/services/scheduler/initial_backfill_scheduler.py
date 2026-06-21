@@ -29,7 +29,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from backend.services.scheduler.backfill_validator import validate_count
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 
@@ -70,12 +72,12 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    cfg = load_config("initial_backfill_refresh")
+    cfg = load_status("initial_backfill_refresh")
     return cfg if cfg else _job_default_status()
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("initial_backfill_refresh", status)
+    save_status("initial_backfill_refresh", status)
 
 
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
@@ -100,6 +102,7 @@ def job_run_backfill() -> dict:
     status = _load_job_status()
     t0 = time.time()
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     status["lastRunAt"] = start_at_iso
     status["lastTargetTradeDate"] = target_date.isoformat()
 
@@ -111,57 +114,60 @@ def job_run_backfill() -> dict:
         msg = "script not found: {}".format(script)
         logger.error("initial_backfill: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
         record_run(_JOB_ID, status="failed", duration_seconds=status.get("lastDurationSeconds"),
                    start_at=start_at_iso, end_at=datetime.now().isoformat(timespec="seconds"),
-                   error=status.get("lastRunError"))
+                   error=status.get("lastRunError"),
+                   message=status.get("lastMessage"))
         return {"ok": False, "error": msg}
 
     try:
         script_env = {**os.environ, "MINIMAX_TARGET_TRADE_DATE": target_date.isoformat()}
         r = subprocess.run(
-            [sys.executable, "-u", str(script)],
+            [sys.executable, "-u", str(script), "--no-resume"],
             cwd=str(_repo_root()), check=False, capture_output=True, text=True,
             env=script_env, timeout=_JOB_TIMEOUT_SECONDS,
         )
         elapsed = time.time() - t0
         status["lastDurationSeconds"] = round(elapsed, 1)
 
-        stdout = r.stdout or ""
+        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         m = re.search(r"parsed\s+(\d+)\s+files", stdout)
         if m:
             status["lastFilesParsed"] = int(m.group(1))
 
         if r.returncode == 0:
-            valid, err_msg = validate_count("daily_raw", target_date, min_rows=100)
+            valid, err_msg = validate_count("daily_raw", target_date, min_rows=1000)
             if not valid:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] " + str(err_msg)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(err_msg)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("initial_backfill validation failed in %.1fs: %s", elapsed, err_msg)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+
+                status["lastMessage"] = f"{cst_time}  ok, parsed {status.get('lastFilesParsed', '?')} files → daily_raw"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info("initial_backfill ok in %.1fs: files=%s", elapsed, status.get("lastFilesParsed"))
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or "exit={}".format(r.returncode)
+            status["lastRunError"] = f"{cst_time} " + str(err_tail or "exit={}".format(r.returncode))
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning("initial_backfill failed in %.1fs: exit=%d\n%s", elapsed, r.returncode, err_tail)
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = "timeout (>{}s)".format(_JOB_TIMEOUT_SECONDS)
+        status["lastRunError"] = f"{cst_time} " + "timeout (>{}s)".format(_JOB_TIMEOUT_SECONDS)
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("initial_backfill timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = "{}: {}".format(type(exc).__name__, exc)[:300]
+        status["lastRunError"] = f"{cst_time} " + "{}: {}".format(type(exc).__name__, exc)[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("initial_backfill crashed: %s\n%s", exc, traceback.format_exc())
@@ -170,7 +176,8 @@ def job_run_backfill() -> dict:
     record_run(_JOB_ID, status="success" if status.get("lastRunOk") else "failed",
                duration_seconds=status.get("lastDurationSeconds"),
                start_at=start_at_iso, end_at=datetime.now().isoformat(timespec="seconds"),
-               error=status.get("lastRunError"))
+               error=status.get("lastRunError"),
+               message=status.get("lastMessage"))
     return {"ok": bool(status.get("lastRunOk"))}
 
 
@@ -195,8 +202,8 @@ def start_initial_backfill_scheduler() -> None:
         sched.start()
         _scheduler = sched
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(_JOB_ID, "initial_backfill_refresh (16:45, TDX -> duckdb daily_raw)", None)
+        _save_job_status(status)
         logger.info("initial_backfill_scheduler started: cron=%s", INITIAL_BACKFILL_CRON)
     status = _load_job_status()
     status["running"] = True

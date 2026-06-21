@@ -33,7 +33,9 @@ from apscheduler.triggers.cron import CronTrigger
 
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 
 logger = logging.getLogger(__name__)
@@ -118,14 +120,14 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    status = load_config("tdx_hsjday_download")
+    status = load_status("tdx_hsjday_download")
     if status:
         return status
     return _job_default_status()
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("tdx_hsjday_download", status)
+    save_status("tdx_hsjday_download", status)
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +167,7 @@ def _job_run_download() -> None:
     t0 = time.time()
     status["lastRunAt"] = now.isoformat(timespec="seconds")
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     status["lastRunDate"] = target_date.isoformat()
     if target_date != today:
         status["lastTargetTradeDate"] = target_date.isoformat()
@@ -184,7 +187,7 @@ def _job_run_download() -> None:
         msg = f"script not found: {script}"
         logger.error("tdx_hsjday_download: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
@@ -195,6 +198,7 @@ def _job_run_download() -> None:
             start_at=start_at_iso,
             end_at=datetime.now().isoformat(timespec="seconds"),
             error=status.get("lastRunError"),
+            message=status.get("lastMessage"),
         )
         return
 
@@ -290,13 +294,13 @@ def _job_run_download() -> None:
             # (非交易日 或 已有最新数据)
             skip_reason = ""
             if td_data and not td_data.get("ok"):
-                skip_reason = f"非交易日 (目标={status.get('lastRunDate')}, K线最新={td_data.get('latestDataDate') or '?'})"
+                skip_reason = f"{cst_time} 非交易日 (目标={status.get('lastRunDate')}, K线最新={td_data.get('latestDataDate') or '?'})"
             elif existing_data and existing_data.get("alreadyHaveData"):
-                skip_reason = f"已有最新数据 (最新={existing_data.get('latestDate')})"
+                skip_reason = f"{cst_time} 已有最新数据 (最新={existing_data.get('latestDate')})"
             else:
-                skip_reason = "跳过 (无下载/验证输出)"
+                skip_reason = f"{cst_time} 跳过 (无下载/验证输出)"
             status["lastRunOk"] = True
-            status["lastRunError"] = None
+            status["lastRunError"] = f"{cst_time} " + str(skip_reason)
             status["lastSkipped"] = True
             status["lastSkipReason"] = skip_reason
             status["lastStatus"] = "skipped_non_trading_day" if (td_data and not td_data.get("ok")) else "skipped"
@@ -307,6 +311,13 @@ def _job_run_download() -> None:
         elif r.returncode == 0 and verify_ok:
             status["lastRunOk"] = True
             status["lastRunError"] = None
+
+            status["lastMessage"] = (
+                f"下载成功: {status.get('lastDayFileCount','?')}文件 "
+                f"{_fmt_status_bytes(status.get('lastZipBytes'))}, "
+                f"验证{status.get('lastVerifySampleOk','?')}/{status.get('lastVerifySampleTotal','?')}通过"
+                f" (target={target_date.isoformat()})"
+            )
             status["lastSkipped"] = False
             status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
             logger.info(
@@ -320,7 +331,7 @@ def _job_run_download() -> None:
             # 下载失败
             dl_err = status.get("lastDownloadError") or _grep_last_error(stdout) or (stderr or stdout)[-400:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = f"[下载失败] {dl_err[:500]}"
+            status["lastRunError"] = f"{cst_time} " + f"[下载失败] {dl_err[:500]}"
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "tdx_hsjday_download download failed in %.1fs: file=%s error=%s",
@@ -334,7 +345,7 @@ def _job_run_download() -> None:
             else:
                 err_detail = _grep_verify_fail(stdout) or "最新交易日数据缺失"
             status["lastRunOk"] = False
-            status["lastRunError"] = f"[验证失败] {err_detail}"
+            status["lastRunError"] = f"{cst_time} " + f"[验证失败] {err_detail}"
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "tdx_hsjday_download verify failed in %.1fs: exit=3 file=%s (%s) errors=%s",
@@ -348,7 +359,7 @@ def _job_run_download() -> None:
             extract_err = (extract_data or {}).get("error") if extract_data else None
             err_msg = extract_err or _grep_last_error(stdout) or (stderr or stdout)[-400:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = f"[解压失败] {err_msg[:500]}"
+            status["lastRunError"] = f"{cst_time} " + f"[解压失败] {err_msg[:500]}"
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "tdx_hsjday_download extract failed in %.1fs: exit=4 file=%s error=%s",
@@ -359,7 +370,7 @@ def _job_run_download() -> None:
             rename_err = (rename_data or {}).get("error") if rename_data else None
             err_msg = rename_err or _grep_last_error(stdout) or f"exit=5"
             status["lastRunOk"] = False
-            status["lastRunError"] = f"[替换失败] {err_msg[:500]}"
+            status["lastRunError"] = f"{cst_time} " + f"[替换失败] {err_msg[:500]}"
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "tdx_hsjday_download rename failed in %.1fs: exit=5 file=%s error=%s",
@@ -382,7 +393,7 @@ def _job_run_download() -> None:
             else:
                 phase = "[运行失败]"
             status["lastRunOk"] = False
-            status["lastRunError"] = f"{phase} {err_msg[:500]}"
+            status["lastRunError"] = f"{cst_time} " + f"{phase} {err_msg[:500]}"
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "tdx_hsjday_download failed in %.1fs: exit=%d file=%s error=%s",
@@ -392,13 +403,13 @@ def _job_run_download() -> None:
             )
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
+        status["lastRunError"] = f"{cst_time} " + f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("tdx_hsjday_download timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"{type(exc).__name__}: {exc}"[:300]
+        status["lastRunError"] = f"{cst_time} " + f"{type(exc).__name__}: {exc}"[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning(
@@ -420,6 +431,7 @@ def _job_run_download() -> None:
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
         error=status.get("lastRunError"),
+        message=status.get("lastMessage"),
     )
 
 
@@ -503,11 +515,11 @@ def start_tdx_hsjday_download_scheduler() -> None:
         _scheduler = sched
 
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(
             _JOB_ID,
             "tdx_hsjday_download (16:30 工作日, 下 hsjday.zip + 覆盖 reference/tdx/day/hsjday)",
-        )
+            )
+        _save_job_status(status)
         logger.info(
             "tdx_hsjday_download_scheduler started: cron=%s (workday only via is_trading_day)",
             DOWNLOAD_CRON,

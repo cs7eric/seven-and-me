@@ -51,6 +51,26 @@ def validate_scalar(table: str, column: str, target_date: date | str) -> tuple[b
     return True, None
 
 
+def fetch_scalar_value(table: str, column: str, target_date: date | str) -> float | None:
+    """读取 DuckDB 表在 target_date 的标量值, 返回 float 或 None.
+
+    用于 success message 中展示具体计算结果.
+    """
+    try:
+        from backend.adapters.market.duckdb_store import get_conn
+        with get_conn() as con:
+            row = con.execute(
+                f"SELECT {column} FROM {table} WHERE trade_date = ?",
+                [target_date],
+            ).fetchone()
+        if row and row[0] is not None:
+            return float(row[0])
+        return None
+    except Exception as exc:
+        logger.debug("fetch_scalar_value(%s.%s, %s) failed: %s", table, column, target_date, exc)
+        return None
+
+
 def validate_count(table: str, target_date: date | str, min_rows: int = 1) -> tuple[bool, str | None]:
     """校验 DuckDB 表的目标日期至少有 min_rows 行.
 

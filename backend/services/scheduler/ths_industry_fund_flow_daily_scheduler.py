@@ -38,7 +38,9 @@ from apscheduler.triggers.cron import CronTrigger
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +92,14 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    cfg = load_config("ths_industry_fund_flow_daily")
+    cfg = load_status("ths_industry_fund_flow_daily")
     if not cfg:
         return _job_default_status()
     return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("ths_industry_fund_flow_daily", status)
+    save_status("ths_industry_fund_flow_daily", status)
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +157,7 @@ def _job_run_backfill() -> None:
     t0 = time.time()
     status["lastRunAt"] = now.isoformat(timespec="seconds")
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     if target_date != today:
         status["lastTargetTradeDate"] = target_date.isoformat()
         logger.info(
@@ -183,6 +186,7 @@ def _job_run_backfill() -> None:
             start_at=start_at_iso,
             end_at=datetime.now().isoformat(timespec="seconds"),
             error=status.get("lastRunError"),
+            message=status.get("lastMessage"),
         )
         return
 
@@ -204,7 +208,7 @@ def _job_run_backfill() -> None:
         status["lastDurationSeconds"] = round(elapsed, 1)
         status["lastDaysRequested"] = 60
 
-        stdout = r.stdout or ""
+        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         # 抓 days / rows (格式: "days=7 rows=630" 出现在 "done." 行)
         m_days = re.search(r"days=(\d+)\s+rows=(\d+)", stdout)
         if m_days:
@@ -217,6 +221,11 @@ def _job_run_backfill() -> None:
         if r.returncode == 0:
             status["lastRunOk"] = True
             status["lastRunError"] = None
+
+            status["lastMessage"] = (
+                f"写入{status.get('lastDaysUpserted','?')}天 {status.get('lastRowsUpserted','?')}行 "
+                f"(90行业/d, target={target_date.isoformat()})"
+            )
             status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
             logger.info(
                 "ths_industry_fund_flow_daily ok in %.1fs: days=%s rows=%s",
@@ -256,6 +265,7 @@ def _job_run_backfill() -> None:
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
         error=status.get("lastRunError"),
+        message=status.get("lastMessage"),
     )
 
 
@@ -306,12 +316,12 @@ def start_ths_industry_fund_flow_daily_scheduler() -> None:
         _scheduler = sched
 
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(
             _JOB_ID,
             "ths_industry_fund_flow_daily (17:15 工作日, 同花顺 90 行业资金流 → duckdb)",
             None,
-        )
+            )
+        _save_job_status(status)
         logger.info(
             "ths_industry_fund_flow_daily_scheduler started: cron=%s (workday only via is_trading_day)",
             FF_DAILY_CRON,

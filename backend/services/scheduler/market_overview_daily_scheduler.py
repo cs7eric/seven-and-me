@@ -24,7 +24,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -40,15 +39,12 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE,
-)
-from backend.services.stock.trading_calendar import is_trading_day
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.utils.json_io import read_json_file
+from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
 
 logger = logging.getLogger(__name__)
 
@@ -83,79 +79,29 @@ def _default_script_path() -> str:
 # Job 状态
 # ---------------------------------------------------------------------------
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE.exists():
-        return {
-            "name": _JOB_ID,
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastDurationSeconds": None,
-            "lastDaysRequested": None,
-            "lastAkshareUpserted": None,
-            "lastEltdxUpserted": None,
-            "lastSectorDays": None,
-            "lastOverviewCoverage": None,
-            "lastSectorCoverage": None,
-            "totalRuns": 0,
-            "totalFailures": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("market_overview_daily job status read failed: %s", exc)
-        return {}
+    s = load_status("market_overview_daily")
+    return s if s else {
+        "name": "market_overview_daily",
+        "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastAkshareUpserted":None,"lastEltdxUpserted":None,"lastSectorDays":None,"lastOverviewCoverage":None,"lastSectorCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None,
+    }
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE)
+    save_status("market_overview_daily", status)
 
 
 # ---------------------------------------------------------------------------
 # Jobs.json 注册
 # ---------------------------------------------------------------------------
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": data}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
-            "工作日 17:10 触发, 调 scripts/backfill_market_overview_daily.py 扫本地 JSON archive, "
-            "把 (1) akshare 资金流 + spot_em 全 A 涨跌家数 "
-            "(2) eltdx 涨跌家数 / 成交额 "
-            "(3) akshare 90 行业 涨跌幅 / 流入流出 / 主力净流入 "
-            "全部 upsert 到 duckdb (market_overview_daily + market_pulse_sector_daily 表). "
-            "全部走 INSERT OR REPLACE / 字段级 UPSERT, 幂等. 周末 / 节假日由 is_trading_day 二次过滤. "
-            "预计耗时 < 30s (扫 60 天 archive)."
-        ),
-        "config_file": SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE.name,
-        "service_module": "backend.services.scheduler.market_overview_daily_scheduler",
-        "service_class": "MarketOverviewDailyScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        "module": "backend.services.scheduler.market_overview_daily_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+    register_job(
+        code="market_overview_daily", name=name,
+        description="工作日 17:10 触发, 扫本地 JSON archive, 把 akshare 资金流 + eltdx 大盘 + 90 行业全部 upsert 到 duckdb.",
+        service_module="backend.services.scheduler.market_overview_daily_scheduler",
+        service_class="MarketOverviewDailyScheduler",
+        config_file="market_overview_daily_job.json",
+        default_config={"name": "market_overview_daily", "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastAkshareUpserted":None,"lastEltdxUpserted":None,"lastSectorDays":None,"lastOverviewCoverage":None,"lastSectorCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -198,6 +144,7 @@ def _job_run_backfill() -> None:
     t0 = time.time()
     status["lastRunAt"] = now.isoformat(timespec="seconds")
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     if target_date != today:
         status["lastTargetTradeDate"] = target_date.isoformat()
         logger.info(
@@ -216,7 +163,7 @@ def _job_run_backfill() -> None:
         msg = f"script not found: {script}"
         logger.error("market_overview_daily: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
@@ -227,6 +174,7 @@ def _job_run_backfill() -> None:
             start_at=start_at_iso,
             end_at=datetime.now().isoformat(timespec="seconds"),
             error=status.get("lastRunError"),
+            message=status.get("lastMessage"),
         )
         return
 
@@ -249,7 +197,7 @@ def _job_run_backfill() -> None:
         status["lastDaysRequested"] = 60
 
         # 抓脚本 stdout 关键行
-        stdout = r.stdout or ""
+        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         status["lastAkshareUpserted"] = (
             _grep_int(stdout, "akshare archive 命中 ")
             or _parse_kv_count(stdout, "akshare_upserted")
@@ -268,12 +216,19 @@ def _job_run_backfill() -> None:
             _valid_ok, _valid_err = validate_scalar("market_overview_daily", "total_amount", target_date)
             if not _valid_ok:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] " + str(_valid_err)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(_valid_err)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("market_overview_daily validation failed in %.1fs: %s", elapsed, _valid_err)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+
+                status["lastMessage"] = (
+                    f"akshare={status.get('lastAkshareUpserted','?')}条 "
+                    f"eltdx={status.get('lastEltdxUpserted','?')}条 "
+                    f"sector={status.get('lastSectorDays','?')}天"
+                    f" (target={target_date.isoformat()})"
+                )
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
                 "market_overview_daily ok in %.1fs: akshare=%s eltdx=%s sector_days=%s",
@@ -285,7 +240,7 @@ def _job_run_backfill() -> None:
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or f"exit={r.returncode}"
+            status["lastRunError"] = f"{cst_time} " + str(err_tail or f"exit={r.returncode}")
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "market_overview_daily failed in %.1fs: exit=%d\n%s",
@@ -293,13 +248,13 @@ def _job_run_backfill() -> None:
             )
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
+        status["lastRunError"] = f"{cst_time} " + f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("market_overview_daily timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"{type(exc).__name__}: {exc}"[:300]
+        status["lastRunError"] = f"{cst_time} " + f"{type(exc).__name__}: {exc}"[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning(
@@ -315,6 +270,7 @@ def _job_run_backfill() -> None:
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
         error=status.get("lastRunError"),
+        message=status.get("lastMessage"),
     )
 
 
@@ -377,12 +333,12 @@ def start_market_overview_daily_scheduler() -> None:
         _scheduler = sched
 
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(
             _JOB_ID,
             "market_overview_daily (17:10 工作日, 大盘 / 行业 回填 duckdb)",
             None,
-        )
+            )
+        _save_job_status(status)
         logger.info(
             "market_overview_daily_scheduler started: cron=%s (workday only via is_trading_day)",
             OVERVIEW_DAILY_CRON,

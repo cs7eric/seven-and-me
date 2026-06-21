@@ -20,7 +20,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -36,15 +35,12 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE,
-)
-from backend.services.stock.trading_calendar import is_trading_day
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.utils.json_io import read_json_file
+from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
 
 logger = logging.getLogger(__name__)
 
@@ -78,75 +74,29 @@ def _default_script_path() -> str:
 # Job 状态
 # ---------------------------------------------------------------------------
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE.exists():
-        return {
-            "name": _JOB_ID,
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastDurationSeconds": None,
-            "lastDaysRequested": None,
-            "lastRowsUpserted": None,
-            "lastCoverage": None,
-            "totalRuns": 0,
-            "totalFailures": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("volatility_sentiment job status read failed: %s", exc)
-        return {}
+    s = load_status("volatility_sentiment_refresh")
+    return s if s else {
+        "name": "volatility_sentiment_refresh",
+        "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastRowsUpserted":None,"lastCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None,
+    }
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE)
+    save_status("volatility_sentiment_refresh", status)
 
 
 # ---------------------------------------------------------------------------
 # Jobs.json 注册
 # ---------------------------------------------------------------------------
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": data}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
-            "工作日 17:07 触发, 调 scripts/backfill_volatility_sentiment.py --days=2, "
-            "对 duckdb.index_daily_raw[sh000300] 算近 20 日日收益 std × √252 → vol, "
-            "近 252 日 vol 滚动分位 → 1 - percentile → 情绪得分 0-100, "
-            "落 duckdb.volatility_sentiment_daily (1 日 1 行). "
-            "数据不足自动调 fetch_index_history.py 补 300 天 K 线 (auto-pull 默认开). "
-            "INSERT OR REPLACE 幂等; 周末 / 节假日由 is_trading_day 二次过滤. 预计耗时 < 5s."
-        ),
-        "config_file": SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE.name,
-        "service_module": "backend.services.scheduler.volatility_sentiment_scheduler",
-        "service_class": "VolatilitySentimentScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        "module": "backend.services.scheduler.volatility_sentiment_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+    register_job(
+        code="volatility_sentiment_refresh", name=name,
+        description="MSI Factor 1: vol (波动率情绪, weight 15%%). Cron 17:07, 沪深300 20日波动率 -> 252日滚动分位 -> 反向情绪 0-100.",
+        service_module="backend.services.scheduler.volatility_sentiment_scheduler",
+        service_class="VolatilitySentimentScheduler",
+        config_file="volatility_sentiment_job.json",
+        default_config={"name": "volatility_sentiment_refresh", "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastRowsUpserted":None,"lastCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +115,7 @@ def _job_run_backfill() -> None:
     t0 = time.time()
     status["lastRunAt"] = now.isoformat(timespec="seconds")
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     if target_date != today:
         status["lastTargetTradeDate"] = target_date.isoformat()
         logger.info(
@@ -182,7 +133,7 @@ def _job_run_backfill() -> None:
         msg = f"script not found: {script}"
         logger.error("volatility_sentiment: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
@@ -193,6 +144,7 @@ def _job_run_backfill() -> None:
             start_at=start_at_iso,
             end_at=datetime.now().isoformat(timespec="seconds"),
             error=status.get("lastRunError"),
+            message=status.get("lastMessage"),
         )
         return
 
@@ -202,7 +154,7 @@ def _job_run_backfill() -> None:
             "MINIMAX_TARGET_TRADE_DATE": target_date.isoformat(),
         }
         r = subprocess.run(
-            [sys.executable, "-u", str(script), "--days=2"],
+            [sys.executable, "-u", str(script), "--days=2", "--force"],
             cwd=str(_repo_root()),
             check=False,
             capture_output=True,
@@ -214,7 +166,7 @@ def _job_run_backfill() -> None:
         status["lastDurationSeconds"] = round(elapsed, 1)
         status["lastDaysRequested"] = 2
 
-        stdout = r.stdout or ""
+        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         # 抓脚本 stdout: "完成: 写入 X 跳过 Y 失败 Z"
         m = re.search(r"完成:\s*写入\s*(\d+)\s*跳过\s*(\d+)", stdout)
         if m:
@@ -226,22 +178,30 @@ def _job_run_backfill() -> None:
             _valid_ok, _valid_err = validate_scalar("volatility_sentiment_daily", "sentiment_score", target_date)
             if not _valid_ok:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] " + str(_valid_err)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(_valid_err)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("volatility_sentiment validation failed in %.1fs: %s", elapsed, _valid_err)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+
+                sent_val = fetch_scalar_value("volatility_sentiment_daily", "sentiment_score", target_date)
+                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                parts = [f"sentiment_score={sent_val:.2f}"] if sent_val is not None else []
+                if up is not None:
+                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                parts.append(f"(target={target_date.isoformat()})")
+                status["lastMessage"] = " ".join(parts) if sent_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "volatility_sentiment ok in %.1fs: upserted=%s skipped=%s",
-                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"),
+                "volatility_sentiment ok in %.1fs: upserted=%s skipped=%s score=%s",
+                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), sent_val,
             )
             _refresh_coverage(status)
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or f"exit={r.returncode}"
+            status["lastRunError"] = f"{cst_time} " + str(err_tail or f"exit={r.returncode}")
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "volatility_sentiment failed in %.1fs: exit=%d\n%s",
@@ -249,13 +209,13 @@ def _job_run_backfill() -> None:
             )
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
+        status["lastRunError"] = f"{cst_time} " + f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("volatility_sentiment timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"{type(exc).__name__}: {exc}"[:300]
+        status["lastRunError"] = f"{cst_time} " + f"{type(exc).__name__}: {exc}"[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("volatility_sentiment crashed: %s\n%s", exc, traceback.format_exc())
@@ -269,6 +229,7 @@ def _job_run_backfill() -> None:
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
         error=status.get("lastRunError"),
+        message=status.get("lastMessage"),
     )
 
 
@@ -318,12 +279,12 @@ def start_volatility_sentiment_scheduler() -> None:
         _scheduler = sched
 
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(
             _JOB_ID,
             "volatility_sentiment_refresh (17:07 工作日, 波动率情绪回填 duckdb)",
             None,
-        )
+            )
+        _save_job_status(status)
         logger.info(
             "volatility_sentiment_scheduler started: cron=%s (workday only via is_trading_day)",
             VOLATILITY_SENTIMENT_CRON,

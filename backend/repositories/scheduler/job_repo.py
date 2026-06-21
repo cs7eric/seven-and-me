@@ -36,6 +36,7 @@ def _job_to_dict(
     job: SchedulerJob,
     *,
     category_ids: list[int] | None = None,
+    category_sort_orders: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     """把 ORM 行转成 ``/api/scheduler/jobs`` 返回的 item 形态.
 
@@ -57,6 +58,8 @@ def _job_to_dict(
     }
     if category_ids is not None:
         out["_category_ids"] = category_ids
+    if category_sort_orders is not None:
+        out["_category_sort_orders"] = category_sort_orders
     return out
 
 
@@ -159,25 +162,26 @@ class SchedulerJobRepository:
 
         cat_uuid_to_int = self._category_uuid_to_int_id()
 
-        # 一次拉所有 alive mapping
+        # 一次拉所有 alive mapping (含 sort_order)
         mappings = self.db.execute(
             select(
                 SchedulerJobCategoryMapping.job_id,
                 SchedulerJobCategoryMapping.category_id,
+                SchedulerJobCategoryMapping.sort_order,
             ).where(SchedulerJobCategoryMapping.deleted_at.is_(None))
         ).all()
-        job_to_cat_uuids: dict[UUID, list[UUID]] = {}
-        for job_id, cat_uuid in mappings:
-            job_to_cat_uuids.setdefault(job_id, []).append(cat_uuid)
+        job_to_cat_info: dict[UUID, dict[int, int]] = {}  # job_id -> {cat_int_id: sort_order}
+        for job_id, cat_uuid, sort_order in mappings:
+            cat_int = cat_uuid_to_int.get(cat_uuid)
+            if cat_int is None:
+                continue
+            job_to_cat_info.setdefault(job_id, {})[cat_int] = sort_order or 0
 
         out: list[dict[str, Any]] = []
         for j in jobs:
-            cat_int_ids = sorted(
-                cat_uuid_to_int[cu]
-                for cu in job_to_cat_uuids.get(j.id, [])
-                if cu in cat_uuid_to_int
-            )
-            out.append(_job_to_dict(j, category_ids=cat_int_ids))
+            cat_info = job_to_cat_info.get(j.id, {})
+            cat_int_ids = sorted(cat_info.keys())
+            out.append(_job_to_dict(j, category_ids=cat_int_ids, category_sort_orders=cat_info))
         return out
 
     def get_job_by_code(self, code: str) -> dict[str, Any] | None:

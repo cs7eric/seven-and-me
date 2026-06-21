@@ -9,6 +9,7 @@ Usage:
   python scripts/fetch_one_date_eltdx.py [--date=2026-06-17] [--adjust=both]
 """
 import argparse
+import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -89,7 +90,11 @@ def _bulk_insert(target: str, df: pd.DataFrame) -> int:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", default="2026-06-17", help="目标日 (默认 6/17)")
+    ap.add_argument(
+        "--date",
+        default=os.environ.get("MINIMAX_TARGET_TRADE_DATE", ""),
+        help="目标日 (默认取环境变量 MINIMAX_TARGET_TRADE_DATE, 如 2026-06-19)",
+    )
     ap.add_argument("--adjust", choices=["qfq", "hfq", "both"], default="both")
     ap.add_argument("--workers", type=int, default=32)
     args = ap.parse_args()

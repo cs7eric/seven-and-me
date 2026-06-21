@@ -27,7 +27,8 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.stock.market_overview_akshare_service import (
     capture_snapshot,
     get_latest_snapshot,
@@ -78,14 +79,14 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    cfg = load_config("market_overview_inside")
+    cfg = load_status("market_overview_inside")
     if not cfg:
         return _job_default_status()
     return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("market_overview_inside", status)
+    save_status("market_overview_inside", status)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,12 @@ def _job_inside_refresh() -> None:
         if snap:
             status["lastRunOk"] = True
             status["lastRunError"] = None
+
+            status["lastMessage"] = (
+                f"成交额={snap.get('totalAmount','?')}亿, "
+                f"主力净流入={snap.get('mainNetInflow','?')}亿"
+                f" (tradingDate={snap.get('tradingDate','?')})"
+            )
             status["totalInside"] = int(status.get("totalInside") or 0) + 1
             status["lastInside"] = {
                 "tradingDate": snap.get("tradingDate"),
@@ -176,6 +183,12 @@ def _job_close_snapshot() -> None:
         if snap:
             status["lastRunOk"] = True
             status["lastRunError"] = None
+
+            status["lastMessage"] = (
+                f"[收盘] 成交额={snap.get('totalAmount','?')}亿, "
+                f"主力净流入={snap.get('mainNetInflow','?')}亿"
+                f" (tradingDate={snap.get('tradingDate','?')})"
+            )
             status["totalClose"] = int(status.get("totalClose") or 0) + 1
             status["lastClose"] = {
                 "tradingDate": snap.get("tradingDate"),
@@ -214,6 +227,11 @@ def _job_warmup() -> None:
         if snap:
             status["lastRunOk"] = True
             status["lastRunError"] = None
+
+            status["lastMessage"] = (
+                f"[warmup] 成交额={snap.get('totalAmount','?')}亿"
+                f" (tradingDate={snap.get('tradingDate','?')})"
+            )
             status["totalWarmup"] = int(status.get("totalWarmup") or 0) + 1
         else:
             status["lastRunOk"] = False

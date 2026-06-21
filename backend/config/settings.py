@@ -95,18 +95,9 @@ THS_INDUSTRY_CONSTITUENTS_DIR = THS_INDUSTRY_DIR / 'constituents'
 THS_INDUSTRY_CONSTITUENTS_INDEX_FILE = THS_INDUSTRY_DIR / 'constituents_index.json'
 
 # ---- scheduler 维护目录（F:\dev-repo\mp4-to-word-new\scheduler） ----
+# 注: 所有 scheduler 运行时状态已切到 app.scheduler_job_statuses (DB),
+#     JSON 文件不再使用. SCHEDULER_DIR 仅留用于 mkdir 兼容.
 SCHEDULER_DIR = BASE_DIR / 'scheduler'
-# 注: 各 job 的 config 现在存 Postgres app.scheduler_jobs.extra，
-#     不再用 *job.json 文件。SCHEDULER_DIR 仅留用于 mkdir 兼容。
-# 但 scheduler 模块仍引用这些常量 (legacy JSON read/write), 保留定义。
-SCHEDULER_JOBS_FILE = SCHEDULER_DIR / 'jobs.json'
-SCHEDULER_MA_COUNT_JOB_FILE = SCHEDULER_DIR / 'ma_count_job.json'
-SCHEDULER_MARKET_OVERVIEW_DAILY_JOB_FILE = SCHEDULER_DIR / 'market_overview_daily_job.json'
-SCHEDULER_MARKET_SENTIMENT_INDEX_JOB_FILE = SCHEDULER_DIR / 'market_sentiment_index_job.json'
-SCHEDULER_PROFIT_EFFECT_JOB_FILE = SCHEDULER_DIR / 'profit_effect_job.json'
-SCHEDULER_RISK_APPETITE_JOB_FILE = SCHEDULER_DIR / 'risk_appetite_job.json'
-SCHEDULER_STYLE_RISK_APPETITE_JOB_FILE = SCHEDULER_DIR / 'style_risk_appetite_job.json'
-SCHEDULER_VOLATILITY_SENTIMENT_JOB_FILE = SCHEDULER_DIR / 'volatility_sentiment_job.json'
 
 # ---- 大盘资金 / 成交额 落地 (按天归档) ----
 MARKET_OVERVIEW_FOLDER = REFERENCE_FOLDER / 'market-overview'

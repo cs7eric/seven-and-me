@@ -15,7 +15,6 @@ Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -31,14 +30,12 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.config.settings import (
-    SCHEDULER_DIR,
-    SCHEDULER_JOBS_FILE,
-    SCHEDULER_PROFIT_EFFECT_JOB_FILE,
-)
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.utils.json_io import read_json_file
+from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
 
 logger = logging.getLogger(__name__)
 
@@ -71,71 +68,29 @@ def _default_script_path() -> str:
 # Job 状态
 # ---------------------------------------------------------------------------
 def _load_job_status() -> dict[str, Any]:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if not SCHEDULER_PROFIT_EFFECT_JOB_FILE.exists():
-        return {
-            "name": _JOB_ID,
-            "lastRunAt": None,
-            "lastRunOk": None,
-            "lastRunError": None,
-            "lastDurationSeconds": None,
-            "lastDaysRequested": None,
-            "lastCoverage": None,
-            "totalRuns": 0,
-            "totalFailures": 0,
-            "schedulerStartedAt": None,
-        }
-    try:
-        return json.loads(SCHEDULER_PROFIT_EFFECT_JOB_FILE.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("profit_effect job status read failed: %s", exc)
-        return {}
+    s = load_status("profit_effect_refresh")
+    return s if s else {
+        "name": "profit_effect_refresh",
+        "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None,
+    }
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SCHEDULER_PROFIT_EFFECT_JOB_FILE.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=2)
-    tmp.replace(SCHEDULER_PROFIT_EFFECT_JOB_FILE)
+    save_status("profit_effect_refresh", status)
 
 
 # ---------------------------------------------------------------------------
 # Jobs.json 注册
 # ---------------------------------------------------------------------------
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
-    SCHEDULER_DIR.mkdir(parents=True, exist_ok=True)
-    if SCHEDULER_JOBS_FILE.exists():
-        data = read_json_file(SCHEDULER_JOBS_FILE, {"version": 1, "jobs": []})
-    else:
-        data = {"version": 1, "jobs": []}
-    if isinstance(data, list):
-        data = {"version": 1, "jobs": []}
-    if not isinstance(data, dict):
-        data = {"version": 1, "jobs": []}
-    jobs = data.setdefault("jobs", [])
-    jobs = [j for j in jobs if j.get("id") != job_id]
-    now_iso = _beijing_now().isoformat(timespec="seconds")
-    payload = {
-        "id": job_id,
-        "name": name,
-        "description": (
-            "工作日 17:09 触发, 调 scripts/backfill_profit_effect.py --days=2 --force, "
-            "对 ma_count_daily 算近 5 日上涨占比 + 60 日新低反向合成, "
-            "落 duckdb.profit_effect_daily. 依赖 ma_count 17:06 必须先落 ma_count_daily."
-        ),
-        "config_file": SCHEDULER_PROFIT_EFFECT_JOB_FILE.name,
-        "service_module": "backend.services.scheduler.profit_effect_scheduler",
-        "service_class": "ProfitEffectScheduler",
-        "enabled": True,
-        "registered_at": now_iso,
-        "module": "backend.services.scheduler.profit_effect_scheduler",
-        "nextRunTime": next_run_time,
-        "updatedAt": now_iso,
-    }
-    jobs.append(payload)
-    from backend.utils.json_io import write_json_file
-    write_json_file(SCHEDULER_JOBS_FILE, data)
+    register_job(
+        code="profit_effect_refresh", name=name,
+        description="MSI Factor 7: profit_effect (赚钱效应, weight 10%%). Cron 17:09, 近5日上涨占比+60日新低反向 -> 3年分位.",
+        service_module="backend.services.scheduler.profit_effect_scheduler",
+        service_class="ProfitEffectScheduler",
+        config_file="profit_effect_job.json",
+        default_config={"name": "profit_effect_refresh", "lastRunAt":None,"lastRunOk":None,"lastRunError":None,"lastDurationSeconds":None,"lastDaysRequested":None,"lastCoverage":None,"totalRuns":0,"totalFailures":0,"schedulerStartedAt":None},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +105,7 @@ def job_run_backfill() -> dict:
     status = _load_job_status()
     t0 = time.time()
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
     status["lastRunAt"] = start_at_iso
     status["lastTargetTradeDate"] = target_date.isoformat()
 
@@ -161,7 +117,7 @@ def job_run_backfill() -> dict:
         msg = f"script not found: {script}"
         logger.error("profit_effect: %s", msg)
         status["lastRunOk"] = False
-        status["lastRunError"] = msg
+        status["lastRunError"] = f"{cst_time} {msg}"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
@@ -172,6 +128,7 @@ def job_run_backfill() -> dict:
             start_at=start_at_iso,
             end_at=datetime.now().isoformat(timespec="seconds"),
             error=status.get("lastRunError"),
+            message=status.get("lastMessage"),
         )
         return {"ok": False, "error": msg}
 
@@ -193,7 +150,7 @@ def job_run_backfill() -> dict:
         status["lastDurationSeconds"] = round(elapsed, 1)
         status["lastDaysRequested"] = 2
 
-        stdout = r.stdout or ""
+        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         m = re.search(r"完成:\s*写入\s*(\d+)\s*跳过\s*(\d+)", stdout)
         if m:
             status["lastRowsUpserted"] = int(m.group(1))
@@ -207,21 +164,29 @@ def job_run_backfill() -> dict:
             _valid_ok, _valid_err = validate_scalar("profit_effect_daily", "score", target_date)
             if not _valid_ok:
                 status["lastRunOk"] = False
-                status["lastRunError"] = "[校验失败] " + str(_valid_err)
+                status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(_valid_err)
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("profit_effect validation failed in %.1fs: %s", elapsed, _valid_err)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+
+                score_val = fetch_scalar_value("profit_effect_daily", "score", target_date)
+                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                parts = [f"score={score_val:.2f}"] if score_val is not None else []
+                if up is not None:
+                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                parts.append(f"(target={target_date.isoformat()})")
+                status["lastMessage"] = " ".join(parts) if score_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "profit_effect ok in %.1fs: upserted=%s skipped=%s",
-                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"),
+                "profit_effect ok in %.1fs: upserted=%s skipped=%s score=%s",
+                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), score_val,
             )
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
-            status["lastRunError"] = err_tail or f"exit={r.returncode}"
+            status["lastRunError"] = f"{cst_time} " + str(err_tail or f"exit={r.returncode}")
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "profit_effect failed in %.1fs: exit=%d\n%s",
@@ -229,13 +194,13 @@ def job_run_backfill() -> dict:
             )
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
+        status["lastRunError"] = f"{cst_time} " + f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("profit_effect timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
-        status["lastRunError"] = f"{type(exc).__name__}: {exc}"[:300]
+        status["lastRunError"] = f"{cst_time} " + f"{type(exc).__name__}: {exc}"[:300]
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("profit_effect crashed: %s\n%s", exc, traceback.format_exc())
@@ -248,6 +213,7 @@ def job_run_backfill() -> dict:
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
         error=status.get("lastRunError"),
+        message=status.get("lastMessage"),
     )
     return {"ok": bool(status.get("lastRunOk"))}
 
@@ -286,12 +252,12 @@ def start_profit_effect_scheduler() -> None:
         _scheduler = sched
 
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _save_job_status(status)
         _register_job(
             _JOB_ID,
             "profit_effect_refresh (17:09 工作日, 赚钱效应合成得分回填 duckdb)",
             None,
-        )
+            )
+        _save_job_status(status)
         logger.info(
             "profit_effect_scheduler started: cron=%s (workday only via is_trading_day)",
             PROFIT_EFFECT_CRON,

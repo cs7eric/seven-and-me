@@ -1,16 +1,15 @@
-"""每日 EOD 增量入 duckdb 调度器.
+"""每日 EOD 增量入 duckdb 调度器 (已废弃).
 
 单 job:
-  - 工作日 17:00 触发 (cron ``0 17 * * mon-fri``, 同时 ``is_trading_day`` 二次过滤节假日)
-  - 调 ``scripts/daily_eod_incremental.py`` 跑两步:
-    1. 查 duckdb daily_raw.max(trade_date) vs today, 缺则跑 ``initial_backfill.py``
-    2. 调 ``backfill_limit_emotion_summary.py`` 回算 limit_emotion_summary_daily
+  - 工作日 17:00 触发 (cron ``0 17 * * mon-fri``)
+  - 调 ``scripts/daily_eod_incremental.py`` (所有步骤已拆分到独立 job, 脚本已空)
+
+所有子步骤已拆分为独立 scheduler:
+  - initial_backfill (16:45), qfq_reconciliation (16:50), limit_emotion (17:03),
+    market_overview_daily (17:10), turnover_activity (17:12)
 
 启动: :mod:`backend.bootstrap` 调 :func:`start_daily_eod_incremental_scheduler`.
 关闭: ``MINIMAX_DAILY_EOD_INCREMENTAL_SCHEDULER_ENABLED=0``.
-
-状态文件: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\daily_eod_incremental_job.json``
-Jobs 注册表: ``F:\\dev-repo\\mp4-to-word-new\\scheduler\\jobs.json``
 """
 from __future__ import annotations
 
@@ -28,7 +27,8 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.config_store import load_config, save_config, register_job
+from backend.services.scheduler.config_store import register_job
+from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
@@ -73,14 +73,14 @@ def _job_default_status() -> dict[str, Any]:
 
 
 def _load_job_status() -> dict[str, Any]:
-    cfg = load_config("daily_eod_incremental")
+    cfg = load_status("daily_eod_incremental")
     if not cfg:
         return _job_default_status()
     return cfg
 
 
 def _save_job_status(status: dict[str, Any]) -> None:
-    save_config("daily_eod_incremental", status)
+    save_status("daily_eod_incremental", status)
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +91,10 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
         code="daily_eod_incremental",
         name=name,
         description=(
-            "工作日 17:00 触发, 调 scripts/daily_eod_incremental.py, "
-            "查 duckdb daily_raw.max(trade_date) vs today, 缺则跑 initial_backfill.py 补全, "
-            "然后回算 limit_emotion_summary_daily 涨跌停综合分; 周末 / 节假日由 is_trading_day 二次过滤"
+            "【已废弃】工作日 17:00 触发, 调 scripts/daily_eod_incremental.py, "
+            "所有子步骤已拆分到独立 job: initial_backfill(16:45), qfq_reconciliation(16:50), "
+            "limit_emotion(17:03), market_overview_daily(17:10), turnover_activity(17:12). "
+            "保留 cron 仅做兜底."
         ),
         service_module="backend.services.scheduler.daily_eod_incremental_scheduler",
         service_class="DailyEodIncrementalScheduler",
@@ -176,6 +177,8 @@ def _job_run_incremental() -> None:
         if r.returncode == 0:
             status["lastRunOk"] = True
             status["lastRunError"] = None
+
+            status["lastMessage"] = f"[{start_at_iso}]  ok"
             status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
             logger.info(
                 "daily_eod_incremental ok in %.1fs (stdout=%d lines)",
@@ -215,6 +218,7 @@ def _job_run_incremental() -> None:
         start_at=start_at_iso,
         end_at=datetime.now().isoformat(timespec="seconds"),
         error=status.get("lastRunError"),
+        message=status.get("lastMessage"),
     )
 
 
