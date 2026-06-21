@@ -12,8 +12,7 @@
  *   右内: 上证指数
  *   右外: 主力净流
  *
- * 成交额数据源: duckdb.market_overview_daily.total_amount (亿元) 为主
- *              duckdb.index_daily_raw.amount (元) 兜底
+ * 成交额数据源: duckdb.turnover_activity_daily.total_amount (亿元, 上层会转成元传入)
  * 主力净流数据源: duckdb.market_overview_daily.main_net_inflow (亿元)
  *
  * 主力净流:

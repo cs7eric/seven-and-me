@@ -92,7 +92,7 @@ percentile_score(table, column, target_date, current_value)
 
 ```
 1. total_amount = 当日全市场成交额（亿元）
-   来源: market_overview_daily.total_amount（sh000001 + sz399001 TDX day 文件回填）
+   来源: duckdb.daily_raw.amount 中 999999(上证指数) + 399001(深证成指) 的 amount 求和
 2. avg_20d_amount = 当日之前 20 个交易日成交额均值（不含 today）
 3. ratio = total_amount / avg_20d_amount
 4. score = percentile_score("turnover_activity_daily", "ratio", td, ratio)
@@ -100,8 +100,12 @@ percentile_score(table, column, target_date, current_value)
 ```
 
 **原始 ratio 用途**: `turnover_activity_daily.ratio` 本身存入表，前端用 `rawValue` 展示
+**当前实现**:
+- 回填时会把 `ratio` 和历史分位 `score` 一起写入 `turnover_activity_daily`
+- MSI composite 优先直接读 `turnover_activity_daily.score`
+- 若旧数据 `score` 为 `NULL`，再用 `ratio` 即时调用 `percentile_score(...)` 兜底
 **落盘守卫**: `is_trading_day`
-**回填**: `scripts/backfill_turnover_from_index.py`（用 sh000001 + sz399001 TDX amount 回填 2018-01-02 起）
+**回填**: `scripts/backfill_turnover_activity.py`（现实现支持批量覆盖写）；旧一次性脚本 `scripts/backfill_turnover_from_index.py` 仍保留
 
 ---
 
@@ -212,6 +216,10 @@ score = percentile_score("profit_effect_daily", "score", td, raw_score)
 ```
 
 **含义**: 近5日上涨面越宽 + 60日新低越少 → 赚钱效应越好
+**当前实现注意**:
+- `profit_effect_daily.score` 字段名虽然叫 `score`，但当前存的是上面的 `raw_score`
+- MSI composite / 子卡展示时，再对这个 `raw_score` 做 `(T-3y, T)` 历史分位
+- 因此这里是“落 raw，读时补 percentile”，不是“直接落最终分位分数”
 
 ---
 
@@ -252,6 +260,51 @@ score = percentile_score("style_risk_appetite_daily", "spread", td, spread)
 ```
 
 **窗口**: 5 个交易日
+**当前实现注意**:
+- 文档早期版本写过“来自 `index_returns_daily`”
+- 当前仓储实现实际直接读取 `duckdb.daily_qfq` 的 `000300 / 000852` 计算 5 日收益，再写入 `style_risk_appetite_daily.spread`
+- 因此 `index_returns_daily` 现在不是这个 factor 的直接计算源
+
+---
+
+## 3.10 各 Factor 落盘 / 分位实现对照表
+
+| Factor | MSI 最终取值 | 历史分位实现 | DuckDB 落盘表 / 列 | 回填脚本 | 备注 |
+|---|---|---|---|---|---|
+| `vol` | 直接读 `volatility_sentiment_daily.sentiment_score` | 仓储内自算 252 日滚动分位，再反向成情绪分 | `volatility_sentiment_daily.sentiment_score` | `scripts/backfill_volatility_sentiment.py` | 不走 `percentile_helper.py` |
+| `turnover` | 优先读 `turnover_activity_daily.score` | `percentile_score("turnover_activity_daily", "ratio", td, ratio)` | `turnover_activity_daily.ratio`, `score` | `scripts/backfill_turnover_activity.py` | 已切到 `daily_raw(999999+399001)` |
+| `price_strength` | 读 `ma_count_daily.new_high_252d_pct` 后现算 | `percentile_score("ma_count_daily", "new_high_252d_pct", ...)` | `ma_count_daily.new_high_252d_pct` | `scripts/backfill_ma_count_and_returns.py` | 表里存 raw pct |
+| `risk_appetite` | 读 `risk_appetite_daily.spread_weighted` 后现算 | `percentile_score("risk_appetite_daily", "spread_weighted", ...)` | `risk_appetite_daily.spread_weighted` | `scripts/backfill_risk_appetite.py` | 表里存 raw spread |
+| `breadth` | 读 `ma_count_daily.breadth_raw` 后现算 | `percentile_score("ma_count_daily", "breadth_raw", ...)` | `ma_count_daily.breadth_raw` | `scripts/backfill_ma_count_and_returns.py` | 表里存 raw 合成值 |
+| `limit_emotion` | 直接读 `limit_emotion_summary_daily.composite_score` | 子项先分位，再对 `composite_raw` 再做一层分位 | `limit_emotion_summary_daily.composite_score` | `scripts/backfill_limit_emotion_summary.py` | 表里已是最终情绪分 |
+| `profit_effect` | 读 `profit_effect_daily.score` 后现算 | `percentile_score("profit_effect_daily", "score", ...)` | `profit_effect_daily.score` | `scripts/backfill_profit_effect.py` | 字段名叫 `score`，实际存 raw |
+| `sector_breadth` | `advance_pct × 100` | 不做历史分位 | `market_pulse_sector_breadth_daily.advance_pct` | `scripts/backfill_sector_breadth.py` | 原值已在 0-100 同口径 |
+| `style_risk` | 读 `style_risk_appetite_daily.spread` 后现算 | `percentile_score("style_risk_appetite_daily", "spread", ...)` | `style_risk_appetite_daily.spread` | `scripts/backfill_style_risk_appetite.py` | 当前直接用 `daily_qfq` 计算 |
+
+### 3.11 当前实现模式: 实时算 vs 落盘读
+
+当前 MSI 不是“纯实时算”，也不是“纯离线只读”，而是 **cache-aside 混合模式**:
+
+1. 各子因子 scheduler / backfill 先把结果写入各自 `*_daily` 表
+2. API / MSI composite 查询时:
+   - 优先读 DuckDB 已落盘记录
+   - 若目标日没有记录，再即时计算并尝试回写
+3. 对于部分 factor，DuckDB 里存的是 raw 值，历史分位会在读的时候即时补算
+
+具体到 composite:
+
+- `market_sentiment_index_daily` 是落盘表
+- `backend/repositories/market/market_sentiment_index_repo.py`
+  的 `calc_market_sentiment_index_cached(...)` 会:
+  - `force=False` 时先查 `market_sentiment_index_daily`
+  - 查到就直接返回
+  - 查不到才临时聚合 9 个 factor，再 `save_market_sentiment_index(...)` 回写
+
+所以:
+
+- **正常生产路径**: 17:20 scheduler 跑完后, 前端/API 读到的是已落盘的 composite 分数
+- **缺记录 / 手动查某天 / 首次访问某日**: 会即时计算一次, 然后回写 DuckDB
+- **子因子层面**: 有些表里直接存最终分数 (`vol`, `turnover`, `limit_emotion`)，有些表里主要存 raw，查询时再补历史分位 (`risk_appetite`, `breadth`, `price_strength`, `profit_effect`, `style_risk`)
 
 ---
 

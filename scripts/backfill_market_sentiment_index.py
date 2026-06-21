@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -35,6 +36,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("backfill_market_sentiment_index")
+_TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
 from backend.adapters.market.duckdb_store import init_schema, get_conn
 from backend.services.stock.trading_calendar import is_trading_day
@@ -54,6 +56,13 @@ _SUB_CARD_TABLES = [
 ]
 
 
+def _resolve_end_date() -> date:
+    value = (os.environ.get(_TARGET_TRADE_DATE_ENV) or "").strip()
+    if not value:
+        return date.today()
+    return date.fromisoformat(value)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="市场情绪指数 duckdb 回填")
     ap.add_argument("--days", type=int, default=365, help="回填最近 N 天 (默认 365)")
@@ -69,11 +78,11 @@ def main() -> int:
     con = get_conn()
 
     # 收集所有 sub-card 表的并集交易日, 再取窗口
-    today = date.today()
+    end_date = _resolve_end_date()
     if args.end:
         end = date.fromisoformat(args.end)
     else:
-        end = today
+        end = end_date
     if args.start:
         start = date.fromisoformat(args.start)
     else:
@@ -110,8 +119,8 @@ def main() -> int:
     if actual_start > actual_end:
         log.error("窗口为空: user[%s..%s] ∩ db[%s..%s] = ∅", start, end, db_min, db_max)
         return 0
-    log.info("窗口: %s ~ %s (用户 [%s..%s] ∩ sub-card [%s..%s])",
-             actual_start, actual_end, start, end, db_min, db_max)
+    log.info("窗口: %s ~ %s (用户 [%s..%s] ∩ sub-card [%s..%s], %s=%s)",
+             actual_start, actual_end, start, end, db_min, db_max, _TARGET_TRADE_DATE_ENV, end_date)
 
     # 收集窗口内所有 (任一 sub-card 有数据的) 交易日
     union_dates: set[date] = set()
@@ -139,7 +148,6 @@ def main() -> int:
     from backend.repositories.market.market_sentiment_index_repo import (
         calc_market_sentiment_index,
         save_market_sentiment_index,
-        calc_market_sentiment_index_cached,
     )
 
     ok_count = fail_count = 0
@@ -147,19 +155,12 @@ def main() -> int:
     t0 = time.time()
     for i, td in enumerate(trade_dates):
         try:
-            if args.force:
-                payload = calc_market_sentiment_index(td)
-                if payload:
-                    if args.require_full and payload.get("componentCount", 0) < 9:
-                        fail_count += 1
-                        continue
-                    save_market_sentiment_index(payload)
-            else:
-                payload = calc_market_sentiment_index_cached(td, force=True)
+            payload = calc_market_sentiment_index(td)
             if payload:
                 if args.require_full and payload.get("componentCount", 0) < 9:
                     fail_count += 1
                     continue
+                save_market_sentiment_index(payload)
                 ok_count += 1
                 if payload.get("componentCount") == 9:
                     full_count += 1

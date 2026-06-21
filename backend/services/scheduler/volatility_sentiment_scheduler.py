@@ -186,16 +186,16 @@ def _job_run_backfill() -> None:
                 status["lastRunError"] = None
 
                 sent_val = fetch_scalar_value("volatility_sentiment_daily", "sentiment_score", target_date)
-                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                up = status.get("lastRowsUpserted")
                 parts = [f"sentiment_score={sent_val:.2f}"] if sent_val is not None else []
                 if up is not None:
-                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                    parts.append(f"覆盖写入{up}行")
                 parts.append(f"(target={target_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if sent_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "volatility_sentiment ok in %.1fs: upserted=%s skipped=%s score=%s",
-                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), sent_val,
+                "volatility_sentiment ok in %.1fs: overwritten=%s score=%s",
+                elapsed, status.get("lastRowsUpserted"), sent_val,
             )
             _refresh_coverage(status)
         else:

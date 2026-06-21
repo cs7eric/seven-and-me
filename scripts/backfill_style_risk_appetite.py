@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -30,8 +31,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("backfill_style_risk_appetite")
+_TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
 from backend.adapters.market.duckdb_store import init_schema
+
+
+def _resolve_end_date() -> date:
+    value = (os.environ.get(_TARGET_TRADE_DATE_ENV) or "").strip()
+    if not value:
+        return date.today()
+    return date.fromisoformat(value)
 
 
 def main() -> int:
@@ -64,15 +73,15 @@ def main() -> int:
         db_min = db_min.date() if hasattr(db_min, "date") else db_min
         db_max = db_max.date() if hasattr(db_max, "date") else db_max
 
-    today = date.today()
+    end_date = _resolve_end_date()
     if args.start:
         start = date.fromisoformat(args.start)
     else:
-        start = max(db_min, today - timedelta(days=args.days))
+        start = max(db_min, end_date - timedelta(days=args.days))
     if args.end:
         end = date.fromisoformat(args.end)
     else:
-        end = min(db_max, today)
+        end = min(db_max, end_date)
 
     if start > end:
         log.warning("start=%s > end=%s, 无数据可回填", start, end)
@@ -89,7 +98,10 @@ def main() -> int:
         r[0].date() if hasattr(r[0], "date") else r[0]
         for r in rows
     ]
-    log.info("index_returns_daily 在 %s ~ %s 中共 %d 个交易日", start, end, len(trade_dates))
+    log.info(
+        "index_returns_daily 在 %s ~ %s 中共 %d 个交易日 (%s=%s)",
+        start, end, len(trade_dates), _TARGET_TRADE_DATE_ENV, end_date,
+    )
     if args.dry_run:
         log.info("[dry-run] 不会执行写入")
         return 0
@@ -103,13 +115,7 @@ def main() -> int:
             if payload is None:
                 log.debug("  %s 数据不足, 跳过", td)
                 continue
-            if args.force:
-                save_style_risk_appetite(payload)
-            else:
-                from backend.repositories.market.style_risk_appetite_repo import (
-                    calc_style_risk_appetite_cached,
-                )
-                calc_style_risk_appetite_cached(td, force=True)
+            save_style_risk_appetite(payload)
             ok_count += 1
         except Exception as exc:
             log.warning("  %s failed: %s", td, exc)

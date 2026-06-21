@@ -6,8 +6,7 @@
  *   中 3: 情绪分 + 上证指数
  *   下 1: 成交额 (flow 风格, 蓝色面积)
  *
- * 成交额数据源: duckdb.market_overview_daily.total_amount (元, 经 ×1e8 换算)
- *              兜底: duckdb.index_daily_raw.amount (上证指数自身成交额, 元)
+ * 成交额数据源: duckdb.turnover_activity_daily.total_amount (亿元, 端上转回元给 overlay)
  * 主力净流数据源: duckdb.market_overview_daily.main_net_inflow (元, 经 ×1e8 换算)
  * 上证指数数据源: duckdb.index_daily_raw
  * 情绪分数据源:   duckdb.market_sentiment_index_daily
@@ -26,12 +25,14 @@ import { isoDateNDaysAgo, shiftIsoDays } from "../lib/date"
 import {
   fetchMarketSentimentIndex,
   fetchMarketSentimentIndexHistory,
+  fetchMarketSentimentTurnoverActivityHistory,
   fetchIndexDailyHistory,
   fetchMarketOverviewHistory,
   type IndexDailyItem,
   type MarketOverviewHistoryItem,
   type MarketSentimentIndexResponse,
   type MarketSentimentIndexHistoryItem,
+  type TurnoverActivityHistoryItem,
 } from "@/lib/api"
 
 interface MarketSentimentIndexCardProps {
@@ -51,6 +52,7 @@ export function MarketSentimentIndexCard({
   const [history, setHistory] = useState<MarketSentimentIndexHistoryItem[] | null>(null)
   const [shIndex, setShIndex] = useState<IndexDailyItem[] | null>(null)
   const [overview, setOverview] = useState<MarketOverviewHistoryItem[] | null>(null)
+  const [turnoverHistory, setTurnoverHistory] = useState<TurnoverActivityHistoryItem[] | null>(null)
   const [loading, setLoading] = useState(true)
 
   // 后端 3 年数据已就绪 (limit_emotion / vol_sentiment / profit_effect / msi 全部 728+ 行)
@@ -63,23 +65,26 @@ export function MarketSentimentIndexCard({
     const start = shiftIsoDays(end, -1095)
     void (async () => {
       try {
-        const [snap, hist, sh, ov] = await Promise.all([
+        const [snap, hist, sh, ov, ta] = await Promise.all([
           fetchMarketSentimentIndex(date ?? undefined),
           fetchMarketSentimentIndexHistory(start, end),
           fetchIndexDailyHistory({ code: "000001", start, end }),
           fetchMarketOverviewHistory({ start, end }),
+          fetchMarketSentimentTurnoverActivityHistory(start, end),
         ])
         if (cancelled) return
         setData(snap)
         setHistory(hist.items ?? [])
         setShIndex(sh.items ?? [])
         setOverview(ov.items ?? [])
+        setTurnoverHistory(ta.items ?? [])
       } catch {
         if (!cancelled) {
           setData(null)
           setHistory(null)
           setShIndex(null)
           setOverview(null)
+          setTurnoverHistory(null)
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -207,40 +212,23 @@ export function MarketSentimentIndexCard({
 
   /**
    * 主力净流 / 成交额两个 duckdb 叠加线:
-   * - 数据源 1: duckdb.market_overview_daily (全 A, 接口层已是 "亿元", 下游 /1e8 走 "元")
-   * - 成交额 兜底: duckdb.index_daily_raw.amount (上证指数自身成交额, "元")
+   * - 主力净流: duckdb.market_overview_daily.main_net_inflow (接口层是 "亿", 下游转回 "元")
+   * - 成交额:   duckdb.turnover_activity_daily.total_amount (接口层是 "亿", 下游转回 "元")
    *
    * 统一按 sortedHistory 的日期 key 对齐, 与情绪分折线 + 上证叠加线共享 x 轴.
    */
   const { mainNetFlowOverlay, amountOverlay } = useMemo(() => {
-    const toFiniteNumber = (v: unknown): number | null => {
-      const n = Number(v)
-      return Number.isFinite(n) ? n : null
-    }
-
-    const pickAmount = (item: IndexDailyItem) => {
-      const record = item as unknown as Record<string, unknown>
-      for (const key of ["amount", "turnoverAmount", "turnover", "volumeAmount"]) {
-        const n = toFiniteNumber(record[key])
-        if (n != null) return n
-      }
-      return null
-    }
-
     const flowMapFromOverview = new Map(
       (overview ?? []).map((it) => [
         it.tradeDate,
         it.mainNetInflow == null ? null : it.mainNetInflow * 1e8,
       ]),
     )
-    const amountMapFromOverview = new Map(
-      (overview ?? []).map((it) => [
+    const amountMapFromTurnover = new Map(
+      (turnoverHistory ?? []).map((it) => [
         it.tradeDate,
         it.totalAmount == null ? null : it.totalAmount * 1e8,
       ]),
-    )
-    const amountMapFromIndex = new Map(
-      (shIndex ?? []).map((it) => [it.tradeDate, pickAmount(it)]),
     )
 
     const flowData = sortedHistory.map((it) => ({
@@ -249,10 +237,7 @@ export function MarketSentimentIndexCard({
     }))
     const amountData = sortedHistory.map((it) => ({
       date: it.tradeDate.slice(5),
-      value:
-        amountMapFromOverview.get(it.tradeDate) ??
-        amountMapFromIndex.get(it.tradeDate) ??
-        null,
+      value: amountMapFromTurnover.get(it.tradeDate) ?? null,
     }))
 
     const flowHitCount = flowData.filter((d) => d.value != null).length
@@ -268,7 +253,7 @@ export function MarketSentimentIndexCard({
           ? ({ name: "成交额", color: "#5470c6", data: amountData } as SentimentOverlaySeries)
           : undefined,
     }
-  }, [sortedHistory, shIndex, overview])
+  }, [sortedHistory, overview, turnoverHistory])
 
   return (
     <Card className="border-0 shadow-none bg-muted/50 h-full">

@@ -44,7 +44,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.models.scheduler import SchedulerJob, SchedulerJobStatus
 
@@ -219,16 +218,28 @@ def save_status(code: str, status: dict[str, Any]) -> bool:
             columns["extra"] = extra
             columns["updated_at"] = datetime.now(timezone.utc)
 
-            # 3) UPSERT (ON CONFLICT on partial unique index)
-            stmt = pg_insert(SchedulerJobStatus).values(**columns)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["job_id"],
-                index_where=(SchedulerJobStatus.deleted_at.is_(None)),
-                set_={c: getattr(stmt.excluded, c) for c in columns if c != "job_id"},
-                where=(SchedulerJobStatus.deleted_at.is_(None)),
-            )
+            # 3) 先 UPDATE, 没命中再 INSERT.
+            # app.scheduler_job_statuses 只有 partial unique index(job_id) where deleted_at is null，
+            # 某些环境下 ON CONFLICT 推断这个索引会失败；这里显式走 update-or-insert 更稳。
+            existing = db.execute(
+                select(SchedulerJobStatus).where(
+                    SchedulerJobStatus.job_id == job_id,
+                    SchedulerJobStatus.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
 
-            db.execute(stmt)
+            if existing is not None:
+                for col, value in columns.items():
+                    if col == "job_id":
+                        continue
+                    setattr(existing, col, value)
+            else:
+                db.add(
+                    SchedulerJobStatus(
+                        **columns,
+                    )
+                )
+
             db.flush()
             return True
     except Exception as exc:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -28,6 +29,14 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("backfill_sector_breadth")
+_TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
+
+
+def _resolve_end_date() -> date:
+    value = (os.environ.get(_TARGET_TRADE_DATE_ENV) or "").strip()
+    if not value:
+        return date.today()
+    return date.fromisoformat(value)
 
 
 def main() -> int:
@@ -37,10 +46,12 @@ def main() -> int:
     ap.add_argument("--date", type=str, default=None,
                     help="单日 YYYY-MM-DD, 只回填这一天")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true", help="保留兼容; 本脚本默认覆盖写")
     args = ap.parse_args()
 
-    log.info("start: days=%s date=%s dry_run=%s",
-             args.days, args.date, args.dry_run)
+    end_date = _resolve_end_date()
+    log.info("start: days=%s date=%s dry_run=%s %s=%s",
+             args.days, args.date, args.dry_run, _TARGET_TRADE_DATE_ENV, end_date)
 
     # 初始化 schema (幂等)
     from backend.adapters.market.duckdb_store import init_schema
@@ -60,12 +71,12 @@ def main() -> int:
     # 区间模式: 扫 ths_industry_fund_flow_daily 所有 DISTINCT trade_date
     # 重要: 用 conn() contextmanager (不是 with get_conn()), 避免 DuckDBPyConnection.__exit__ close
     from backend.adapters.market.duckdb_store import conn
-    cutoff = date.today() - timedelta(days=args.days)
+    cutoff = end_date - timedelta(days=args.days)
     with conn() as c:
         date_rows = c.execute(
             "SELECT DISTINCT trade_date FROM ths_industry_fund_flow_daily "
-            "WHERE trade_date >= ? ORDER BY trade_date ASC",
-            [cutoff],
+            "WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
+            [cutoff, end_date],
         ).fetchall()
     dates = [r[0] for r in date_rows]
     log.info("ths_industry_fund_flow_daily 命中 %d 天 (>= %s)", len(dates), cutoff)
@@ -91,7 +102,7 @@ def main() -> int:
     # 跨日趋势 dump
     history = get_sector_breadth_history(
         start=cutoff.isoformat(),
-        end=date.today().isoformat(),
+        end=end_date.isoformat(),
         limit=10,
     )
     log.info("--- 近 10 天 advance_pct 序列 ---")

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -36,6 +37,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("backfill_metrics")
 
+_TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
+
 
 def _walk_trading_days(start: date, end: date) -> list[date]:
     """从 start 到 end (含) 之间的所有交易日."""
@@ -46,6 +49,18 @@ def _walk_trading_days(start: date, end: date) -> list[date]:
             out.append(cur)
         cur += timedelta(days=1)
     return out
+
+
+def _resolve_end_date() -> date:
+    """优先使用 scheduler 注入的目标交易日; 缺失时回退到今天."""
+    target = (os.getenv(_TARGET_TRADE_DATE_ENV) or "").strip()
+    if not target:
+        return date.today()
+    try:
+        return date.fromisoformat(target)
+    except ValueError:
+        log.warning("忽略非法 %s=%r, 回退到 today()", _TARGET_TRADE_DATE_ENV, target)
+        return date.today()
 
 
 def _has_daily_qfq_data(trade_date: date) -> bool:
@@ -97,13 +112,19 @@ def main() -> int:
                     help="指数收益窗口, 逗号分隔 (默认 5,10,20,60)")
     args = ap.parse_args()
 
-    today = date.today()
-    start = today - timedelta(days=args.days)
+    end_date = _resolve_end_date()
+    start = end_date - timedelta(days=args.days)
     windows = [int(x) for x in args.index_windows.split(",") if x.strip()]
-    log.info("回填窗口: %s ~ %s, 指数 windows=%s, force=%s",
-             start.isoformat(), today.isoformat(), windows, args.force)
+    log.info(
+        "回填窗口: %s ~ %s, 指数 windows=%s, force=%s, target_env=%s",
+        start.isoformat(),
+        end_date.isoformat(),
+        windows,
+        args.force,
+        os.getenv(_TARGET_TRADE_DATE_ENV),
+    )
 
-    dates = _walk_trading_days(start, today)
+    dates = _walk_trading_days(start, end_date)
     log.info("候选交易日 %d 天", len(dates))
 
     t0 = time.time()

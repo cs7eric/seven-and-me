@@ -218,16 +218,16 @@ def _job_run_backfill() -> None:
                 status["lastRunError"] = None
 
                 spread_val = fetch_scalar_value("risk_appetite_daily", "spread_weighted", target_date)
-                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                up = status.get("lastRowsUpserted")
                 parts = [f"spread_weighted={spread_val:.4f}"] if spread_val is not None else []
                 if up is not None:
-                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                    parts.append(f"覆盖写入{up}行")
                 parts.append(f"(target={target_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if spread_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "risk_appetite ok in %.1fs: upserted=%s skipped=%s spread=%s",
-                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), spread_val,
+                "risk_appetite ok in %.1fs: overwritten=%s spread=%s",
+                elapsed, status.get("lastRowsUpserted"), spread_val,
             )
             _refresh_coverage(status)
         else:

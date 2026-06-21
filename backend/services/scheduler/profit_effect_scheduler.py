@@ -172,16 +172,16 @@ def job_run_backfill() -> dict:
                 status["lastRunError"] = None
 
                 score_val = fetch_scalar_value("profit_effect_daily", "score", target_date)
-                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                up = status.get("lastRowsUpserted")
                 parts = [f"score={score_val:.2f}"] if score_val is not None else []
                 if up is not None:
-                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                    parts.append(f"覆盖写入{up}行")
                 parts.append(f"(target={target_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if score_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "profit_effect ok in %.1fs: upserted=%s skipped=%s score=%s",
-                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), score_val,
+                "profit_effect ok in %.1fs: overwritten=%s score=%s",
+                elapsed, status.get("lastRowsUpserted"), score_val,
             )
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()

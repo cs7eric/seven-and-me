@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -32,6 +33,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("backfill_risk_appetite")
+_TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
 
 def _has_qfq_data(trade_date: date, codes: list[str]) -> bool:
@@ -66,6 +68,13 @@ def _walk_trading_days(start: date, end: date) -> list[date]:
     return out
 
 
+def _resolve_end_date() -> date:
+    value = (os.environ.get(_TARGET_TRADE_DATE_ENV) or "").strip()
+    if not value:
+        return date.today()
+    return date.fromisoformat(value)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="回填 risk_appetite_daily 到 duckdb")
     ap.add_argument("--days", type=int, default=60,
@@ -73,11 +82,14 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="覆盖已有记录")
     args = ap.parse_args()
 
-    today = date.today()
-    start = today - timedelta(days=args.days)
-    log.info("回填窗口: %s ~ %s, force=%s", start.isoformat(), today.isoformat(), args.force)
+    end_date = _resolve_end_date()
+    start = end_date - timedelta(days=args.days)
+    log.info(
+        "回填窗口: %s ~ %s, force=%s, %s=%s",
+        start.isoformat(), end_date.isoformat(), args.force, _TARGET_TRADE_DATE_ENV, end_date.isoformat(),
+    )
 
-    dates = _walk_trading_days(start, today)
+    dates = _walk_trading_days(start, end_date)
     log.info("候选交易日 %d 天", len(dates))
 
     t0 = time.time()

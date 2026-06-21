@@ -21,6 +21,10 @@ from typing import Any
 from sqlalchemy import func, select, update
 
 from backend.models.scheduler import SchedulerJob
+from backend.services.scheduler.job_description_catalog import (
+    get_job_description,
+    iter_job_descriptions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +86,7 @@ def register_job(
     没有则 INSERT.  等同于以前的 ``_register_*_job()`` + ``jobs.json`` 写入.
     """
     try:
+        description = get_job_description(code, description)
         with _session()() as db:
             existing = db.execute(
                 select(SchedulerJob).where(
@@ -119,3 +124,29 @@ def register_job(
     except Exception as exc:
         logger.error("config_store.register_job(%s) failed: %s", code, exc)
         return False
+
+
+def sync_job_descriptions() -> int:
+    """把 catalog 中的 description 同步到已有的 ``app.scheduler_jobs`` 行.
+
+    只在 description 实际变更时更新，返回更新的行数。
+    """
+    try:
+        with _session()() as db:
+            rows = db.execute(
+                select(SchedulerJob).where(SchedulerJob.deleted_at.is_(None))
+            ).scalars().all()
+            catalog = dict(iter_job_descriptions())
+            updated = 0
+            for row in rows:
+                description = catalog.get(row.code)
+                if description and row.description != description:
+                    row.description = description
+                    row.updated_at = func.now()
+                    updated += 1
+            if updated:
+                db.flush()
+            return updated
+    except Exception as exc:
+        logger.warning("config_store.sync_job_descriptions() failed: %s", exc)
+        return 0

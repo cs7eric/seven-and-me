@@ -63,7 +63,7 @@ def percentile_score(
     td = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
     lookback_start = td - timedelta(days=lookback_days)
     try:
-        con = get_conn()
+        con = get_conn(read_only=True)
         row = con.execute(
             f"""
             SELECT COUNT(*) FILTER (WHERE {column} < ?) * 100.0
@@ -118,7 +118,7 @@ def enrich_history_scores(
     lookback_start = end_d - timedelta(days=lookback_days)
 
     try:
-        con = get_conn()
+        con = get_conn(read_only=True)
         rows = con.execute(
             f"""
             WITH t AS (

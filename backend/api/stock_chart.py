@@ -1790,7 +1790,7 @@ def market_sentiment_turnover_activity():
 
     数据源:
       1. 优先查 duckdb.turnover_activity_daily (持久化)
-      2. 没记录则从 duckdb.market_overview_daily 现算 + 自动落盘
+      2. 没记录则从 duckdb.daily_raw 中读取 999999 + 399001 成交额求和现算 + 自动落盘
     """
     from datetime import date as _date
     from backend.repositories.market.turnover_activity_repo import (

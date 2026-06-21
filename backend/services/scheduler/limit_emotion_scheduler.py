@@ -154,15 +154,15 @@ def job_run_backfill() -> dict:
                 status["lastRunError"] = None
 
                 comp_val = fetch_scalar_value("limit_emotion_summary_daily", "composite_score", target_date)
-                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                up = status.get("lastRowsUpserted")
                 parts = [f"composite={comp_val:.2f}"] if comp_val is not None else []
                 if up is not None:
-                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                    parts.append(f"覆盖写入{up}行")
                 parts.append(f"(target={target_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if comp_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
-                logger.info("limit_emotion ok in %.1fs: upserted=%s skipped=%s composite=%s",
-                            elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), comp_val)
+                logger.info("limit_emotion ok in %.1fs: overwritten=%s composite=%s",
+                            elapsed, status.get("lastRowsUpserted"), comp_val)
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -43,6 +44,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("backfill_volatility_sentiment")
+_TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FETCH_SCRIPT = REPO_ROOT / "scripts" / "fetch_index_history.py"
@@ -97,6 +99,13 @@ def _walk_trading_days(start: date, end: date) -> list[date]:
     return out
 
 
+def _resolve_end_date() -> date:
+    value = (os.environ.get(_TARGET_TRADE_DATE_ENV) or "").strip()
+    if not value:
+        return date.today()
+    return date.fromisoformat(value)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="回填 volatility_sentiment_daily 到 duckdb")
     ap.add_argument("--days", type=int, default=60,
@@ -134,11 +143,12 @@ def main() -> int:
         dates = [target]
         log.info("单日模式: %s", target.isoformat())
     else:
-        today = date.today()
-        start = today - timedelta(days=args.days)
-        dates = _walk_trading_days(start, today)
-        log.info("回填窗口: %s ~ %s, 候选交易日 %d 天, force=%s",
-                 start.isoformat(), today.isoformat(), len(dates), args.force)
+        end_date = _resolve_end_date()
+        start = end_date - timedelta(days=args.days)
+        dates = _walk_trading_days(start, end_date)
+        log.info("回填窗口: %s ~ %s, 候选交易日 %d 天, force=%s, %s=%s",
+                 start.isoformat(), end_date.isoformat(), len(dates), args.force,
+                 _TARGET_TRADE_DATE_ENV, end_date.isoformat())
 
     if args.dry_run:
         log.info("[dry-run] 候选日: %s", [d.isoformat() for d in dates[:10]])

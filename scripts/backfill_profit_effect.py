@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -26,8 +27,16 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("backfill_profit_effect")
+_TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
 from backend.adapters.market.duckdb_store import init_schema
+
+
+def _resolve_end_date() -> date:
+    value = (os.environ.get(_TARGET_TRADE_DATE_ENV) or "").strip()
+    if not value:
+        return date.today()
+    return date.fromisoformat(value)
 
 
 def main() -> int:
@@ -58,15 +67,15 @@ def main() -> int:
         db_min = db_min.date() if hasattr(db_min, "date") else db_min
         db_max = db_max.date() if hasattr(db_max, "date") else db_max
 
-    today = date.today()
+    end_date = _resolve_end_date()
     if args.start:
         start = date.fromisoformat(args.start)
     else:
-        start = max(db_min, today - timedelta(days=args.days))
+        start = max(db_min, end_date - timedelta(days=args.days))
     if args.end:
         end = date.fromisoformat(args.end)
     else:
-        end = min(db_max, today)
+        end = min(db_max, end_date)
 
     if start > end:
         log.warning("start=%s > end=%s, 无数据", start, end)
@@ -81,7 +90,10 @@ def main() -> int:
     trade_dates = [
         r[0].date() if hasattr(r[0], "date") else r[0] for r in rows
     ]
-    log.info("ma_count_daily 在 %s ~ %s 中共 %d 个交易日", start, end, len(trade_dates))
+    log.info(
+        "ma_count_daily 在 %s ~ %s 中共 %d 个交易日 (%s=%s)",
+        start, end, len(trade_dates), _TARGET_TRADE_DATE_ENV, end_date,
+    )
     if args.dry_run:
         return 0
 
@@ -89,15 +101,9 @@ def main() -> int:
     t0 = time.time()
     for td in trade_dates:
         try:
-            if args.force:
-                payload = calc_profit_effect(td)
-                if payload:
-                    save_profit_effect(payload)
-            else:
-                from backend.repositories.market.profit_effect_repo import (
-                    calc_profit_effect_cached,
-                )
-                calc_profit_effect_cached(td, force=True)
+            payload = calc_profit_effect(td)
+            if payload:
+                save_profit_effect(payload)
             ok_count += 1
         except Exception as exc:
             log.warning("  %s failed: %s", td, exc)

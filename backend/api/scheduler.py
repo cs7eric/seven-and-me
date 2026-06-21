@@ -24,7 +24,8 @@ from backend.services.scheduler.auction_analysis_scheduler import (
     start_auction_analysis_scheduler,
     stop_auction_analysis_scheduler,
 )
-from backend.services.scheduler.status_store import load_status, save_status
+from backend.services.scheduler.status_store import load_status
+from backend.services.scheduler.config_store import sync_job_descriptions
 from backend.services.scheduler.daily_eod_incremental_scheduler import (
     get_daily_eod_incremental_scheduler_status,
     run_daily_eod_incremental_now,
@@ -164,6 +165,31 @@ scheduler_bp = Blueprint('scheduler_mgmt', __name__)
 
 logger = logging.getLogger(__name__)
 
+LEGACY_JOB_ID_ALIASES: dict[str, str] = {
+    "ma_count": "ma_count_refresh",
+    "risk_appetite": "risk_appetite_refresh",
+    "volatility_sentiment": "volatility_sentiment_refresh",
+}
+
+
+def _canonical_job_id(job_id: str | None) -> str | None:
+    if not job_id:
+        return job_id
+    return LEGACY_JOB_ID_ALIASES.get(job_id, job_id)
+
+
+def _candidate_job_ids(job_id: str | None) -> list[str]:
+    canonical = _canonical_job_id(job_id)
+    items: list[str] = []
+    for value in (job_id, canonical):
+        if value and value not in items:
+            items.append(value)
+    if canonical:
+        for legacy, current in LEGACY_JOB_ID_ALIASES.items():
+            if current == canonical and legacy not in items:
+                items.append(legacy)
+    return items
+
 # ---------------------------------------------------------------------------
 # Job category: 给前端 /settings/scheduler 渲染 tab 用.
 # ---------------------------------------------------------------------------
@@ -237,6 +263,7 @@ def _categories_for(job_id: str | None) -> list[int]:
 
     数据来源: Postgres ``app.scheduler_job_category_mappings``; DB 不可用时返 [].
     """
+    job_id = _canonical_job_id(job_id)
     if not job_id:
         return []
     try:
@@ -336,6 +363,8 @@ def _normalize_last_run(job_id: str, status: dict, config: dict) -> dict[str, An
       - last_error: 上次错误信息
       - total_runs: 累计运行次数
     """
+    job_id = _canonical_job_id(job_id) or job_id
+
     # 通用: 从 status + config 联合抽基础字段
     last_run_at = _first_str(status, config, keys=("last_run_at", "lastRunAt"))
     last_status_raw = _first_str(
@@ -488,7 +517,7 @@ def _normalize_last_run(job_id: str, status: dict, config: dict) -> dict[str, An
         rows = _first_num(config, status, keys=("lastRowsUpserted",))
         days = _first_num(config, status, keys=("lastDaysUpserted",))
         targets = rows if rows is not None else days
-    elif job_id in {"risk_appetite", "ma_count_refresh", "volatility_sentiment"}:
+    elif job_id in {"risk_appetite_refresh", "ma_count_refresh", "volatility_sentiment_refresh"}:
         # risk_appetite / volatility_sentiment 有 lastRowsUpserted / lastCoverage
         # ma_count 有 lastMaUpserted + lastIrUpserted
         rows = _first_num(config, status, keys=("lastRowsUpserted",))
@@ -522,6 +551,7 @@ def _supports_enable(job_id: str) -> bool:
     market_pulse_* / market_overview_* / eltdx_overview_* 共用同一份 extra JSONB 里的
     enabled 字段，整组共用同一个开关；UI 上"禁用"对应整组停掉.
     """
+    job_id = _canonical_job_id(job_id) or job_id
     return job_id in {
         'turnover_refresh', 'auction_ai_analysis', 'application_analysis',
         'stock_universe_refresh',
@@ -548,12 +578,14 @@ def _job_exists(job_id: str) -> bool:
         from backend.repositories.scheduler import SchedulerJobRepository
 
         with session_scope() as db:
-            return bool(SchedulerJobRepository(db).get_job_by_code(job_id))
+            repo = SchedulerJobRepository(db)
+            return any(repo.get_job_by_code(candidate) for candidate in _candidate_job_ids(job_id))
     except Exception:
         return False
 
 
 def _get_live_status(job_id: str) -> dict[str, Any]:
+    job_id = _canonical_job_id(job_id) or job_id
     if job_id == 'turnover_refresh':
         return get_turnover_scheduler_status()
     if job_id == 'auction_ai_analysis':
@@ -609,6 +641,7 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
 
 
 def _start_scheduler(job_id: str) -> None:
+    job_id = _canonical_job_id(job_id) or job_id
     if job_id == 'turnover_refresh':
         start_turnover_scheduler()
     elif job_id == 'auction_ai_analysis':
@@ -663,6 +696,7 @@ def _start_scheduler(job_id: str) -> None:
 
 
 def _stop_scheduler(job_id: str) -> None:
+    job_id = _canonical_job_id(job_id) or job_id
     if job_id == 'turnover_refresh':
         stop_turnover_scheduler()
     elif job_id == 'auction_ai_analysis':
@@ -723,10 +757,11 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
     """
     from backend.services.scheduler.job_history import trigger_type
     with trigger_type("manual"):
-        return _trigger_scheduler_inner(job_id)
+        return _trigger_scheduler_inner(_canonical_job_id(job_id) or job_id)
 
 
 def _trigger_scheduler_inner(job_id: str) -> dict[str, Any]:
+    job_id = _canonical_job_id(job_id) or job_id
     if job_id == 'turnover_refresh':
         sched = get_turnover_scheduler()
         if sched is None:
@@ -1019,6 +1054,7 @@ def list_jobs():
         }
     """
     try:
+        sync_job_descriptions()
         from backend.config.database import session_scope
         from backend.repositories.scheduler import SchedulerJobRepository
 
@@ -1029,11 +1065,12 @@ def list_jobs():
 
     items: list[dict[str, Any]] = []
     for entry in registry_entries:
-        job_id = entry.get('id')
+        raw_job_id = entry.get('id')
+        job_id = _canonical_job_id(raw_job_id)
         if not job_id:
             continue
 
-        config = load_status(job_id) or {}
+        config = load_status(job_id) or load_status(raw_job_id) or {}
         try:
             live = _get_live_status(job_id)
         except Exception as exc:
@@ -1052,6 +1089,7 @@ def list_jobs():
             k: v for k, v in entry.items()
             if k not in ('_category_ids', '_category_sort_orders')
         }
+        entry_for_response['id'] = job_id
 
         items.append({
             **entry_for_response,
@@ -1071,66 +1109,118 @@ def list_jobs():
 @scheduler_bp.route('/api/scheduler/jobs/<job_id>', methods=['GET'])
 def get_job(job_id: str):
     try:
+        sync_job_descriptions()
         from backend.config.database import session_scope
         from backend.repositories.scheduler import SchedulerJobRepository
 
         with session_scope() as db:
-            entry = SchedulerJobRepository(db).get_job_by_code(job_id)
+            repo = SchedulerJobRepository(db)
+            entry = None
+            for candidate in _candidate_job_ids(job_id):
+                entry = repo.get_job_by_code(candidate)
+                if entry is not None:
+                    break
     except Exception as exc:
         return jsonify({'ok': False, 'error': f'DB read failed: {exc}'}), 500
 
     if entry is None:
         return jsonify({'ok': False, 'error': f'job {job_id} not registered'}), 404
 
-    config = load_status(job_id) or {}
-    live = _get_live_status(job_id)
+    canonical_job_id = _canonical_job_id(job_id) or job_id
+    config = load_status(canonical_job_id) or load_status(job_id) or {}
+    live = _get_live_status(canonical_job_id)
     categories_value = entry.get('_category_ids') or []
     category_sort_orders = entry.get('_category_sort_orders') or {}
     entry_for_response = {
         k: v for k, v in entry.items()
         if k not in ('_category_ids', '_category_sort_orders')
     }
+    entry_for_response['id'] = canonical_job_id
     return jsonify({
         'ok': True,
         'item': {
             **entry_for_response,
-            'supports_enable': _supports_enable(job_id),
+            'supports_enable': _supports_enable(canonical_job_id),
             'categories': categories_value,
             'categorySortOrders': category_sort_orders,
             'enabled': bool(entry.get('enabled', True)),
-            'config_enabled': bool(config.get('enabled', True)) if job_id != 'application_analysis' else True,
+            'config_enabled': bool(config.get('enabled', True)) if canonical_job_id != 'application_analysis' else True,
             'config': config,
             'live': live,
-            'last_run': _normalize_last_run(job_id, live or {}, config or {}),
+            'last_run': _normalize_last_run(canonical_job_id, live or {}, config or {}),
         },
     })
 
 
 def _flip_enabled(job_id: str, enabled: bool) -> dict[str, Any]:
-    if not _supports_enable(job_id):
-        return {'ok': False, 'error': f'job {job_id} does not support enable/disable toggle'}
+    canonical_job_id = _canonical_job_id(job_id) or job_id
+    if not _supports_enable(canonical_job_id):
+        return {'ok': False, 'error': f'job {canonical_job_id} does not support enable/disable toggle'}
 
     enabled_bool = bool(enabled)
 
-    config = load_status(job_id) or {}
-    config['enabled'] = enabled_bool
-    config['job_name'] = config.get('job_name') or job_id
-    save_status(job_id, config)
-
-    # 同步更新 is_enabled 列
+    # 直接 UPDATE is_enabled 列, 不动 extra JSONB (避免全量替换导致数据丢失).
+    # save_status() 会走 UPSERT + ON CONFLICT DO UPDATE, set_ 包含 extra,
+    # 若传入的 config 只有少数 key 会把 extra 写回成残缺的 dict.
+    status_updated = False
     try:
         from backend.config.database import session_scope
+        from backend.models.scheduler import SchedulerJob, SchedulerJobStatus
+        from sqlalchemy import func, select, update
+
+        with session_scope() as db:
+            job_uuid = db.execute(
+                select(SchedulerJob.id).where(
+                    SchedulerJob.code.in_(_candidate_job_ids(job_id)),
+                    SchedulerJob.deleted_at.is_(None),
+                )
+            ).scalar_one_or_none()
+
+            if job_uuid is not None:
+                result = db.execute(
+                    update(SchedulerJobStatus)
+                    .where(
+                        SchedulerJobStatus.job_id == job_uuid,
+                        SchedulerJobStatus.deleted_at.is_(None),
+                    )
+                    .values(is_enabled=enabled_bool, updated_at=func.now())
+                )
+                db.flush()
+                status_updated = result.rowcount > 0
+            else:
+                logger.warning(
+                    "_flip_enabled(%s): job not found in app.scheduler_jobs, "
+                    "skipping status update", canonical_job_id,
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "_flip_enabled(%s): failed to update app.scheduler_job_statuses.is_enabled: %s",
+            canonical_job_id, exc,
+        )
+
+    # 同时更新 scheduler_jobs.is_enabled (UI 注册表开关)
+    try:
         from backend.repositories.scheduler import SchedulerJobRepository
 
         with session_scope() as db:
-            SchedulerJobRepository(db).set_enabled_by_code(job_id, enabled_bool)
+            repo = SchedulerJobRepository(db)
+            for candidate in _candidate_job_ids(job_id):
+                if repo.set_enabled_by_code(candidate, enabled_bool):
+                    break
     except Exception as exc:  # noqa: BLE001
         logger.debug(
-            "_flip_enabled(%s) DB is_enabled sync skipped (extra still authoritative): %s",
-            job_id, exc,
+            "_flip_enabled(%s) DB is_enabled sync skipped: %s",
+            canonical_job_id, exc,
         )
 
-    return {'ok': True, 'job_id': job_id, 'enabled': enabled_bool, 'config': config}
+    # 如果两个 DB 操作都失败了, 仍在前端提示成功 (start/stop 是进程内操作, DB 状态是辅助)
+    if not status_updated:
+        logger.warning(
+            "_flip_enabled(%s): neither scheduler_jobs nor scheduler_job_statuses "
+            "was updated; start/stop may fail on next bootstrap", canonical_job_id,
+        )
+
+    return {'ok': True, 'job_id': canonical_job_id, 'enabled': enabled_bool, 'status_updated': status_updated}
 
 
 @scheduler_bp.route('/api/scheduler/jobs/<job_id>/enable', methods=['POST'])

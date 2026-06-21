@@ -287,6 +287,20 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
       {/* 展开态: 显示完整详情 + 启用/禁用 + 删除 */}
       {expanded ? (
         <CardContent className="space-y-4">
+          {job.description ? (
+            <>
+              <div className="space-y-2 text-sm">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  计算逻辑
+                </div>
+                <div className="whitespace-pre-wrap rounded-2xl border border-border/40 bg-background/70 p-3 text-xs leading-6 text-muted-foreground">
+                  {job.description}
+                </div>
+              </div>
+              <Separator />
+            </>
+          ) : null}
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat
               icon={<Activity className="size-3.5" />}

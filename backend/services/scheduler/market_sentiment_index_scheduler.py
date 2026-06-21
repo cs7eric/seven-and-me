@@ -234,16 +234,16 @@ def job_run_backfill() -> dict:
                 status["lastRunError"] = None
 
                 msi_val = fetch_scalar_value("market_sentiment_index_daily", "composite_score", target_date)
-                up = status.get("lastRowsUpserted"); sk = status.get("lastRowsSkipped")
+                up = status.get("lastRowsUpserted")
                 parts = [f"MSI={msi_val:.2f}"] if msi_val is not None else []
                 if up is not None:
-                    parts.append(f"{up}行" + (f"+{sk}行skip" if sk and sk > 0 else ""))
+                    parts.append(f"覆盖写入{up}行")
                 parts.append(f"(target={target_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if msi_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "market_sentiment_index ok in %.1fs: upserted=%s skipped=%s msi=%s",
-                elapsed, status.get("lastRowsUpserted"), status.get("lastRowsSkipped"), msi_val,
+                "market_sentiment_index ok in %.1fs: overwritten=%s msi=%s",
+                elapsed, status.get("lastRowsUpserted"), msi_val,
             )
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
