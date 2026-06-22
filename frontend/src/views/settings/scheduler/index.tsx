@@ -33,7 +33,7 @@ import { WorkspaceShell } from "@/layout/workspace-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import {
   Tabs,
@@ -141,16 +141,13 @@ interface JobCardProps {
 }
 
 function JobCard({ job, pending, onAction }: JobCardProps) {
-  // 默认折叠 (collapsed=true), 用户点 chevron 展开看完整详情
-  const [expanded, setExpanded] = useState(false)
-  // 历史记录: 展开后才拉, 5s 自动 refresh (跟父级同步)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  // 历史记录: dialog 打开后才拉, 5s 自动 refresh
   const [history, setHistory] = useState<SchedulerJobHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const live = job.live || {}
   const config = job.config || {}
   const isRunning = Boolean(pickValue<boolean>(live, "running"))
-  // "上次运行" 摘要: 优先走后端归一化的 last_run 字段 (cover 各 scheduler 异构字段名),
-  // 缺数据时再回退到 config (兼容后端未升级版本).
   const lastRunSummary = job.last_run
   const lastRunAt = lastRunSummary?.last_run_at ?? pickValue<string>(config, "last_run_at")
   const lastStatus = lastRunSummary?.last_status ?? pickValue<string>(config, "last_status")
@@ -167,9 +164,9 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
 
   const isActionPending = (action: ActionKey) => pending === action
 
-  // history: 展开时才拉, 5s 轮询. action 后立即重拉 (看到刚刚那次的结果).
+  // history: dialog 打开时才拉, 5s 轮询. pending 变化 (trigger) 也重拉.
   useEffect(() => {
-    if (!expanded) {
+    if (!dialogOpen) {
       setHistory([])
       return
     }
@@ -193,148 +190,114 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
       cancelled = true
       window.clearInterval(t)
     }
-  }, [expanded, job.id, pending])  // pending 变化 (用户点了 trigger) 时也立即重拉一次
+  }, [dialogOpen, job.id, pending])
 
   return (
-    <Card className="mb-4 break-inside-avoid border border-border/30 bg-gradient-to-b from-background to-muted/50 shadow-sm">
-      {/* 折叠态: 显示基本信息 + 调度按钮 (start/stop + trigger) + 展开 chevron */}
+    <Card className="mb-4 break-inside-avoid border-0 shadow-none bg-muted/60">
+      {/* 列表项: 点击打开 dialog 查看详情 */}
       <CardHeader
-        className="cursor-pointer select-none pb-3"
-        onClick={() => setExpanded((v) => !v)}
+        className="cursor-pointer select-none py-0 transition-colors hover:bg-muted/30"
+        onClick={() => setDialogOpen(true)}
       >
-        <div className="flex h-full flex-col gap-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-1 items-start gap-2">
-            {expanded ? (
-              <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-            )}
-              <div className="min-w-0 flex-1 space-y-2">
-                <CardTitle className="flex flex-wrap items-center gap-2 text-base leading-6">
-                <Settings2 className="size-4 shrink-0 text-muted-foreground" />
-                <span className="truncate">{job.name}</span>
-                  <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                    {job.id}
-                  </span>
-                {(job.categories || []).map((c) => (
-                  <Badge
-                    key={c}
-                    variant="outline"
-                    className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
-                  >
-                    {c}
-                  </Badge>
-                ))}
-              </CardTitle>
-                {!expanded && job.description ? (
-                  <CardDescription className="line-clamp-2 leading-6">
-                    {job.description}
-                  </CardDescription>
-                ) : null}
-              </div>
-            </div>
-
-            <div
-              className="flex flex-wrap items-center gap-2"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Badge variant={isRunning ? "default" : "secondary"}>
-                {isRunning ? "运行中" : "已停止"}
-              </Badge>
-              {job.supports_enable ? (
-                <Badge variant={job.config_enabled ? "outline" : "destructive"}>
-                  {job.config_enabled ? "已启用" : "已禁用"}
-                </Badge>
-              ) : null}
-            </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Settings2 className="size-4 shrink-0 text-muted-foreground" />
+            <CardTitle className="truncate text-base font-medium">{job.name}</CardTitle>
           </div>
-
-          {!expanded ? (
-            <div className="space-y-3">
-              <div className="grid gap-2 sm:grid-cols-2">
-                <CompactMetric label="上次运行" value={formatDateTime(lastRunAt)} />
-                <CompactMetric
-                  label="运行结果"
-                  value={
-                    lastStatus ? (
-                      <Badge variant={statusBadgeVariant(lastStatus)} className="px-1.5 py-0 text-[10px]">
-                        {lastStatus}
-                      </Badge>
-                    ) : "—"
-                  }
-                />
-                <CompactMetric label="累计运行" value={totalRuns ?? "—"} />
-                <CompactMetric label="最近耗时" value={formatSeconds(lastDuration ?? null)} />
-                <CompactMetric label="处理标的" value={lastTargets ?? "—"} />
-                <CompactMetric label="注册时间" value={formatDateTime(registeredAt)} />
-              </div>
-
-              {lastError ? (
-                <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] leading-5 text-destructive">
-                  <div className="mb-1 flex items-center gap-1.5 font-medium">
-                    <AlertTriangle className="size-3.5" />
-                    最近错误
-                  </div>
-                  <div className="line-clamp-3 whitespace-pre-wrap break-all">{lastError}</div>
-                </div>
-              ) : lastMessage ? (
-                <div className="rounded-xl border border-emerald-200/50 bg-emerald-50/60 px-3 py-2 text-[11px] leading-5 text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/10 dark:text-emerald-400">
-                  <div className="mb-1 flex items-center gap-1.5 font-medium">
-                    <CheckCircle2 className="size-3.5" />
-                    最近结果
-                  </div>
-                  <div className="line-clamp-3 whitespace-pre-wrap break-all">{lastMessage}</div>
-                </div>
-              ) : null}
-
-              <div
-                className="flex flex-wrap items-center gap-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {isRunning ? (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    className="rounded-xl"
-                    disabled={isActionPending("stop")}
-                    onClick={() => onAction(job.id, "stop")}
-                  >
-                    <CirclePause className="size-3.5" />
-                    {isActionPending("stop") ? "停止中…" : "停止调度"}
-                  </Button>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className="rounded-xl"
-                    disabled={isActionPending("start")}
-                    onClick={() => onAction(job.id, "start")}
-                  >
-                    <Play className="size-3.5" />
-                    {isActionPending("start") ? "启动中…" : "启动调度"}
-                  </Button>
-                )}
-
+          <div
+            className="flex flex-wrap items-center gap-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 启用状态 */}
+            {job.supports_enable ? (
+              <Badge variant={job.config_enabled ? "outline" : "destructive"}>
+                {job.config_enabled ? "已启用" : "已禁用"}
+              </Badge>
+            ) : null}
+            {/* 运行状态 */}
+            {isRunning ? (
+              <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600/90">运行中</Badge>
+            ) : (
+              <Badge variant="secondary">已停止</Badge>
+            )}
+            {/* 启用/停用按钮 */}
+            {job.supports_enable ? (
+              job.config_enabled ? (
                 <Button
                   size="sm"
-                  variant="secondary"
+                  variant="outline"
                   className="rounded-xl"
-                  disabled={isActionPending("trigger")}
-                  onClick={() => onAction(job.id, "trigger")}
+                  disabled={isActionPending("disable")}
+                  onClick={() => onAction(job.id, "disable")}
                 >
-                  <Zap className="size-3.5" />
-                  {isActionPending("trigger") ? "触发中…" : "立即触发"}
+                  <PowerOff className="size-3" />
+                  {isActionPending("disable") ? "禁用中…" : "禁用"}
                 </Button>
-              </div>
-            </div>
-          ) : null}
+              ) : (
+                <Button
+                  size="sm"
+                  variant="default"
+                  className="rounded-xl"
+                  disabled={isActionPending("enable")}
+                  onClick={() => onAction(job.id, "enable")}
+                >
+                  <Power className="size-3" />
+                  {isActionPending("enable") ? "启用中…" : "启用"}
+                </Button>
+              )
+            ) : null}
+            {/* 触发按钮 */}
+            <Button
+              size="sm"
+              variant="secondary"
+              className="rounded-xl"
+              disabled={isActionPending("trigger")}
+              onClick={() => onAction(job.id, "trigger")}
+            >
+              <Zap className="size-3" />
+              {isActionPending("trigger") ? "触发中…" : "触发"}
+            </Button>
+          </div>
         </div>
       </CardHeader>
 
-      {/* 展开态: 显示完整详情 + 启用/禁用 + 删除 */}
-      {expanded ? (
-        <CardContent className="space-y-4">
+      {/* Dialog 详情 */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings2 className="size-4" />
+              {job.name}
+              <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                {job.id}
+              </span>
+            </DialogTitle>
+            {(job.categories || []).length > 0 ? (
+              <div className="flex flex-wrap gap-1">
+                {(job.categories || []).map((c) => (
+                  <Badge key={c} variant="outline" className="px-1.5 py-0 text-[10px] font-normal">
+                    {c}
+                  </Badge>
+                ))}
+              </div>
+            ) : null}
+          </DialogHeader>
+
+          {/* 状态条 */}
+          <div className="flex flex-wrap items-center gap-2">
+            {isRunning ? (
+              <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600/90">运行中</Badge>
+            ) : (
+              <Badge variant="secondary">已停止</Badge>
+            )}
+            {job.supports_enable ? (
+              <Badge variant={job.config_enabled ? "outline" : "destructive"}>
+                {job.config_enabled ? "已启用" : "已禁用"}
+              </Badge>
+            ) : null}
+          </div>
+
+          {/* 计算逻辑 */}
           {job.description ? (
             <>
               <div className="space-y-2 text-sm">
@@ -349,36 +312,20 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             </>
           ) : null}
 
+          {/* 统计网格 */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat
-              icon={<ListChecks className="size-3.5" />}
-              label="累计运行"
-              value={totalRuns ?? "—"}
-            />
-            <Stat
-              icon={<TimerReset className="size-3.5" />}
-              label="最后耗时"
-              value={formatSeconds(lastDuration ?? null)}
-            />
-            <Stat
-              icon={<Activity className="size-3.5" />}
-              label="处理标的"
-              value={lastTargets ?? "—"}
-            />
-            <Stat
-              icon={<Clock className="size-3.5" />}
-              label="注册时间"
-              value={formatDateTime(registeredAt)}
-            />
+            <Stat icon={<ListChecks className="size-3.5" />} label="累计运行" value={totalRuns ?? "—"} />
+            <Stat icon={<TimerReset className="size-3.5" />} label="最后耗时" value={formatSeconds(lastDuration ?? null)} />
+            <Stat icon={<Activity className="size-3.5" />} label="处理标的" value={lastTargets ?? "—"} />
+            <Stat icon={<Clock className="size-3.5" />} label="注册时间" value={formatDateTime(registeredAt)} />
           </div>
 
           <Separator />
 
+          {/* 上次运行 + 注册信息 */}
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5 text-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                上次运行
-              </div>
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">上次运行</div>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">时间：</span>
                 <span>{formatDateTime(lastRunAt)}</span>
@@ -387,19 +334,14 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <span className="text-muted-foreground">状态：</span>
                 {lastStatus ? (
                   <Badge variant={statusBadgeVariant(lastStatus)}>{lastStatus}</Badge>
-                ) : (
-                  <span>—</span>
-                )}
+                ) : <span>—</span>}
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">处理标的：</span>
                 <span>{lastTargets ?? "—"} 个</span>
               </div>
               {lastError ? (
-                <div className={cn(
-                  "flex items-start gap-2",
-                  lastStatus === "skipped" ? "text-amber-600" : "text-destructive",
-                )}>
+                <div className={cn("flex items-start gap-2", lastStatus === "skipped" ? "text-amber-600" : "text-destructive")}>
                   <AlertTriangle className="mt-0.5 size-3.5" />
                   <span className="text-xs leading-5">{lastError}</span>
                 </div>
@@ -413,9 +355,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             </div>
 
             <div className="space-y-1.5 text-sm">
-              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                注册信息
-              </div>
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">注册信息</div>
               <div className="flex items-center gap-2">
                 <FileCode2 className="size-3.5 text-muted-foreground" />
                 <span className="text-muted-foreground">config：</span>
@@ -423,15 +363,11 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">service：</span>
-                <span className="break-all font-mono text-xs">
-                  {job.service_class || "—"}
-                </span>
+                <span className="break-all font-mono text-xs">{job.service_class || "—"}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">module：</span>
-                <span className="break-all font-mono text-xs">
-                  {job.service_module || "—"}
-                </span>
+                <span className="break-all font-mono text-xs">{job.service_module || "—"}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">注册时间：</span>
@@ -440,13 +376,12 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             </div>
           </div>
 
+          {/* Inflight */}
           {inflight && Object.keys(inflight).length > 0 ? (
             <>
               <Separator />
               <div className="space-y-1.5 text-sm">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  正在执行
-                </div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">正在执行</div>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(inflight).map(([targetId, startedAtValue]) => (
                     <Badge key={targetId} variant="secondary">
@@ -458,34 +393,26 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             </>
           ) : null}
 
+          {/* Per-target last run */}
           {lastRun && Object.keys(lastRun).length > 0 ? (
             <>
               <Separator />
               <div className="space-y-1.5 text-sm">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  最近 per-target run
-                </div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">最近 per-target run</div>
                 <div className="space-y-1">
-                  {Object.entries(lastRun)
-                    .slice(0, 4)
-                    .map(([targetId, info]) => {
-                      const infoRecord = info as Record<string, unknown> | undefined
-                      const status = pickValue<string>(infoRecord, "status") || "—"
-                      return (
-                        <div
-                          key={targetId}
-                          className="flex items-center justify-between gap-3 text-xs"
-                        >
-                          <span className="font-mono">{targetId}</span>
-                          <span className="flex items-center gap-2 text-muted-foreground">
-                            <Badge variant={statusBadgeVariant(status)} className="px-1.5 py-0">
-                              {status}
-                            </Badge>
-                            <span>{formatDateTime(pickValue<string>(infoRecord, "finished_at"))}</span>
-                          </span>
-                        </div>
-                      )
-                    })}
+                  {Object.entries(lastRun).slice(0, 4).map(([targetId, info]) => {
+                    const infoRecord = info as Record<string, unknown> | undefined
+                    const status = pickValue<string>(infoRecord, "status") || "—"
+                    return (
+                      <div key={targetId} className="flex items-center justify-between gap-3 text-xs">
+                        <span className="font-mono">{targetId}</span>
+                        <span className="flex items-center gap-2 text-muted-foreground">
+                          <Badge variant={statusBadgeVariant(status)} className="px-1.5 py-0">{status}</Badge>
+                          <span>{formatDateTime(pickValue<string>(infoRecord, "finished_at"))}</span>
+                        </span>
+                      </div>
+                    )
+                  })}
                   {Object.keys(lastRun).length > 4 ? (
                     <div className="text-xs text-muted-foreground">
                       ……还有 {Object.keys(lastRun).length - 4} 个 target
@@ -498,30 +425,30 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
 
           <Separator />
           <JobHistorySection items={history} loading={historyLoading} />
-
           <Separator />
 
+          {/* 操作按钮组 */}
           <div className="flex flex-wrap items-center gap-2">
+            {isRunning ? (
+              <Button size="sm" variant="destructive" className="rounded-xl" disabled={isActionPending("stop")} onClick={() => onAction(job.id, "stop")}>
+                <CirclePause className="size-3.5" />
+                {isActionPending("stop") ? "停止中…" : "停止调度"}
+              </Button>
+            ) : (
+              <Button size="sm" variant="default" className="rounded-xl" disabled={isActionPending("start")} onClick={() => onAction(job.id, "start")}>
+                <Play className="size-3.5" />
+                {isActionPending("start") ? "启动中…" : "启动调度"}
+              </Button>
+            )}
+
             {job.supports_enable ? (
               job.config_enabled ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="rounded-xl"
-                  disabled={isActionPending("disable")}
-                  onClick={() => onAction(job.id, "disable")}
-                >
+                <Button size="sm" variant="outline" className="rounded-xl" disabled={isActionPending("disable")} onClick={() => onAction(job.id, "disable")}>
                   <PowerOff className="size-3.5" />
                   {isActionPending("disable") ? "禁用中…" : "禁用"}
                 </Button>
               ) : (
-                <Button
-                  size="sm"
-                  variant="default"
-                  className="rounded-xl"
-                  disabled={isActionPending("enable")}
-                  onClick={() => onAction(job.id, "enable")}
-                >
+                <Button size="sm" variant="default" className="rounded-xl" disabled={isActionPending("enable")} onClick={() => onAction(job.id, "enable")}>
                   <Power className="size-3.5" />
                   {isActionPending("enable") ? "启用中…" : "启用"}
                 </Button>
@@ -531,26 +458,28 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             {job.config_enabled && !isRunning ? (
               <span className="inline-flex items-center gap-1 text-xs text-amber-600">
                 <AlertTriangle className="size-3" />
-                配置启用但线程未运行（重启 Flask 或点 "启动调度"）
+                配置启用但线程未运行
               </span>
             ) : null}
             {job.config_enabled === false && isRunning ? (
               <span className="inline-flex items-center gap-1 text-xs text-amber-600">
                 <AlertTriangle className="size-3" />
-                线程运行中但配置已禁用（下次 start 会读取新配置）
+                线程运行中但配置已禁用
               </span>
             ) : null}
 
-            {/* 删除按钮 + 确认对话框 (仅在展开时显示) */}
             <DeleteJobButton
               jobId={job.id}
               jobName={job.name}
               pending={isActionPending("delete")}
-              onConfirm={() => onAction(job.id, "delete")}
+              onConfirm={() => {
+                onAction(job.id, "delete")
+                setDialogOpen(false)
+              }}
             />
           </div>
-        </CardContent>
-      ) : null}
+        </DialogContent>
+      </Dialog>
     </Card>
   )
 }
@@ -600,21 +529,6 @@ function JobHistorySection({
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function CompactMetric({
-  label,
-  value,
-}: {
-  label: string
-  value: React.ReactNode
-}) {
-  return (
-    <div className="rounded-xl border border-border/30 bg-muted/30 px-3 py-2">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-xs font-medium text-foreground">{value}</div>
     </div>
   )
 }
