@@ -117,7 +117,7 @@ class ApplicationAnalysisScheduler:
                 print(f'[ApplicationAnalysisScheduler] trigger target={target_id} source={source}', flush=True)
                 started = time.monotonic()
                 payload = run_application_analysis_target(target)
-                paths = write_result(target, payload)
+                paths = write_result(target, payload, source_kind=source)
                 elapsed = int(time.monotonic() - started)
                 last_run = {
                     'status': 'success',
@@ -270,7 +270,7 @@ class ApplicationAnalysisScheduler:
                 try:
                     started = time.monotonic()
                     payload = run_application_analysis_target(target)
-                    paths = write_result(target, payload)
+                    paths = write_result(target, payload, source_kind="scheduler")
                     elapsed = int(time.monotonic() - started)
                     self._runs_count += 1
                     with self._last_run_lock:

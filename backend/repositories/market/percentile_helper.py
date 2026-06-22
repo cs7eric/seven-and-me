@@ -25,7 +25,7 @@
 from datetime import date, timedelta
 from typing import Any
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.duckdb_store import conn
 
 # 默认 3 年 ≈ 756 个交易日 ≈ 1060 个日历天
 _DEFAULT_LOOKBACK = 1060
@@ -63,17 +63,17 @@ def percentile_score(
     td = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
     lookback_start = td - timedelta(days=lookback_days)
     try:
-        con = get_conn(read_only=True)
-        row = con.execute(
-            f"""
-            SELECT COUNT(*) FILTER (WHERE {column} < ?) * 100.0
-                   / NULLIF(COUNT(*), 0) AS score
-            FROM {table}
-            WHERE trade_date >= ? AND trade_date < ?
-              AND {column} IS NOT NULL
-            """,
-            [float(current_value), lookback_start, td],
-        ).fetchone()
+        with conn() as con:
+            row = con.execute(
+                f"""
+                SELECT COUNT(*) FILTER (WHERE {column} < ?) * 100.0
+                       / NULLIF(COUNT(*), 0) AS score
+                FROM {table}
+                WHERE trade_date >= ? AND trade_date < ?
+                  AND {column} IS NOT NULL
+                """,
+                [float(current_value), lookback_start, td],
+            ).fetchone()
         if row and row[0] is not None:
             return round(float(row[0]), 1)
     except Exception:
@@ -118,28 +118,28 @@ def enrich_history_scores(
     lookback_start = end_d - timedelta(days=lookback_days)
 
     try:
-        con = get_conn(read_only=True)
-        rows = con.execute(
-            f"""
-            WITH t AS (
-              SELECT trade_date, {column} AS val
-                FROM {table}
-               WHERE trade_date >= ? AND trade_date <= ?
-                 AND {column} IS NOT NULL
-            )
-            SELECT
-              cur.trade_date,
-              100.0 * SUM(CASE WHEN prev.val < cur.val THEN 1 ELSE 0 END)
-                  / NULLIF(COUNT(prev.val), 0) AS score
-            FROM t cur
-            LEFT JOIN t prev
-              ON prev.trade_date < cur.trade_date
-             AND prev.trade_date >= cur.trade_date - INTERVAL '{lookback_days} days'
-            GROUP BY cur.trade_date
-            ORDER BY cur.trade_date ASC
-            """,
-            [lookback_start, end_d],
-        ).fetchall()
+        with conn() as con:
+            rows = con.execute(
+                f"""
+                WITH t AS (
+                  SELECT trade_date, {column} AS val
+                    FROM {table}
+                   WHERE trade_date >= ? AND trade_date <= ?
+                     AND {column} IS NOT NULL
+                )
+                SELECT
+                  cur.trade_date,
+                  100.0 * SUM(CASE WHEN prev.val < cur.val THEN 1 ELSE 0 END)
+                      / NULLIF(COUNT(prev.val), 0) AS score
+                FROM t cur
+                LEFT JOIN t prev
+                  ON prev.trade_date < cur.trade_date
+                 AND prev.trade_date >= cur.trade_date - INTERVAL '{lookback_days} days'
+                GROUP BY cur.trade_date
+                ORDER BY cur.trade_date ASC
+                """,
+                [lookback_start, end_d],
+            ).fetchall()
         score_map: dict[str, float] = {
             r[0].isoformat(): round(float(r[1]), 1) if r[1] is not None else 50.0
             for r in rows

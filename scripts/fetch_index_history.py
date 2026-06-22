@@ -1,4 +1,4 @@
-"""拉宽基指数 K 线 (沪深300 / 中证1000) → 落 duckdb index_daily_raw.
+"""拉宽基指数 K 线 (上证指数 / 沪深300 / 中证1000) → 落 duckdb index_daily_raw.
 
 用法:
     python scripts/fetch_index_history.py [--days=30] [--codes=000300,000852]

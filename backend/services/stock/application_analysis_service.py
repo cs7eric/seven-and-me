@@ -10,12 +10,16 @@ from typing import Any, Callable
 import requests
 
 from backend.config.settings import (
-    APPLICATION_ANALYSIS_DAILY_SNAPSHOT_FOLDER,
     BASE_DIR,
     STOCK_REFERENCE_CACHE_FOLDER,
 )
 from backend.services.ai_provider_service import ai_provider_registry
 from backend.services.stock.kline_service import resolve_stock_klines
+from backend.services.stock.application_analysis_store import (
+    list_daily_snapshot_files,
+    read_daily_snapshot_payload,
+    save_daily_snapshot_payload,
+)
 from backend.services.stock.sample_data_service import sample_stock_klines
 from backend.utils.json_io import read_json_file
 
@@ -30,7 +34,6 @@ PROMPT_FILE = BASE_DIR / 'prompt' / 'annotation.md'
 SHORT_TERM_DAILY_PROMPT_FILE = BASE_DIR / 'prompt' / 'short_term_daily.md'
 BREADTH_SERIES_FILE = STOCK_REFERENCE_CACHE_FOLDER / 'breadth' / 'series.json'
 APPLICATION_ANALYSIS_DUMP_DIR = Path(BASE_DIR) / 'runtime' / 'application-analysis-dumps'
-APPLICATION_ANALYSIS_DAILY_SNAPSHOT_DIR = APPLICATION_ANALYSIS_DAILY_SNAPSHOT_FOLDER
 APPLICATION_ANALYSIS_DAILY_DEFAULT_HOUR = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_DAILY_HOUR') or '16')
 APPLICATION_ANALYSIS_DAILY_DEFAULT_MINUTE = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_DAILY_MINUTE') or '0')
 APPLICATION_ANALYSIS_DAILY_TIMEZONE_OFFSET_HOURS = int(os.getenv('MINIMAX_APPLICATION_ANALYSIS_DAILY_TZ_OFFSET_HOURS') or '8')
@@ -1158,27 +1161,6 @@ def _sanitize_short_term_only(result: dict) -> dict:
     return result
 
 
-def _atomic_write_json_local(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(prefix=path.name + '.', dir=str(path.parent))
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as file:
-            json.dump(data, file, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
-    except Exception:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-
-
-def _daily_snapshot_target_dir(target: dict[str, Any]) -> Path:
-    target_type = str(target.get('target_type') or 'stock').strip() or 'stock'
-    symbol = str(target.get('symbol') or '').strip() or 'unknown'
-    return APPLICATION_ANALYSIS_DAILY_SNAPSHOT_DIR / f'{target_type}-{symbol}'
-
-
 def _today_key() -> str:
     return datetime.now().strftime('%Y-%m-%d')
 
@@ -1238,10 +1220,8 @@ def write_daily_snapshot(target: dict[str, Any], payload: dict[str, Any], date_k
       跳过写入、返回 updated=False，调用方不应改写文件。
     - 抛错（AI 报错）由上层捕获，此处不会发生。
     """
-    directory = _daily_snapshot_target_dir(target)
-    directory.mkdir(parents=True, exist_ok=True)
     key = (date_key or _today_key()).strip() or _today_key()
-    snapshot_path = directory / f'{key}.json'
+    snapshot_path_hint = None
 
     new_analysis_result = payload.get('analysis_result') or {}
     if not isinstance(new_analysis_result, dict):
@@ -1253,10 +1233,10 @@ def write_daily_snapshot(target: dict[str, Any], payload: dict[str, Any], date_k
     has_new_data = _is_meaningful_payload(new_short_term) or _is_meaningful_payload(new_situation) or _is_meaningful_payload(new_summary)
     if not has_new_data:
         # 无新数据 → 不写文件（避免覆盖已有的整体判断）
-        return {'snapshot_path': str(snapshot_path), 'date': key, 'updated': False, 'reason': 'no_new_data'}
+        return {'snapshot_path': snapshot_path_hint, 'date': key, 'updated': False, 'reason': 'no_new_data'}
 
     # 读取已有快照，作为增量合并的底
-    existing = read_json_file(snapshot_path, None) or {}
+    existing = read_daily_snapshot_payload(target, key) or {}
     if not isinstance(existing, dict):
         existing = {}
 
@@ -1304,37 +1284,17 @@ def write_daily_snapshot(target: dict[str, Any], payload: dict[str, Any], date_k
         merged_analysis_result['data_quality'] = data_quality
     serialized['analysis_result'] = merged_analysis_result
 
-    _atomic_write_json_local(snapshot_path, serialized)
-    return {'snapshot_path': str(snapshot_path), 'date': key, 'updated': True}
+    save_meta = save_daily_snapshot_payload(target, serialized, key)
+    snapshot_path_hint = save_meta.get('snapshot_path')
+    return {'snapshot_path': snapshot_path_hint, 'date': key, 'updated': True}
 
 
 def list_daily_snapshots(target: dict[str, Any], limit: int = 30) -> list[dict[str, Any]]:
-    directory = _daily_snapshot_target_dir(target)
-    if not directory.exists():
-        return []
-    files = sorted(directory.glob('*.json'), key=lambda p: p.name, reverse=True)
-    out: list[dict[str, Any]] = []
-    for path in files[: max(1, limit)]:
-        try:
-            stat = path.stat()
-        except OSError:
-            continue
-        out.append({
-            'filename': path.name,
-            'path': str(path),
-            'date': path.stem,
-            'size_bytes': stat.st_size,
-            'updated_at': datetime.fromtimestamp(stat.st_mtime).isoformat(),
-        })
-    return out
+    return list_daily_snapshot_files(target, limit=limit)
 
 
 def read_daily_snapshot(target: dict[str, Any], date_key: str) -> dict[str, Any] | None:
-    directory = _daily_snapshot_target_dir(target)
-    snapshot_path = directory / f'{date_key}.json'
-    if not snapshot_path.exists():
-        return None
-    return read_json_file(snapshot_path, None)
+    return read_daily_snapshot_payload(target, date_key)
 
 
 def run_application_analysis_recent30_and_snapshot(target: dict[str, Any], date_key: str | None = None) -> dict[str, Any]:

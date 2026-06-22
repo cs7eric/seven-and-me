@@ -5,7 +5,8 @@
   - 调 ``scripts/backfill_ma_count_and_returns.py --days=2 --force``:
     1. 对 duckdb.daily_qfq 算全市场 close > MA20/MA60 计数 + 5d 上涨/60d 新低/252d 新高
        → 落 duckdb.ma_count_daily
-    2. 对 duckdb.index_daily_raw (沪深300/中证1000) 算 5/10/20/60 日累计收益
+    2. 对 duckdb.index_daily_raw (上证/沪深300/中证1000) 补齐后,
+       算 5/10/20/60 日累计收益
        → 落 duckdb.index_returns_daily
   - 强制 --force: MA 计数受新日插入影响, 必须重算; 指数收益同
 
@@ -34,7 +35,12 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.backfill_validator import validate_count, validate_scalar
+from backend.services.scheduler.backfill_validator import (
+    resolve_latest_count_date,
+    resolve_latest_scalar_date,
+    validate_count,
+    validate_scalar,
+)
 from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
@@ -180,8 +186,12 @@ def _job_run_backfill() -> None:
 
         if r.returncode == 0:
             # DuckDB 数据校验: ma_count_daily + index_returns_daily 两表
-            _valid_ma, _err_ma = validate_scalar("ma_count_daily", "total_eligible", target_date)
-            _valid_ir, _err_ir = validate_count("index_returns_daily", target_date, min_rows=4)
+            validated_ma_date = resolve_latest_scalar_date("ma_count_daily", "total_eligible", target_date) or target_date
+            validated_ir_date = resolve_latest_count_date("index_returns_daily", target_date, min_rows=4) or target_date
+            status["lastValidatedTradeDate"] = validated_ma_date.isoformat()
+            status["lastValidatedIndexTradeDate"] = validated_ir_date.isoformat()
+            _valid_ma, _err_ma = validate_scalar("ma_count_daily", "total_eligible", validated_ma_date)
+            _valid_ir, _err_ir = validate_count("index_returns_daily", validated_ir_date, min_rows=4)
             if not _valid_ma:
                 status["lastRunOk"] = False
                 status["lastRunError"] = f"{cst_time} " + "[校验失败] ma_count_daily: " + str(_err_ma)
@@ -198,7 +208,7 @@ def _job_run_backfill() -> None:
 
                 status["lastMessage"] = (
                     f"MA写入{status.get('lastMaUpserted','?')}行 + 指数收益写入{status.get('lastIrUpserted','?')}行"
-                    f" (target={target_date.isoformat()})"
+                    f" (target={validated_ma_date.isoformat()})"
                 )
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(

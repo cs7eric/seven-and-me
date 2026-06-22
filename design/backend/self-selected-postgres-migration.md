@@ -32,6 +32,13 @@
    - 记录 symbol、market、name、notes、target_type
    - 点击条目跳到 `application-analysis`
 
+补充：
+
+- 存在一个系统分组 `target`
+- 它专门承接 `Application Analysis targets` 的双向同步镜像
+- 普通分组不参与这个同步逻辑
+- 系统分组不可删除，且前后端都要做保护
+
 因此数据库只保留两张核心表，不为旧 JSON 结构迁就。
 
 ## 表设计
@@ -145,6 +152,8 @@
 
 - 页面文案不能再把运行时持久化描述成 `reference/self-selected`
 - 条目跳转分析页时优先使用后端返回的 `target_type`
+- target 系统组要有明确 badge / 说明文案
+- 普通分组里的股票允许提供 `加入 target` 快捷入口
 
 ## 迁移策略
 

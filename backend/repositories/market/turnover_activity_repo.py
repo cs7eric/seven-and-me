@@ -19,7 +19,7 @@ import time
 from datetime import date, timedelta
 from typing import Any
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.duckdb_store import conn, get_conn
 from backend.repositories.market.percentile_helper import (
     enrich_history_scores,
     percentile_score,
@@ -49,33 +49,33 @@ def _index_amount_rows_up_to(
     返回行:
       (trade_date, sh_amount_yuan, sz_amount_yuan, total_amount_yi)
     """
-    con = get_conn()
-    rows = con.execute(
-        """
-        SELECT trade_date,
-               SUM(CASE WHEN code = ? THEN amount ELSE 0 END) AS sh_amount,
-               SUM(CASE WHEN code = ? THEN amount ELSE 0 END) AS sz_amount,
-               (SUM(CASE WHEN code = ? THEN amount ELSE 0 END)
-                + SUM(CASE WHEN code = ? THEN amount ELSE 0 END)) / 100000000.0 AS total_amount_yi
-          FROM daily_raw
-         WHERE trade_date <= ?
-           AND code IN (?, ?)
-         GROUP BY trade_date
-        HAVING COUNT(DISTINCT code) = 2
-         ORDER BY trade_date DESC
-         LIMIT ?
-        """,
-        [
-            SH_INDEX_CODE,
-            SZ_INDEX_CODE,
-            SH_INDEX_CODE,
-            SZ_INDEX_CODE,
-            trade_date,
-            SH_INDEX_CODE,
-            SZ_INDEX_CODE,
-            limit_days,
-        ],
-    ).fetchall()
+    with conn() as con:
+        rows = con.execute(
+            """
+            SELECT trade_date,
+                   SUM(CASE WHEN code = ? THEN amount ELSE 0 END) AS sh_amount,
+                   SUM(CASE WHEN code = ? THEN amount ELSE 0 END) AS sz_amount,
+                   (SUM(CASE WHEN code = ? THEN amount ELSE 0 END)
+                    + SUM(CASE WHEN code = ? THEN amount ELSE 0 END)) / 100000000.0 AS total_amount_yi
+              FROM daily_raw
+             WHERE trade_date <= ?
+               AND code IN (?, ?)
+             GROUP BY trade_date
+            HAVING COUNT(DISTINCT code) = 2
+             ORDER BY trade_date DESC
+             LIMIT ?
+            """,
+            [
+                SH_INDEX_CODE,
+                SZ_INDEX_CODE,
+                SH_INDEX_CODE,
+                SZ_INDEX_CODE,
+                trade_date,
+                SH_INDEX_CODE,
+                SZ_INDEX_CODE,
+                limit_days,
+            ],
+        ).fetchall()
     return rows
 
 
@@ -88,38 +88,38 @@ def get_turnover_activity_source_dates(
     e = _to_date(end)
     if s is None or e is None or s > e:
         return []
-    con = get_conn()
-    rows = con.execute(
-        """
-        SELECT trade_date
-          FROM daily_raw
-         WHERE trade_date BETWEEN ? AND ?
-           AND code IN (?, ?)
-         GROUP BY trade_date
-        HAVING COUNT(DISTINCT code) = 2
-         ORDER BY trade_date ASC
-        """,
-        [s, e, SH_INDEX_CODE, SZ_INDEX_CODE],
-    ).fetchall()
+    with conn() as con:
+        rows = con.execute(
+            """
+            SELECT trade_date
+              FROM daily_raw
+             WHERE trade_date BETWEEN ? AND ?
+               AND code IN (?, ?)
+             GROUP BY trade_date
+            HAVING COUNT(DISTINCT code) = 2
+             ORDER BY trade_date ASC
+            """,
+            [s, e, SH_INDEX_CODE, SZ_INDEX_CODE],
+        ).fetchall()
     return [r[0].date() if hasattr(r[0], "date") else r[0] for r in rows]
 
 
 def get_turnover_activity_source_coverage() -> dict[str, date | None]:
     """返回成交活跃度源数据覆盖范围."""
-    con = get_conn()
-    row = con.execute(
-        """
-        SELECT MIN(trade_date), MAX(trade_date), COUNT(*)
-          FROM (
-                SELECT trade_date
-                  FROM daily_raw
-                 WHERE code IN (?, ?)
-                 GROUP BY trade_date
-                HAVING COUNT(DISTINCT code) = 2
-               ) t
-        """,
-        [SH_INDEX_CODE, SZ_INDEX_CODE],
-    ).fetchone()
+    with conn() as con:
+        row = con.execute(
+            """
+            SELECT MIN(trade_date), MAX(trade_date), COUNT(*)
+              FROM (
+                    SELECT trade_date
+                      FROM daily_raw
+                     WHERE code IN (?, ?)
+                     GROUP BY trade_date
+                    HAVING COUNT(DISTINCT code) = 2
+                   ) t
+            """,
+            [SH_INDEX_CODE, SZ_INDEX_CODE],
+        ).fetchone()
     if not row or row[0] is None:
         return {"firstDate": None, "lastDate": None, "rowCount": 0}
     return {
@@ -250,11 +250,11 @@ def get_turnover_activity(trade_date: date | str) -> dict | None:
     td = _to_date(trade_date)
     if td is None:
         return None
-    con = get_conn(read_only=True)
-    r = con.execute(
-        f"SELECT {_TA_SELECT} FROM turnover_activity_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            f"SELECT {_TA_SELECT} FROM turnover_activity_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     return _row_to_payload(r) if r else None
 
 
@@ -267,12 +267,12 @@ def get_turnover_activity_history(
     e = _to_date(end) if end is not None else s
     if s is None or e is None:
         return []
-    con = get_conn(read_only=True)
-    rows = con.execute(
-        f"SELECT {_TA_SELECT} FROM turnover_activity_daily "
-        f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
-        [s, e],
-    ).fetchall()
+    with conn() as con:
+        rows = con.execute(
+            f"SELECT {_TA_SELECT} FROM turnover_activity_daily "
+            f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
+            [s, e],
+        ).fetchall()
     items = [_row_to_payload(r) for r in rows]
     enrich_history_scores(items, "turnover_activity_daily", "ratio", e)
     return items
@@ -280,10 +280,10 @@ def get_turnover_activity_history(
 
 def coverage() -> dict[str, Any]:
     """运维用: 第一条 / 最后一条 / 总条数."""
-    con = get_conn(read_only=True)
-    r = con.execute(
-        "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) FROM turnover_activity_daily"
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) FROM turnover_activity_daily"
+        ).fetchone()
     return {
         "firstDate": r[0].isoformat() if r[0] else None,
         "lastDate": r[1].isoformat() if r[1] else None,

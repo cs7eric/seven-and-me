@@ -40,7 +40,11 @@ from apscheduler.triggers.cron import CronTrigger
 from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
-from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
+from backend.services.scheduler.backfill_validator import (
+    fetch_scalar_value,
+    resolve_latest_scalar_date,
+    validate_scalar,
+)
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 
@@ -87,7 +91,7 @@ _NINE_FACTOR_TABLES = [
 ]
 
 
-def _all_nine_factors_ready(target_date) -> tuple[bool, list[str]]:
+def _all_nine_factors_ready(target_date) -> tuple[bool, list[str], date | None]:
     """检查 9 张因子子表在 target_date 是否都有非 NULL 且 > 0 的数据.
 
     Returns:
@@ -97,11 +101,16 @@ def _all_nine_factors_ready(target_date) -> tuple[bool, list[str]]:
     from backend.services.scheduler.backfill_validator import validate_scalar
 
     missing: list[str] = []
+    resolved_dates: list[date] = []
     for table, column, label in _NINE_FACTOR_TABLES:
-        ok, err = validate_scalar(table, column, target_date)
+        effective_date = resolve_latest_scalar_date(table, column, target_date)
+        if effective_date is not None:
+            resolved_dates.append(effective_date)
+        ok, err = validate_scalar(table, column, effective_date or target_date)
         if not ok:
             missing.append(f"{label} ({table}.{column}): {err}")
-    return len(missing) == 0, missing
+    validated_date = min(resolved_dates) if resolved_dates else None
+    return len(missing) == 0, missing, validated_date
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +183,7 @@ def job_run_backfill() -> dict:
         return {"ok": False, "error": msg}
 
     # --- 前置检查: 9 factor 必须全部就绪 ---
-    all_ready, missing_factors = _all_nine_factors_ready(target_date)
+    all_ready, missing_factors, validated_date = _all_nine_factors_ready(target_date)
     if not all_ready:
         msg = "[前置检查] 以下因子在 {} 无数据, MSI 跳过: {}".format(
             target_date.isoformat(), "; ".join(missing_factors))
@@ -193,6 +202,8 @@ def job_run_backfill() -> dict:
             error=msg,
         )
         return {"ok": True, "skipped": True, "reason": msg}
+    effective_target_date = validated_date or target_date
+    status["lastValidatedTradeDate"] = effective_target_date.isoformat()
 
     try:
         script_env = {
@@ -223,22 +234,24 @@ def job_run_backfill() -> dict:
 
         if r.returncode == 0:
             # DuckDB 数据校验: 有值且不为 0
-            _valid_ok, _valid_err = validate_scalar("market_sentiment_index_daily", "composite_score", target_date)
+            _valid_ok, _valid_err = validate_scalar("market_sentiment_index_daily", "composite_score", effective_target_date)
             if not _valid_ok:
                 status["lastRunOk"] = False
                 status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(_valid_err)
+                status["lastStatus"] = "failed"
                 status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
                 logger.warning("market_sentiment_index validation failed in %.1fs: %s", elapsed, _valid_err)
             else:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
+                status["lastStatus"] = "success"
 
-                msi_val = fetch_scalar_value("market_sentiment_index_daily", "composite_score", target_date)
+                msi_val = fetch_scalar_value("market_sentiment_index_daily", "composite_score", effective_target_date)
                 up = status.get("lastRowsUpserted")
                 parts = [f"MSI={msi_val:.2f}"] if msi_val is not None else []
                 if up is not None:
                     parts.append(f"覆盖写入{up}行")
-                parts.append(f"(target={target_date.isoformat()})")
+                parts.append(f"(target={effective_target_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if msi_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
@@ -249,6 +262,7 @@ def job_run_backfill() -> dict:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False
             status["lastRunError"] = f"{cst_time} " + str(err_tail or f"exit={r.returncode}")
+            status["lastStatus"] = "failed"
             status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
             logger.warning(
                 "market_sentiment_index failed in %.1fs: exit=%d\n%s",
@@ -257,12 +271,14 @@ def job_run_backfill() -> dict:
     except subprocess.TimeoutExpired:
         status["lastRunOk"] = False
         status["lastRunError"] = f"{cst_time} " + f"timeout (>{_JOB_TIMEOUT_SECONDS}s)"
+        status["lastStatus"] = "failed"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("market_sentiment_index timeout after %.1fs", time.time() - t0)
     except Exception as exc:
         status["lastRunOk"] = False
         status["lastRunError"] = f"{cst_time} " + f"{type(exc).__name__}: {exc}"[:300]
+        status["lastStatus"] = "failed"
         status["totalFailures"] = int(status.get("totalFailures") or 0) + 1
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         logger.warning("market_sentiment_index crashed: %s\n%s", exc, traceback.format_exc())

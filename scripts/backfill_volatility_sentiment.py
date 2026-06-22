@@ -63,6 +63,18 @@ def _index_row_count() -> int:
     return int(r[0]) if r else 0
 
 
+def _latest_index_trade_date() -> date | None:
+    con = get_conn()
+    r = con.execute(
+        "SELECT MAX(trade_date) FROM index_daily_raw WHERE code = ?",
+        [UNDERLYING["full"]],
+    ).fetchone()
+    if not r or r[0] is None:
+        return None
+    v = r[0]
+    return v.date() if hasattr(v, "date") else v
+
+
 def _auto_pull_index_history(days: int = 300) -> None:
     """数据不足时自动拉一次 (走 fetch_index_history.py 子进程)."""
     if not FETCH_SCRIPT.exists():
@@ -120,18 +132,27 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="不写库, 只打印会跑哪些日")
     args = ap.parse_args()
 
+    end_date = date.fromisoformat(args.date) if args.date else _resolve_end_date()
+
     # 1. 数据充足性检查
     min_rows = DEFAULT_VOL_LOOKBACK + DEFAULT_VOL_WINDOW + 10  # 282
     have = _index_row_count()
-    log.info("index_daily_raw[%s] 现有 %d 行 (最少 %d)", UNDERLYING["full"], have, min_rows)
-    if have < min_rows:
+    latest_td = _latest_index_trade_date()
+    need_fresh_pull = is_trading_day(end_date) and (latest_td is None or latest_td < end_date)
+    log.info(
+        "index_daily_raw[%s] 现有 %d 行 (最少 %d), latest=%s, target=%s",
+        UNDERLYING["full"], have, min_rows, latest_td, end_date,
+    )
+    if have < min_rows or need_fresh_pull:
         if args.auto_pull:
             _auto_pull_index_history(days=300)
             have = _index_row_count()
-            log.info("  auto-pull 后: %d 行", have)
+            latest_td = _latest_index_trade_date()
+            log.info("  auto-pull 后: rows=%d latest=%s", have, latest_td)
         else:
-            log.warning("  数据不足且关闭 auto-pull, 回填出来的 vol 仍可用, "
-                        "但 percentile 样本数会少")
+            log.warning(
+                "  指数历史不足或未刷新到目标日且关闭 auto-pull, 回填可能回退到旧交易日"
+            )
 
     # 2. 构造候选日
     if args.date:
@@ -143,7 +164,6 @@ def main() -> int:
         dates = [target]
         log.info("单日模式: %s", target.isoformat())
     else:
-        end_date = _resolve_end_date()
         start = end_date - timedelta(days=args.days)
         dates = _walk_trading_days(start, end_date)
         log.info("回填窗口: %s ~ %s, 候选交易日 %d 天, force=%s, %s=%s",

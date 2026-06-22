@@ -175,14 +175,9 @@ export function MarketSentimentIndexCard({
                 ? "text-blue-600"
                 : "text-slate-400"
 
-  // ECharts 折线: xAxis 取 msi ∩ sh (两边都有的日期) — 任一数据源缺日期都不会断线.
-  // (msi 历史上有过周末脏数据, sh tencent API 不收录调休周六; 交集化比 null-patching 鲁棒)
-  const alignedHistory = (() => {
-    if (!shIndex || shIndex.length === 0) return (history ?? [])
-    const shDates = new Set(shIndex.map((it) => it.tradeDate))
-    return (history ?? []).filter((it) => shDates.has(it.tradeDate))
-  })()
-  const sortedHistory = alignedHistory
+  // 以 MSI 自身历史作为主时间轴.
+  // 上证/主力净流/成交额缺某一天时只让叠加线出现 null, 不再把 MSI 最后一天一起裁掉.
+  const sortedHistory = (history ?? [])
     .slice()
     .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))
   const sentimentPoints = sortedHistory.map((it) => ({

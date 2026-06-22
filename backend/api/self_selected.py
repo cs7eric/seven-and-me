@@ -87,6 +87,8 @@ def delete_group(group_id: str):
         if not ok:
             return _err(f"group {group_id} not found", 404)
         return jsonify({"ok": True, "group_id": group_id})
+    except ValueError as exc:
+        return _err(str(exc), 400)
     except Exception as exc:  # noqa: BLE001
         logger.exception("delete_group failed")
         return _err(str(exc), 500)

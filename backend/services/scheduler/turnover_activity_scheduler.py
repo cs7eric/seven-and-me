@@ -27,7 +27,11 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
+from backend.services.scheduler.backfill_validator import (
+    fetch_scalar_value,
+    resolve_latest_scalar_date,
+    validate_scalar,
+)
 from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
@@ -240,7 +244,9 @@ def job_run_backfill() -> dict:
         status["lastDaysRequested"] = 3
 
         if r.returncode == 0:
-            valid, err_msg = validate_scalar("turnover_activity_daily", "ratio", target_date)
+            validated_date = resolve_latest_scalar_date("turnover_activity_daily", "ratio", target_date) or target_date
+            status["lastValidatedTradeDate"] = validated_date.isoformat()
+            valid, err_msg = validate_scalar("turnover_activity_daily", "ratio", validated_date)
             if not valid:
                 status["lastRunOk"] = False
                 status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(err_msg)
@@ -250,9 +256,9 @@ def job_run_backfill() -> dict:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
 
-                ratio_val = fetch_scalar_value("turnover_activity_daily", "ratio", target_date)
-                score_val = fetch_scalar_value("turnover_activity_daily", "score", target_date)
-                status["lastMessage"] = _build_turnover_activity_success_message(target_date)
+                ratio_val = fetch_scalar_value("turnover_activity_daily", "ratio", validated_date)
+                score_val = fetch_scalar_value("turnover_activity_daily", "score", validated_date)
+                status["lastMessage"] = _build_turnover_activity_success_message(validated_date)
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info("turnover_activity ok in %.1fs: ratio=%s score=%s", elapsed, ratio_val, score_val)
         else:

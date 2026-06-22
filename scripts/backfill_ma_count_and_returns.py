@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import subprocess
 import sys
 import time
 from datetime import date, timedelta
@@ -38,6 +39,8 @@ logging.basicConfig(
 log = logging.getLogger("backfill_metrics")
 
 _TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_FETCH_INDEX_SCRIPT = _REPO_ROOT / "scripts" / "fetch_index_history.py"
 
 
 def _walk_trading_days(start: date, end: date) -> list[date]:
@@ -81,6 +84,48 @@ def _has_index_daily_data(trade_date: date) -> bool:
         [trade_date],
     ).fetchone()
     return bool(r and r[0] >= 2)
+
+
+def _latest_index_daily_date() -> date | None:
+    con = get_conn()
+    r = con.execute(
+        "SELECT MIN(latest_trade_date) FROM ("
+        "  SELECT code, MAX(trade_date) AS latest_trade_date"
+        "    FROM index_daily_raw"
+        "   WHERE code IN ('sh000001', 'sh000300', 'sh000852')"
+        "   GROUP BY code"
+        ") t"
+    ).fetchone()
+    if not r or r[0] is None:
+        return None
+    v = r[0]
+    return v.date() if hasattr(v, "date") else v
+
+
+def _auto_pull_index_history(days: int = 30) -> None:
+    if not _FETCH_INDEX_SCRIPT.exists():
+        log.warning("index auto-pull 跳过: fetch_index_history.py 不存在")
+        return
+    log.info(
+        "index auto-pull: %s --days=%d --codes=000001,000300,000852",
+        _FETCH_INDEX_SCRIPT.name,
+        days,
+    )
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                str(_FETCH_INDEX_SCRIPT),
+                "--days",
+                str(days),
+                "--codes",
+                "000001,000300,000852",
+            ],
+            check=True,
+            cwd=str(_REPO_ROOT),
+        )
+    except subprocess.CalledProcessError as exc:
+        log.warning("index auto-pull 失败: rc=%d", exc.returncode)
 
 
 def _ma_exists(trade_date: date) -> bool:
@@ -169,6 +214,18 @@ def main() -> int:
 
     # ----- 指数收益 (单日循环, index_daily_raw 小表 ~ 660 行, 不需要 bulk) -----
     if not args.skip_index:
+        latest_index_date = _latest_index_daily_date()
+        if (
+            end_date in dates
+            and (latest_index_date is None or latest_index_date < end_date)
+        ):
+            log.info(
+                "index_daily_raw 最新仅到 %s, 目标=%s, 先补指数历史",
+                latest_index_date,
+                end_date,
+            )
+            _auto_pull_index_history(days=max(args.days + 5, 30))
+
         candidate_dates = [td for td in dates if _has_index_daily_data(td)]
         if not candidate_dates:
             log.info("index: 无候选交易日, 跳过")

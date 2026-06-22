@@ -35,7 +35,7 @@ import time
 from datetime import date
 from typing import Any
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.duckdb_store import conn, get_conn
 from backend.repositories.market.percentile_helper import percentile_score
 from backend.services.stock.trading_calendar import is_trading_day
 
@@ -80,17 +80,46 @@ def _level(score: float) -> str:
     return "ice"
 
 
+def _has_turnover_activity_row(td: date) -> bool:
+    """MSI 历史有效交易日判定: turnover_activity_daily 有行才算当天真开市.
+
+    说明:
+      - 旧 trading_calendar 只完整维护近几年节假日, 老历史节假日会被误判成交易日.
+      - turnover_activity_daily 只在真实交易日落盘, 覆盖从 2018-01-02 开始, 足够当
+        MSI (2018-04-02 起) 的历史交易日真值源.
+      - 对"今天"这种盘后尚未跑完全部 job 的场景, 不能强依赖这张表, 所以只给历史日用.
+    """
+    with conn() as con:
+        row = con.execute(
+            "SELECT 1 FROM turnover_activity_daily WHERE trade_date = ? LIMIT 1",
+            [td],
+        ).fetchone()
+    return bool(row)
+
+
+def _is_valid_msi_trade_date(td: date) -> bool:
+    """MSI 专用交易日校验.
+
+    历史日: 必须在 turnover_activity_daily 有落盘, 防止节假日脏数据混入.
+    当天/未来: 仍走 trading_calendar, 避免盘中或盘后 job 未完成时被误判成无效日.
+    """
+    today = date.today()
+    if td < today:
+        return _has_turnover_activity_row(td)
+    return is_trading_day(td)
+
+
 # ---------------------------------------------------------------------------
 # 1. 计算 component scores (各 0-100)
 # ---------------------------------------------------------------------------
 
 def _fetch_vol_score(td: date) -> float | None:
     """波动率情绪: 来自 volatility_sentiment_daily.sentiment_score."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT sentiment_score FROM volatility_sentiment_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT sentiment_score FROM volatility_sentiment_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if r and r[0] is not None:
         return round(float(r[0]), 2)
     return None
@@ -101,11 +130,11 @@ def _fetch_turnover_score(td: date) -> float | None:
 
     兜底: 旧数据 score 为 NULL 时, 用 ratio 现算 percentile (跟 turnover_repo._add_score 同口径).
     """
-    con = get_conn()
-    r = con.execute(
-        "SELECT score, ratio FROM turnover_activity_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT score, ratio FROM turnover_activity_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if not r:
         return None
     score, ratio = r
@@ -118,11 +147,11 @@ def _fetch_turnover_score(td: date) -> float | None:
 
 def _fetch_price_strength_score(td: date) -> float | None:
     """价格强度: ma_count_daily.new_high_252d_pct → 历史分位."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT new_high_252d_pct FROM ma_count_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT new_high_252d_pct FROM ma_count_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if not r or r[0] is None:
         return None
     return percentile_score("ma_count_daily", "new_high_252d_pct", td, float(r[0]))
@@ -130,11 +159,11 @@ def _fetch_price_strength_score(td: date) -> float | None:
 
 def _fetch_risk_appetite_score(td: date) -> float | None:
     """风险偏好: risk_appetite_daily.spread_weighted → 历史分位."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT spread_weighted FROM risk_appetite_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT spread_weighted FROM risk_appetite_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if not r or r[0] is None:
         return None
     return percentile_score("risk_appetite_daily", "spread_weighted", td, float(r[0]))
@@ -142,11 +171,11 @@ def _fetch_risk_appetite_score(td: date) -> float | None:
 
 def _fetch_breadth_score(td: date) -> float | None:
     """市场广度: ma_count_daily.breadth_raw (40%上涨 + 35%MA20 + 25%MA60 合成) → 历史分位."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT breadth_raw FROM ma_count_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT breadth_raw FROM ma_count_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if not r or r[0] is None:
         return None
     return percentile_score("ma_count_daily", "breadth_raw", td, float(r[0]))
@@ -154,11 +183,11 @@ def _fetch_breadth_score(td: date) -> float | None:
 
 def _fetch_limit_emotion_score(td: date) -> float | None:
     """涨跌停情绪: limit_emotion_summary_daily.composite_score (0-100)."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT composite_score FROM limit_emotion_summary_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT composite_score FROM limit_emotion_summary_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if r and r[0] is not None:
         return round(float(r[0]), 2)
     return None
@@ -170,11 +199,11 @@ def _fetch_profit_effect_score(td: date) -> float | None:
     score 存的是 0.6*up5d + 0.4*(100-newlow60d) 的 0-100 合成,
     msi 跟其他 8 factor 一样取 (T-3y, T) 滚动分位.
     """
-    con = get_conn()
-    r = con.execute(
-        "SELECT score FROM profit_effect_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT score FROM profit_effect_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if not r or r[0] is None:
         return None
     return percentile_score("profit_effect_daily", "score", td, float(r[0]))
@@ -182,11 +211,11 @@ def _fetch_profit_effect_score(td: date) -> float | None:
 
 def _fetch_sector_breadth_score(td: date) -> float | None:
     """板块扩散: market_pulse_sector_breadth_daily.advance_pct × 100."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT advance_pct FROM market_pulse_sector_breadth_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT advance_pct FROM market_pulse_sector_breadth_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if r and r[0] is not None:
         return round(float(r[0]) * 100, 2)
     return None
@@ -194,11 +223,11 @@ def _fetch_sector_breadth_score(td: date) -> float | None:
 
 def _fetch_style_risk_score(td: date) -> float | None:
     """风格风险偏好: style_risk_appetite_daily.spread → 历史分位."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT spread FROM style_risk_appetite_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            "SELECT spread FROM style_risk_appetite_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     if not r or r[0] is None:
         return None
     return percentile_score("style_risk_appetite_daily", "spread", td, float(r[0]))
@@ -239,6 +268,9 @@ def calc_market_sentiment_index(trade_date: date | str) -> dict[str, Any] | None
     """
     td = _to_date(trade_date)
     if td is None:
+        return None
+    if not _is_valid_msi_trade_date(td):
+        logger.debug("calc_market_sentiment_index skipped invalid/non-trading day: %s", td)
         return None
     t0 = time.time()
 
@@ -287,8 +319,8 @@ def save_market_sentiment_index(payload: dict) -> None:
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
-    if not is_trading_day(td):
-        logger.debug("save_market_sentiment_index skipped non-trading day: %s", td)
+    if not _is_valid_msi_trade_date(td):
+        logger.debug("save_market_sentiment_index skipped invalid/non-trading day: %s", td)
         return
     components = payload.get("components") or {}
 
@@ -342,6 +374,7 @@ _MSI_COLS = (
     "elapsed_ms", "source",
 )
 _MSI_SELECT = ", ".join(_MSI_COLS)
+_MSI_SELECT_QUALIFIED = ", ".join(f"m.{col}" for col in _MSI_COLS)
 
 
 def _row_to_payload(row: tuple) -> dict:
@@ -378,11 +411,13 @@ def get_market_sentiment_index(trade_date: date | str) -> dict | None:
     td = _to_date(trade_date)
     if td is None:
         return None
-    con = get_conn()
-    r = con.execute(
-        f"SELECT {_MSI_SELECT} FROM market_sentiment_index_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    if not _is_valid_msi_trade_date(td):
+        return None
+    with conn() as con:
+        r = con.execute(
+            f"SELECT {_MSI_SELECT} FROM market_sentiment_index_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     return _row_to_payload(r) if r else None
 
 
@@ -395,12 +430,13 @@ def get_market_sentiment_index_history(
     e = _to_date(end) if end is not None else s
     if s is None or e is None:
         return []
-    con = get_conn()
-    rows = con.execute(
-        f"SELECT {_MSI_SELECT} FROM market_sentiment_index_daily "
-        f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
-        [s, e],
-    ).fetchall()
+    with conn() as con:
+        rows = con.execute(
+            f"SELECT {_MSI_SELECT_QUALIFIED} FROM market_sentiment_index_daily m "
+            f"JOIN turnover_activity_daily t ON t.trade_date = m.trade_date "
+            f"WHERE m.trade_date BETWEEN ? AND ? ORDER BY m.trade_date ASC",
+            [s, e],
+        ).fetchall()
     return [_row_to_payload(r) for r in rows]
 
 

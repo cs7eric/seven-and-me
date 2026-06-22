@@ -115,7 +115,7 @@ export function TargetCard({
               <Target className="size-4 text-slate-600" />
               Watchlist
             </CardTitle>
-            <CardDescription>reference/application-analysis/targets.json</CardDescription>
+            <CardDescription>Postgres application analysis targets + self-selected target sync</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <Button

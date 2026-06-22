@@ -79,9 +79,44 @@ type RotationRow = { date: string; topN: number; items: RotationItem[] }
 
 type MarketPulse = {
   ok: boolean
-  strong: { ok: boolean; top: StrongRow[]; bottom: StrongRow[]; fetchedAt?: string; count?: number }
-  flow:   { ok: boolean; inflow: FlowRow[]; outflow: FlowRow[]; inflowCount?: number; outflowCount?: number; elapsedMs?: number; kind?: string; source?: string; unit?: string }
-  rotation: { ok: boolean; dates: string[]; rows: RotationRow[]; topN?: number }
+  strong: {
+    ok: boolean
+    top: StrongRow[]
+    bottom: StrongRow[]
+    fetchedAt?: string
+    count?: number
+    tradeDate?: string | null
+    requestedTradeDate?: string | null
+    isFallbackTradeDate?: boolean
+    source?: string
+    sourceKind?: string | null
+  }
+  flow: {
+    ok: boolean
+    inflow: FlowRow[]
+    outflow: FlowRow[]
+    inflowCount?: number
+    outflowCount?: number
+    elapsedMs?: number
+    kind?: string
+    source?: string
+    sourceKind?: string | null
+    unit?: string
+    tradeDate?: string | null
+    requestedTradeDate?: string | null
+    isFallbackTradeDate?: boolean
+  }
+  rotation: {
+    ok: boolean
+    dates: string[]
+    rows: RotationRow[]
+    topN?: number
+    tradeDate?: string | null
+    requestedTradeDate?: string | null
+    isFallbackTradeDate?: boolean
+    source?: string
+    sourceKind?: string | null
+  }
 }
 
 type TrendIndustry = {
@@ -212,16 +247,22 @@ function weekday(d: string) {
 // 顶部
 // =============================================================================
 function PageHeader({
-  onRefresh, loading, fetchedAt, flowElapsedMs, scheduler,
+  onRefresh, loading, fetchedAt, flowElapsedMs, scheduler, market,
 }: {
   onRefresh: () => void
   loading: boolean
   fetchedAt?: string
   flowElapsedMs?: number
   scheduler?: SchedulerStatus | null
+  market?: MarketPulse | null
 }) {
   const isTradeTime = scheduler?.isTradeTime
   const isTradingDay = scheduler?.isTradingDay
+  const tradeDate = market?.strong?.tradeDate ?? market?.rotation?.tradeDate
+  const requestedTradeDate = market?.strong?.requestedTradeDate ?? market?.rotation?.requestedTradeDate
+  const isFallbackTradeDate = Boolean(market?.strong?.isFallbackTradeDate ?? market?.rotation?.isFallbackTradeDate)
+  const sourceKind = market?.strong?.sourceKind ?? market?.flow?.sourceKind ?? market?.rotation?.sourceKind
+  const source = market?.strong?.source ?? market?.flow?.source ?? market?.rotation?.source
   return (
     <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
       <div className="border-b border-slate-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-6 sm:p-8 xl:p-10">
@@ -248,9 +289,30 @@ function PageHeader({
               强势板块 · 主力净流入 · 行业轮动
             </h1>
             <p className="text-sm leading-7 text-slate-600">
-              数据源: akshare 同花顺 90 行业资金流 · 每 10 分钟自动刷新{isTradeTime ? " (盘内)" : " (盘后/非交易日已停)"} · 15:30 收盘落盘
+              数据源: Postgres 市场快照 · 每 10 分钟自动刷新{isTradeTime ? " (盘内)" : " (盘后/非交易日已停)"} · 15:30 收盘归档
               {typeof flowElapsedMs === "number" ? <> · flow 拉取耗时 {flowElapsedMs}ms</> : null}
             </p>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              <Badge variant="outline" className="rounded-full px-2.5 py-1">
+                <Calendar className="mr-1 size-3" />
+                展示交易日 {tradeDate ?? "—"}
+              </Badge>
+              <Badge variant="outline" className="rounded-full px-2.5 py-1">
+                请求交易日 {requestedTradeDate ?? "—"}
+              </Badge>
+              <Badge
+                variant="outline"
+                className={`rounded-full px-2.5 py-1 ${isFallbackTradeDate ? "border-amber-200 bg-amber-50 text-amber-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}
+              >
+                {isFallbackTradeDate ? "已回退上一交易日" : "未回退"}
+              </Badge>
+              <Badge variant="outline" className="rounded-full px-2.5 py-1">
+                sourceKind {sourceKind ?? "—"}
+              </Badge>
+              <Badge variant="outline" className="max-w-full rounded-full px-2.5 py-1">
+                source {source ?? "—"}
+              </Badge>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" className="rounded-xl" onClick={onRefresh} disabled={loading}>
@@ -1086,6 +1148,7 @@ export default function MarketPulse() {
           fetchedAt={data?.strong?.fetchedAt}
           flowElapsedMs={data?.flow?.elapsedMs}
           scheduler={scheduler}
+          market={data}
         />
         <SchedulerStatusBar status={scheduler} onTrigger={triggerScheduler} />
         {data ? <SummaryStrip data={data} /> : null}

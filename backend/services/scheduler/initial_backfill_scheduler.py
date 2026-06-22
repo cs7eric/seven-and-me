@@ -28,7 +28,7 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.backfill_validator import validate_count
+from backend.services.scheduler.backfill_validator import validate_count, resolve_latest_count_date
 from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
@@ -136,11 +136,15 @@ def job_run_backfill() -> dict:
 
         stdout = (r.stdout or "") + "\n" + (r.stderr or "")
         m = re.search(r"parsed\s+(\d+)\s+files", stdout)
+        if not m:
+            m = re.search(r"files:\s*(\d+)\s*\(bad:", stdout)
         if m:
             status["lastFilesParsed"] = int(m.group(1))
 
         if r.returncode == 0:
-            valid, err_msg = validate_count("daily_raw", target_date, min_rows=1000)
+            validated_date = resolve_latest_count_date("daily_raw", target_date, min_rows=1000) or target_date
+            status["lastValidatedTradeDate"] = validated_date.isoformat()
+            valid, err_msg = validate_count("daily_raw", validated_date, min_rows=1000)
             if not valid:
                 status["lastRunOk"] = False
                 status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(err_msg)
@@ -150,9 +154,15 @@ def job_run_backfill() -> dict:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
 
-                status["lastMessage"] = f"{cst_time}  ok, parsed {status.get('lastFilesParsed', '?')} files → daily_raw"
+                status["lastMessage"] = (
+                    f"{cst_time}  ok, parsed {status.get('lastFilesParsed', '?')} files → daily_raw"
+                    f" (validated={validated_date.isoformat()})"
+                )
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
-                logger.info("initial_backfill ok in %.1fs: files=%s", elapsed, status.get("lastFilesParsed"))
+                logger.info(
+                    "initial_backfill ok in %.1fs: files=%s validated=%s",
+                    elapsed, status.get("lastFilesParsed"), validated_date,
+                )
         else:
             err_tail = (r.stderr or r.stdout or "")[-500:].strip()
             status["lastRunOk"] = False

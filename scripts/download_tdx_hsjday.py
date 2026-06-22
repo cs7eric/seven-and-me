@@ -56,6 +56,8 @@ TDX_TARGET = REPO_ROOT / "reference" / "tdx" / "day" / "hsjday"
 ZIP_URL = "https://data.tdx.com.cn/vipdoc/hsjday.zip"
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 PROGRESS_EVERY_BYTES = 50 * 1024 * 1024  # 50 MB
+STALE_ZIP_RETRY_COUNT = 3
+STALE_ZIP_RETRY_SLEEP_SECONDS = 20
 
 # data.tdx.com.cn 用 JS challenge 挡非浏览器, urllib 拿到的是 988B 的 <script> 页
 # 用这个 magic 判断下载是不是被挑战页挡了
@@ -64,6 +66,11 @@ _JS_CHALLENGE_MARKERS = (b"<script>", b"function a(a)", b"_0x649a")
 
 def _looks_like_js_challenge(head_bytes: bytes) -> bool:
     return any(m in head_bytes[:2048] for m in _JS_CHALLENGE_MARKERS)
+
+
+def _with_cache_bust(url: str, token: str) -> str:
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}_ts={token}"
 
 
 def _download(url: str, dst: Path) -> int:
@@ -90,6 +97,8 @@ def _download(url: str, dst: Path) -> int:
     req = Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
         "Referer": "https://www.tdx.com.cn/",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
     })
     with urlopen(req, timeout=120) as resp, dst.open("wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
@@ -134,6 +143,8 @@ def _sniff(url: str) -> bytes | None:
         req = Request(url, headers={
             "User-Agent": "Mozilla/5.0",
             "Range": "bytes=0-4095",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
         })
         with urlopen(req, timeout=30) as resp:
             return resp.read()
@@ -154,7 +165,11 @@ def _download_via_playwright_ranges(request_ctx, url: str, total: int, dst: Path
             end = min(written + chunk_size - 1, total - 1)
             r = request_ctx.get(
                 url,
-                headers={"Range": f"bytes={written}-{end}"},
+                headers={
+                    "Range": f"bytes={written}-{end}",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                },
                 timeout=60_000,
             )
             if r.status not in (200, 206):
@@ -229,7 +244,11 @@ def _download_via_playwright_ranges(ctx, url: str, total: int, dst: Path, t0: fl
             end = min(written + chunk_size - 1, total - 1)
             r = ctx.get(
                 url,
-                headers={"Range": f"bytes={written}-{end}"},
+                headers={
+                    "Range": f"bytes={written}-{end}",
+                    "Cache-Control": "no-cache",
+                    "Pragma": "no-cache",
+                },
                 timeout=60_000,
             )
             if r.status not in (200, 206):
@@ -302,6 +321,52 @@ _VERIFY_CODES = {
 }
 
 
+def _read_day_first_last(raw: bytes) -> tuple[int | None, int | None]:
+    if len(raw) < 32:
+        return None, None
+    first = struct.unpack('<I', raw[:4])[0]
+    last = struct.unpack('<I', raw[-32:-28])[0]
+    return first, last
+
+
+def _check_zip_freshness(zip_path: Path, target_date: date) -> dict:
+    """快速抽样 zip 内关键 .day 文件, 判断是否已覆盖 target_date."""
+    td_int = target_date.year * 10000 + target_date.month * 100 + target_date.day
+    result: dict = {"ok": True, "samples": [], "errors": []}
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = set(zf.namelist())
+            has_hsjday_root = any(name.startswith("hsjday/") for name in names)
+            for market, codes in _VERIFY_CODES.items():
+                for code in codes:
+                    inner = f"{market}/lday/{market}{code}.day"
+                    member = f"hsjday/{inner}" if has_hsjday_root else inner
+                    if member not in names:
+                        msg = f"{member} 不存在"
+                        result["errors"].append(msg)
+                        result["samples"].append({"market": market, "code": code, "ok": False, "error": msg})
+                        result["ok"] = False
+                        continue
+                    with zf.open(member) as fh:
+                        raw = fh.read()
+                    first, last = _read_day_first_last(raw)
+                    date_ok = last is not None and last >= td_int
+                    if not date_ok:
+                        msg = f"{market}{code}: 最后日期={last or 'N/A'} < 目标日期={td_int}"
+                        result["errors"].append(msg)
+                        result["ok"] = False
+                    result["samples"].append({
+                        "market": market,
+                        "code": code,
+                        "firstDate": str(first) if first else None,
+                        "lastDate": str(last) if last else None,
+                        "ok": date_ok,
+                    })
+    except Exception as exc:
+        return {"ok": False, "samples": [], "errors": [f"zip 检查失败: {type(exc).__name__}: {exc}"]}
+    return result
+
+
 def _verify_download(hsjday_root: Path, target_date: date) -> dict:
     """验证 .day 文件完整性 + 数据可靠性.
 
@@ -370,18 +435,16 @@ def _verify_download(hsjday_root: Path, target_date: date) -> dict:
             last_date_str = None
             try:
                 with fp.open("rb") as fh:
-                    # 第一条
                     first_raw = fh.read(32)
-                    if len(first_raw) == 32:
-                        first_date_int = struct.unpack('<I', first_raw[0:4])[0]
-                        first_date_str = str(first_date_int)
-                    # 最后一条 (seek 到倒数第二个记录)
-                    if record_count > 1:
+                    last_raw = b""
+                    if record_count > 0:
                         fh.seek(-32, 2)
                         last_raw = fh.read(32)
-                        if len(last_raw) == 32:
-                            last_date_int = struct.unpack('<I', last_raw[0:4])[0]
-                            last_date_str = str(last_date_int)
+                    if len(first_raw) == 32 and len(last_raw) == 32:
+                        first_date_int, _ = _read_day_first_last(first_raw + last_raw)
+                        _, last_date_int = _read_day_first_last(first_raw + last_raw)
+                        first_date_str = str(first_date_int) if first_date_int else None
+                        last_date_str = str(last_date_int) if last_date_int else None
             except Exception as exc:
                 msg = f"读取失败: {exc}"
                 log.warning("[verify] code=%s  %s", f"{market}{code}", msg)
@@ -624,25 +687,53 @@ def main() -> int:
     download_ok = False
     download_already_existed = False
     download_error = None
+    zip_freshness: dict | None = None
     log.info("[step 2] 下载 %s", ZIP_URL)
     if not args.skip_download:
-        if zip_path.exists():
-            log.info("[step 2] zip 已存在 (%s), 跳过下载", _fmt_bytes(zip_path.stat().st_size))
-            download_ok = True
-            download_already_existed = True
-        else:
+        max_attempts = 1 + STALE_ZIP_RETRY_COUNT
+        for attempt in range(1, max_attempts + 1):
+            bust_token = f"{d.isoformat()}-{int(time.time())}-{attempt}"
+            fetch_url = _with_cache_bust(ZIP_URL, bust_token)
             try:
-                _download(ZIP_URL, zip_path)
-                download_ok = True
+                if zip_path.exists():
+                    log.info("[step 2] attempt=%d 发现已有 zip (%s), 先检查新鲜度", attempt, _fmt_bytes(zip_path.stat().st_size))
+                    download_already_existed = True
+                else:
+                    log.info("[step 2] attempt=%d 开始下载 (cache-bust)", attempt)
+                    _download(fetch_url, zip_path)
+                    download_already_existed = False
+
+                zip_freshness = _check_zip_freshness(zip_path, d)
+                if zip_freshness.get("ok"):
+                    download_ok = True
+                    break
+
+                download_error = "; ".join(zip_freshness.get("errors") or [])[:500]
+                log.warning("[step 2] attempt=%d 下载到的 zip 仍是旧包: %s", attempt, download_error)
+                if attempt >= max_attempts:
+                    break
+                if zip_path.exists():
+                    zip_path.unlink()
+                log.info("[step 2] 等待 %ds 后重试下载", STALE_ZIP_RETRY_SLEEP_SECONDS)
+                time.sleep(STALE_ZIP_RETRY_SLEEP_SECONDS)
             except Exception as exc:
                 download_error = f"{type(exc).__name__}: {exc}"
-                log.error("[step 2] 下载失败: %s", download_error)
+                log.error("[step 2] attempt=%d 下载失败: %s", attempt, download_error)
+                if attempt >= max_attempts:
+                    break
+                if zip_path.exists():
+                    zip_path.unlink()
+                time.sleep(STALE_ZIP_RETRY_SLEEP_SECONDS)
     elif not zip_path.exists():
         download_error = f"--skip-download 但 zip 不存在: {zip_path}"
         log.error("[step 2] %s", download_error)
     else:
         download_ok = True
         download_already_existed = True
+        zip_freshness = _check_zip_freshness(zip_path, d)
+        if not zip_freshness.get("ok"):
+            download_ok = False
+            download_error = "; ".join(zip_freshness.get("errors") or [])[:500]
 
     _download_info: dict = {
         "ok": download_ok,
@@ -651,6 +742,8 @@ def main() -> int:
         "fileBytes": zip_path.stat().st_size if zip_path.exists() else 0,
         "alreadyExisted": download_already_existed,
     }
+    if zip_freshness:
+        _download_info["zipFreshness"] = zip_freshness
     if download_error:
         _download_info["error"] = download_error
     log.info("---begin-download-json---\n%s\n---end-download-json---", _json.dumps(_download_info, ensure_ascii=False))

@@ -149,9 +149,9 @@ export function SentimentOverlay({
       })
     }
 
-    const shValues = shOverlay?.data.map((d) => d.value) ?? []
-    const mainNetFlowRawValues = mainNetFlowOverlay?.data.map((d) => d.value) ?? []
-    const amountRawValues = amountOverlay?.data.map((d) => d.value) ?? []
+    const shValues = shOverlay?.data.map((d) => d?.value ?? null) ?? []
+    const mainNetFlowRawValues = mainNetFlowOverlay?.data.map((d) => d?.value ?? null) ?? []
+    const amountRawValues = amountOverlay?.data.map((d) => d?.value ?? null) ?? []
 
     const mainNetFlowYiValues = mainNetFlowRawValues.map((v) =>
       v == null ? null : v / 1e8,

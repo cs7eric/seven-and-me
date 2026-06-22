@@ -161,8 +161,14 @@ def load_status(code: str) -> dict[str, Any] | None:
             if row is None:
                 return None
 
-            # 列值 → dict (同时提供 camelCase 和 snake_case 两种 key)
-            result: dict[str, Any] = dict(row.extra or {})
+            # 先过滤 extra 里历史遗留的 alias 字段, 避免它们盖住列里的最新值.
+            # 例如老版本把 ``last_error`` / ``last_run_at`` 写进 extra, 如果新列值为
+            # None 或调用方只更新 camelCase, 这些遗留 key 会在后续 save_status() 中
+            # 重新把旧值写回列, 造成 "lastRunOk 已成功但 lastRunError 仍显示旧失败"。
+            result: dict[str, Any] = {
+                k: v for k, v in dict(row.extra or {}).items()
+                if _resolve_column(k) is None
+            }
             for col_name, camel_key in _REVERSE_MAP.items():
                 val = getattr(row, col_name, None)
                 if val is not None:
@@ -204,16 +210,36 @@ def save_status(code: str, status: dict[str, Any]) -> bool:
             # 2) 拆字段: 已知列 vs extra
             columns: dict[str, Any] = {"job_id": job_id}
             extra: dict[str, Any] = {}
+            pending_columns: dict[str, Any] = {}
 
-            for key, value in status.items():
+            # 先处理 snake_case/legacy alias, 再处理 camelCase.
+            # 这样当 status 同时带 ``last_error`` 和 ``lastRunError`` 时, 新的 camelCase
+            # 会覆盖旧 alias, 避免旧值把本轮刚清掉的错误再次写回数据库。
+            ordered_items = [
+                (k, v) for k, v in status.items() if k not in _COLUMN_MAP
+            ] + [
+                (k, v) for k, v in status.items() if k in _COLUMN_MAP
+            ]
+
+            for key, value in ordered_items:
                 col = _resolve_column(key)
                 if col:
-                    # Timestamptz columns: ensure value is timezone-aware (assume CST if naive).
                     if value is not None and col in _DATETIME_CST_COLUMNS:
                         value = _ensure_tz(value, _CST)
-                    columns[col] = value
+                    pending_columns[col] = value
                 else:
                     extra[key] = value
+
+            total_runs = pending_columns.get("total_runs")
+            total_failures = pending_columns.get("total_failures")
+            if (
+                isinstance(total_runs, int)
+                and isinstance(total_failures, int)
+                and total_failures > total_runs
+            ):
+                pending_columns["total_runs"] = total_failures
+
+            columns.update(pending_columns)
 
             columns["extra"] = extra
             columns["updated_at"] = datetime.now(timezone.utc)

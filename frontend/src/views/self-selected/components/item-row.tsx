@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Trash2, ChevronRight, FileEdit, Compass, ChevronsDown, ChevronsUp } from "lucide-react"
+import { Trash2, ChevronRight, FileEdit, Compass, ChevronsDown, ChevronsUp, PlusCircle } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 
 import type { SelfSelectedItem, StockSectorEntry, StockSectorsResponse } from "@/lib/api"
@@ -18,10 +18,13 @@ import { getMarketClasses } from "../lib/constants"
 interface ItemRowProps {
   item: SelfSelectedItem
   pending: boolean
+  systemGroup?: boolean
   sectors?: StockSectorsResponse | null
   sectorsLoading?: boolean
   /** 当前 symbol 已加入「应用分析」targets */
   inAnalysis?: boolean
+  canAddToTarget?: boolean
+  onAddToTarget?: (item: SelfSelectedItem) => void | Promise<void>
   onDelete: (itemId: string) => void | Promise<void>
   onEdit?: (item: SelfSelectedItem) => void
 }
@@ -29,9 +32,12 @@ interface ItemRowProps {
 export function ItemRow({
   item,
   pending,
+  systemGroup = false,
   sectors = null,
   sectorsLoading = false,
   inAnalysis = false,
+  canAddToTarget = false,
+  onAddToTarget,
   onDelete,
   onEdit,
 }: ItemRowProps) {
@@ -76,6 +82,12 @@ export function ItemRow({
   const toggleDetails = (e: React.MouseEvent) => {
     e.stopPropagation()
     setDetailsExpanded((prev) => !prev)
+  }
+
+  const handleAddToTarget = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (pending || !onAddToTarget) return
+    void onAddToTarget(item)
   }
 
   return (
@@ -136,6 +148,14 @@ export function ItemRow({
                     已加入
                   </span>
                 ) : null}
+                {systemGroup ? (
+                  <span
+                    className="inline-flex h-7 shrink-0 items-center rounded-full border border-amber-500/35 bg-amber-500/12 px-2.5 text-[10px] font-semibold tracking-wide text-amber-700 shadow-sm shadow-amber-950/5"
+                    title="系统 target 分组镜像项"
+                  >
+                    系统镜像
+                  </span>
+                ) : null}
               </div>
             </div>
           </div>
@@ -163,6 +183,17 @@ export function ItemRow({
             {item.notes ? <span className="truncate">附带备注</span> : <span className="truncate">无备注</span>}
           </div>
           <div className="flex items-center gap-2">
+            {canAddToTarget ? (
+              <button
+                type="button"
+                onClick={handleAddToTarget}
+                className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 transition-colors hover:border-amber-500/50 hover:bg-amber-500/15"
+                aria-label="加入 target 分组"
+              >
+                <PlusCircle className="size-3.5" />
+                加入 target
+              </button>
+            ) : null}
             {hasOverflow ? (
               <button
                 type="button"

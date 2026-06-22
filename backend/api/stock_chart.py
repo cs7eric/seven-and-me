@@ -73,6 +73,17 @@ from backend.utils.json_io import read_json_file, write_json_file
 stock_chart_bp = Blueprint('stock_chart', __name__)
 
 
+def _latest_market_sentiment_trade_date_str() -> str:
+    """返回 Market Sentiment 页面默认展示日: 含今天的最近交易日."""
+    from datetime import date as _date
+    from backend.services.stock.trading_day_resolver import (
+        resolve_target_trading_day_safe,
+    )
+
+    resolved = resolve_target_trading_day_safe()
+    return resolved.isoformat() if resolved is not None else _date.today().isoformat()
+
+
 def sample_stock_klines(symbol: str, period: str) -> list[dict]:
     from backend.services.stock.sample_data_service import sample_stock_klines as app_sample_stock_klines
     return app_sample_stock_klines(symbol, period)
@@ -1308,8 +1319,7 @@ def market_sentiment_ma_count():
     归属: market-sentiment 命名空间 (跟风险偏好同空间), 不是 market-pulse.
     """
     from backend.repositories.market.indicator_repo import calc_ma_count_cached
-    from backend.services.stock.trading_calendar import previous_trading_day
-    date_str = (request.args.get("date") or "").strip() or previous_trading_day().isoformat()
+    date_str = (request.args.get("date") or "").strip() or _latest_market_sentiment_trade_date_str()
     force = request.args.get("force") == "1"
     try:
         payload = calc_ma_count_cached(date_str, force=force)
@@ -1420,9 +1430,10 @@ def market_pulse_sector_history():
 
     URL: ?days=10 (1-120, 默认 10) &topN=20 (None=全量 90)
 
-    数据源: duckdb.market_pulse_sector_daily (持久化)
+    数据源: Postgres market_pulse_sector_daily_snapshots
     """
-    from backend.repositories.market.market_pulse_sector_repo import get_sector_history
+    from backend.config.database import session_scope
+    from backend.repositories.market.market_pulse_pg_repo import MarketPulseRepository
     try:
         days = int(request.args.get("days") or 10)
     except (TypeError, ValueError):
@@ -1434,7 +1445,16 @@ def market_pulse_sector_history():
     except (TypeError, ValueError):
         top_n = None
     try:
-        rows = get_sector_history(days=days, top_n=top_n)
+        with session_scope() as db:
+            repo = MarketPulseRepository(db)
+            repo.ensure_bootstrapped()
+            trade_dates = repo.list_trade_dates(limit=days)
+            rows = []
+            for trade_date in trade_dates:
+                items = repo.get_trade_day_rows(trade_date)
+                if top_n is not None:
+                    items = items[:top_n]
+                rows.append({"tradeDate": trade_date, "items": items})
         return jsonify({
             "ok": True,
             "days": days,
@@ -1453,10 +1473,12 @@ def market_pulse_sector_daily():
 
     URL: ?date=YYYY-MM-DD (默认今天) &topN=10 (1-90, 默认 10)
 
-    数据源: duckdb.market_pulse_sector_daily
+    数据源: Postgres market_pulse_sector_daily_snapshots
     """
     from datetime import date as _date
-    from backend.repositories.market.market_pulse_sector_repo import get_sector_daily_topn
+    from backend.config.database import session_scope
+    from backend.repositories.market.market_pulse_pg_repo import MarketPulseRepository
+    from backend.utils.trading_day import resolve_fund_flow_read_trade_date
     try:
         top_n = int(request.args.get("topN") or 10)
     except (TypeError, ValueError):
@@ -1464,11 +1486,22 @@ def market_pulse_sector_daily():
     top_n = max(1, min(top_n, 90))
     date_str = (request.args.get("date") or "").strip()
     try:
-        td = _date.fromisoformat(date_str) if date_str else _date.today()
+        requested_date = _date.fromisoformat(date_str) if date_str else resolve_fund_flow_read_trade_date()
     except (TypeError, ValueError) as exc:
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
     try:
-        payload = get_sector_daily_topn(td, top_n=top_n)
+        with session_scope() as db:
+            repo = MarketPulseRepository(db)
+            repo.ensure_bootstrapped()
+            trade_date = repo.latest_trade_date(end=requested_date) or repo.latest_trade_date()
+            items = repo.get_trade_day_rows(trade_date) if trade_date else []
+        payload = {
+            "tradeDate": trade_date.isoformat() if trade_date else None,
+            "topN": top_n,
+            "top": items[:top_n],
+            "bottom": list(reversed(items[-min(top_n, len(items)):])),
+            "count": len(items),
+        }
         return jsonify({"ok": True, **payload})
     except Exception as exc:
         logger.exception("sector-daily failed: %s", exc)
@@ -1504,11 +1537,7 @@ def market_sentiment_sector_breadth():
         if date_str:
             td = _date.fromisoformat(date_str)
         else:
-            from backend.services.stock.trading_calendar import previous_trading_day
-            try:
-                td = previous_trading_day()
-            except Exception:
-                td = _date.today()
+            td = _date.fromisoformat(_latest_market_sentiment_trade_date_str())
     except (TypeError, ValueError) as exc:
         return jsonify({"ok": False, "error": f"invalid date: {exc}"}), 400
 
@@ -1584,15 +1613,11 @@ def market_sentiment_risk_appetite():
       2. 没记录才现算 (from daily_qfq LAG) + 自动落盘
     """
     from datetime import date as _date
-    from backend.services.stock.trading_calendar import previous_trading_day
     from backend.repositories.market.risk_appetite_repo import calc_risk_appetite_cached
     date_str = (request.args.get("date") or "").strip()
     force = request.args.get("force") in ("1", "true", "yes")
     if not date_str:
-        try:
-            date_str = previous_trading_day().isoformat()
-        except Exception:
-            date_str = _date.today().isoformat()
+        date_str = _latest_market_sentiment_trade_date_str()
     try:
         payload = calc_risk_appetite_cached(date_str, force=force)
         return jsonify({"ok": True, **payload})
@@ -1652,15 +1677,11 @@ def market_sentiment_limit_emotion_summary():
       - level: hot/active/normal/weak/ice
     """
     from datetime import date as _date
-    from backend.services.stock.trading_calendar import previous_trading_day
     from backend.repositories.market.limit_repo import calc_limit_emotion_summary_cached
     date_str = (request.args.get("date") or "").strip()
     force = request.args.get("force") in ("1", "true", "yes")
     if not date_str:
-        try:
-            date_str = previous_trading_day().isoformat()
-        except Exception:
-            date_str = _date.today().isoformat()
+        date_str = _latest_market_sentiment_trade_date_str()
     try:
         payload = calc_limit_emotion_summary_cached(date_str, force=force)
         return jsonify({"ok": True, **payload})
@@ -1719,17 +1740,13 @@ def market_sentiment_volatility_sentiment():
     归属: market-sentiment 命名空间 (跟 ma-count / risk-appetite / limit-emotion-summary 同空间).
     """
     from datetime import date as _date
-    from backend.services.stock.trading_calendar import previous_trading_day
     from backend.repositories.market.volatility_sentiment_repo import (
         calc_volatility_sentiment_cached,
     )
     date_str = (request.args.get("date") or "").strip()
     force = request.args.get("force") in ("1", "true", "yes")
     if not date_str:
-        try:
-            date_str = previous_trading_day().isoformat()
-        except Exception:
-            date_str = _date.today().isoformat()
+        date_str = _latest_market_sentiment_trade_date_str()
     try:
         payload = calc_volatility_sentiment_cached(date_str, force=force)
         if payload is None:
@@ -1798,11 +1815,7 @@ def market_sentiment_turnover_activity():
     )
     date_str = (request.args.get("date") or "").strip()
     if not date_str:
-        from backend.services.stock.trading_calendar import previous_trading_day
-        try:
-            date_str = previous_trading_day().isoformat()
-        except Exception:
-            date_str = _date.today().isoformat()
+        date_str = _latest_market_sentiment_trade_date_str()
     try:
         _date.fromisoformat(date_str)
     except (TypeError, ValueError) as exc:
@@ -1865,17 +1878,13 @@ def market_sentiment_style_risk_appetite():
     说明: spread > 0 = 小盘强 (风险偏好积极), spread < 0 = 大盘强 (避险).
     """
     from datetime import date as _date
-    from backend.services.stock.trading_calendar import previous_trading_day
     from backend.repositories.market.style_risk_appetite_repo import (
         calc_style_risk_appetite_cached,
     )
     date_str = (request.args.get("date") or "").strip()
     force = request.args.get("force") in ("1", "true", "yes")
     if not date_str:
-        try:
-            date_str = previous_trading_day().isoformat()
-        except Exception:
-            date_str = _date.today().isoformat()
+        date_str = _latest_market_sentiment_trade_date_str()
     try:
         payload = calc_style_risk_appetite_cached(date_str, force=force)
         if payload is None:
@@ -1935,17 +1944,13 @@ def market_sentiment_profit_effect():
       2. 没记录才现算 (读 ma_count_daily) + 自动落盘
     """
     from datetime import date as _date
-    from backend.services.stock.trading_calendar import previous_trading_day
     from backend.repositories.market.profit_effect_repo import (
         calc_profit_effect_cached,
     )
     date_str = (request.args.get("date") or "").strip()
     force = request.args.get("force") in ("1", "true", "yes")
     if not date_str:
-        try:
-            date_str = previous_trading_day().isoformat()
-        except Exception:
-            date_str = _date.today().isoformat()
+        date_str = _latest_market_sentiment_trade_date_str()
     try:
         payload = calc_profit_effect_cached(date_str, force=force)
         if payload is None:
@@ -2005,17 +2010,13 @@ def market_sentiment_index():
       2. 没记录才现算 (从 8 张 sub-card *_daily 拿 component) + 自动落盘
     """
     from datetime import date as _date
-    from backend.services.stock.trading_calendar import previous_trading_day
     from backend.repositories.market.market_sentiment_index_repo import (
         calc_market_sentiment_index_cached,
     )
     date_str = (request.args.get("date") or "").strip()
     force = request.args.get("force") in ("1", "true", "yes")
     if not date_str:
-        try:
-            date_str = previous_trading_day().isoformat()
-        except Exception:
-            date_str = _date.today().isoformat()
+        date_str = _latest_market_sentiment_trade_date_str()
     try:
         payload = calc_market_sentiment_index_cached(date_str, force=force)
         if payload is None:
@@ -2125,38 +2126,38 @@ def index_daily_history():
 
 @stock_chart_bp.route('/api/stock-chart/market-pulse/strong')
 def market_pulse_strong():
-    """强势板块: TDX 56 行业指数, 按当日 change_pct 排序. URL: ?topN=10"""
+    """强势板块: Postgres 日快照派生的行业涨跌幅榜. URL: ?topN=10&refresh=1"""
     from backend.services.stock.market_pulse_service import build_strong_sectors
     try:
         top_n = int(request.args.get("topN") or 10)
     except (TypeError, ValueError):
         top_n = 10
     try:
-        return jsonify(build_strong_sectors(top_n=top_n))
+        return jsonify(build_strong_sectors(top_n=top_n, force_refresh=request.args.get("refresh") == "1"))
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc), "top": [], "bottom": []}), 200
 
 
 @stock_chart_bp.route('/api/stock-chart/market-pulse/capital-flow')
 def market_pulse_capital_flow():
-    """行业主力净流入: akshare 同花顺 90 行业真实资金流. URL: ?topN=20"""
+    """行业主力净流入: Postgres 日快照派生. URL: ?topN=20&refresh=1"""
     from backend.services.stock.market_pulse_service import build_capital_flow
     try:
         top_n = int(request.args.get("topN") or 20)
     except (TypeError, ValueError):
         top_n = 20
     try:
-        return jsonify(build_capital_flow(top_n=top_n))
+        return jsonify(build_capital_flow(top_n=top_n, force_refresh=request.args.get("refresh") == "1"))
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc), "inflow": [], "outflow": []}), 200
 
 
 @stock_chart_bp.route('/api/stock-chart/market-pulse/rotation')
 def market_pulse_rotation():
-    """行业轮动: 读 reference/stock-universe/market_pulse/rotation/*.json 持久化数据.
+    """行业轮动: 读 Postgres 交易日日快照.
 
     URL: ?days=10&topN=10&refresh=1
-        refresh=1 强制重新抓今日快照并落盘 (其它历史日期不动).
+        refresh=1 强制刷新今日快照 (非交易日仍回退上一交易日, 不写非交易日).
     """
     from backend.services.stock.market_pulse_service import (
         build_industry_rotation,
@@ -2176,7 +2177,7 @@ def market_pulse_rotation():
         except Exception as exc:
             logger.warning("refresh rotation failed: %s", exc)
     try:
-        return jsonify(build_industry_rotation(days=days, top_n=top_n))
+        return jsonify(build_industry_rotation(days=days, top_n=top_n, force_refresh=False))
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc), "rows": [], "dates": []}), 200
 
@@ -2186,7 +2187,21 @@ def market_pulse_all():
     """一次拿三块, 行情页首屏用. URL: ?days=30&topN=10"""
     from backend.services.stock.market_pulse_service import build_market_pulse
     try:
-        return jsonify(build_market_pulse())
+        days = int(request.args.get("days") or 10)
+    except (TypeError, ValueError):
+        days = 10
+    try:
+        top_n = int(request.args.get("topN") or 10)
+    except (TypeError, ValueError):
+        top_n = 10
+    try:
+        return jsonify(
+            build_market_pulse(
+                days=days,
+                top_n=top_n,
+                force_refresh=request.args.get("refresh") == "1",
+            )
+        )
     except Exception as exc:
         return jsonify({
             "ok": False,

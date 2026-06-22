@@ -24,12 +24,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from dotenv import load_dotenv
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("backfill_sector_breadth")
 _TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def _resolve_end_date() -> date:
@@ -68,18 +71,28 @@ def main() -> int:
         log.info("upserted %d 行 (date=%s)", n, args.date)
         return 0 if n > 0 or args.dry_run else 1
 
-    # 区间模式: 扫 ths_industry_fund_flow_daily 所有 DISTINCT trade_date
-    # 重要: 用 conn() contextmanager (不是 with get_conn()), 避免 DuckDBPyConnection.__exit__ close
-    from backend.adapters.market.duckdb_store import conn
+    # 区间模式: 从 Postgres 行业资金流 alive 快照枚举最近交易日.
+    # 这里不能再扫 DuckDB 旧 ths_industry_fund_flow_daily, 否则 scheduler 会永远停在
+    # 旧链路最后一次导入日期, 看不到 17:15 新写入的 Postgres 2026-06-22 快照。
+    from backend.config.database import session_scope
+    from backend.repositories.market.ths_industry_fund_flow_repo import (
+        ThsIndustryFundFlowRepository,
+    )
     cutoff = end_date - timedelta(days=args.days)
-    with conn() as c:
-        date_rows = c.execute(
-            "SELECT DISTINCT trade_date FROM ths_industry_fund_flow_daily "
-            "WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
-            [cutoff, end_date],
-        ).fetchall()
-    dates = [r[0] for r in date_rows]
-    log.info("ths_industry_fund_flow_daily 命中 %d 天 (>= %s)", len(dates), cutoff)
+    with session_scope() as db:
+        repo = ThsIndustryFundFlowRepository(db)
+        date_values = repo.list_trade_dates(
+            scope="industry",
+            limit=max(1, min(args.days + 16, 1000)),
+        )
+    dates: list[date] = []
+    for value in reversed(date_values):
+        td = date.fromisoformat(value) if isinstance(value, str) else value
+        if td is None:
+            continue
+        if cutoff <= td <= end_date:
+            dates.append(td)
+    log.info("app.sector_fund_flow_daily_snapshots 命中 %d 天 (>= %s)", len(dates), cutoff)
 
     if args.dry_run:
         log.info("[dry-run] 没写任何东西")

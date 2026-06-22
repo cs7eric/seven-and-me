@@ -26,7 +26,11 @@ from typing import Any
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
+from backend.services.scheduler.backfill_validator import (
+    fetch_scalar_value,
+    resolve_latest_scalar_date,
+    validate_scalar,
+)
 from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
@@ -138,7 +142,11 @@ def job_run_backfill() -> dict:
             status["lastRowsUpserted"] = int(m.group(1) or m.group(2) or 0)
 
         if r.returncode == 0:
-            valid, err_msg = validate_scalar("market_pulse_sector_breadth_daily", "advance_pct", target_date)
+            validated_date = resolve_latest_scalar_date(
+                "market_pulse_sector_breadth_daily", "advance_pct", target_date
+            ) or target_date
+            status["lastValidatedTradeDate"] = validated_date.isoformat()
+            valid, err_msg = validate_scalar("market_pulse_sector_breadth_daily", "advance_pct", validated_date)
             if not valid:
                 status["lastRunOk"] = False
                 status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(err_msg)
@@ -148,12 +156,12 @@ def job_run_backfill() -> dict:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
 
-                adv_val = fetch_scalar_value("market_pulse_sector_breadth_daily", "advance_pct", target_date)
+                adv_val = fetch_scalar_value("market_pulse_sector_breadth_daily", "advance_pct", validated_date)
                 up = status.get("lastRowsUpserted")
                 parts = [f"advance_pct={adv_val:.2f}%"] if adv_val is not None else []
                 if up is not None:
                     parts.append(f"覆盖写入{up}行")
-                parts.append(f"(target={target_date.isoformat()})")
+                parts.append(f"(target={validated_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if adv_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info("sector_breadth ok in %.1fs: overwritten=%s advance_pct=%s",

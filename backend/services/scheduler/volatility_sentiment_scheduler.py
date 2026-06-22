@@ -40,7 +40,11 @@ from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
-from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
+from backend.services.scheduler.backfill_validator import (
+    fetch_scalar_value,
+    resolve_latest_scalar_date,
+    validate_scalar,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +179,9 @@ def _job_run_backfill() -> None:
 
         if r.returncode == 0:
             # DuckDB 数据校验: 有值且不为 0
-            _valid_ok, _valid_err = validate_scalar("volatility_sentiment_daily", "sentiment_score", target_date)
+            validated_date = resolve_latest_scalar_date("volatility_sentiment_daily", "sentiment_score", target_date) or target_date
+            status["lastValidatedTradeDate"] = validated_date.isoformat()
+            _valid_ok, _valid_err = validate_scalar("volatility_sentiment_daily", "sentiment_score", validated_date)
             if not _valid_ok:
                 status["lastRunOk"] = False
                 status["lastRunError"] = f"{cst_time} " + "[校验失败] " + str(_valid_err)
@@ -185,12 +191,12 @@ def _job_run_backfill() -> None:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
 
-                sent_val = fetch_scalar_value("volatility_sentiment_daily", "sentiment_score", target_date)
+                sent_val = fetch_scalar_value("volatility_sentiment_daily", "sentiment_score", validated_date)
                 up = status.get("lastRowsUpserted")
                 parts = [f"sentiment_score={sent_val:.2f}"] if sent_val is not None else []
                 if up is not None:
                     parts.append(f"覆盖写入{up}行")
-                parts.append(f"(target={target_date.isoformat()})")
+                parts.append(f"(target={validated_date.isoformat()})")
                 status["lastMessage"] = " ".join(parts) if sent_val is not None else f"{cst_time}  ok"
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(

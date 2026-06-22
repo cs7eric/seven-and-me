@@ -14,6 +14,61 @@ from datetime import date
 logger = logging.getLogger(__name__)
 
 
+def resolve_latest_count_date(table: str, target_date: date | str, min_rows: int = 1) -> date | None:
+    """返回 table 中 <= target_date 且行数 >= min_rows 的最近 trade_date."""
+    try:
+        from backend.adapters.market.duckdb_store import get_conn
+        with get_conn() as con:
+            row = con.execute(
+                f"""
+                SELECT trade_date
+                  FROM {table}
+                 WHERE trade_date <= ?
+                 GROUP BY trade_date
+                HAVING COUNT(*) >= ?
+                 ORDER BY trade_date DESC
+                 LIMIT 1
+                """,
+                [target_date, min_rows],
+            ).fetchone()
+    except Exception as exc:
+        logger.warning("resolve_latest_count_date(%s, %s) failed: %s", table, target_date, exc)
+        return None
+    if not row or row[0] is None:
+        return None
+    v = row[0]
+    return v.date() if hasattr(v, "date") else v
+
+
+def resolve_latest_scalar_date(table: str, column: str, target_date: date | str) -> date | None:
+    """返回 table 中 <= target_date 且 column 非 NULL 且 != 0 的最近 trade_date."""
+    try:
+        from backend.adapters.market.duckdb_store import get_conn
+        with get_conn() as con:
+            row = con.execute(
+                f"""
+                SELECT trade_date
+                  FROM {table}
+                 WHERE trade_date <= ?
+                   AND {column} IS NOT NULL
+                   AND CAST({column} AS DOUBLE) <> 0
+                 ORDER BY trade_date DESC
+                 LIMIT 1
+                """,
+                [target_date],
+            ).fetchone()
+    except Exception as exc:
+        logger.warning(
+            "resolve_latest_scalar_date(%s.%s, %s) failed: %s",
+            table, column, target_date, exc,
+        )
+        return None
+    if not row or row[0] is None:
+        return None
+    v = row[0]
+    return v.date() if hasattr(v, "date") else v
+
+
 def validate_scalar(table: str, column: str, target_date: date | str) -> tuple[bool, str | None]:
     """校验 DuckDB 表的目标日期行有一列不为 NULL 且 > 0.
 

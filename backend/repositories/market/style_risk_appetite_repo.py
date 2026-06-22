@@ -17,7 +17,7 @@ import time
 from datetime import date
 from typing import Any
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.duckdb_store import conn, get_conn
 from backend.repositories.market.percentile_helper import (
     enrich_history_scores,
     percentile_score,
@@ -198,11 +198,11 @@ def get_style_risk_appetite(trade_date: date | str) -> dict | None:
     td = _to_date(trade_date)
     if td is None:
         return None
-    con = get_conn()
-    r = con.execute(
-        f"SELECT {_SRA_SELECT} FROM style_risk_appetite_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with conn() as con:
+        r = con.execute(
+            f"SELECT {_SRA_SELECT} FROM style_risk_appetite_daily WHERE trade_date = ?",
+            [td],
+        ).fetchone()
     return _row_to_payload(r) if r else None
 
 
@@ -215,12 +215,12 @@ def get_style_risk_appetite_history(
     e = _to_date(end) if end is not None else s
     if s is None or e is None:
         return []
-    con = get_conn()
-    rows = con.execute(
-        f"SELECT {_SRA_SELECT} FROM style_risk_appetite_daily "
-        f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
-        [s, e],
-    ).fetchall()
+    with conn() as con:
+        rows = con.execute(
+            f"SELECT {_SRA_SELECT} FROM style_risk_appetite_daily "
+            f"WHERE trade_date BETWEEN ? AND ? ORDER BY trade_date ASC",
+            [s, e],
+        ).fetchall()
     items = [_row_to_payload(r) for r in rows]
     enrich_history_scores(items, "style_risk_appetite_daily", "spread", e)
     return items

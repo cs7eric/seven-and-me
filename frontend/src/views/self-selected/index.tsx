@@ -32,6 +32,10 @@ import { getGroupColorClasses, type GroupColorKey } from "./lib/constants"
 
 const REFRESH_INTERVAL_MS = 8_000
 
+function isSystemTargetGroup(group: Pick<SelfSelectedGroup, "name" | "list_kind"> | null | undefined) {
+  return (group?.list_kind || "").toLowerCase() === "system" && (group?.name || "").trim().toLowerCase() === "target"
+}
+
 export default function SelfSelectedPage() {
   const [groups, setGroups] = useState<SelfSelectedGroup[]>([])
   const [itemsByGroup, setItemsByGroup] = useState<Record<string, SelfSelectedItem[]>>({})
@@ -50,6 +54,7 @@ export default function SelfSelectedPage() {
   // active group 股票的 F10 板块归属缓存，用于卡片展示行业 / 概念 / 风格
   const [sectorsBySymbol, setSectorsBySymbol] = useState<Record<string, StockSectorsResponse>>({})
   const [loadingSectorSymbols, setLoadingSectorSymbols] = useState<Set<string>>(new Set())
+  const targetGroup = useMemo(() => groups.find((group) => isSystemTargetGroup(group)) ?? null, [groups])
 
   const loadAll = useCallback(async (withSpinner = false) => {
     if (withSpinner) setLoading(true)
@@ -225,6 +230,35 @@ export default function SelfSelectedPage() {
     [editingItem, loadAll],
   )
 
+  const handleAddToTargetGroup = useCallback(
+    async (item: SelfSelectedItem) => {
+      if (!targetGroup) {
+        notification.danger({
+          title: "未找到 target 分组",
+          description: "请检查系统分组是否已初始化",
+        })
+        return
+      }
+      const res = await createSelfSelectedItem({
+        group_id: targetGroup.id,
+        symbol: item.symbol,
+        market: item.market || undefined,
+        name: item.name || undefined,
+        notes: item.notes || undefined,
+        target_type: item.target_type,
+      })
+      if (!res.ok || !res.item) {
+        throw new Error(res.error || "加入 target 分组失败")
+      }
+      notification.success({
+        title: "已加入 target 分组",
+        description: `${item.symbol} ${item.name ?? ""}`.trim(),
+      })
+      await Promise.all([loadAll(false), loadAnalysisSymbols()])
+    },
+    [loadAll, loadAnalysisSymbols, targetGroup],
+  )
+
   const totalItems = useMemo(
     () => Object.values(itemsByGroup).reduce((acc, arr) => acc + arr.length, 0),
     [itemsByGroup],
@@ -382,24 +416,36 @@ export default function SelfSelectedPage() {
           {groups.map((g) => {
             const items = itemsByGroup[g.id] ?? []
             const colors = getGroupColorClasses(g.color)
+            const isTargetGroup = isSystemTargetGroup(g)
             return (
               <TabsContent key={g.id} value={g.id} className="mt-4 space-y-3">
                 {/* 简化版 group header：只放描述 + 删分类按钮 */}
                 <div className="flex items-center justify-between gap-2 rounded-xl bg-muted/30 px-3 py-1.5">
-                  <p className="truncate text-xs text-muted-foreground">
-                    {g.description || "点击下方「+ 加入自选」开始添加"}
-                  </p>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    className="size-7 rounded-lg text-muted-foreground hover:text-destructive"
-                    onClick={() => setConfirmDeleteGroupId(g.id)}
-                    disabled={pendingGroup === g.id}
-                    aria-label="delete group"
-                    title="删除分类"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  <div className="flex min-w-0 items-center gap-2">
+                    {isTargetGroup ? (
+                      <Badge variant="secondary" className="shrink-0 bg-amber-500/12 text-amber-700">
+                        系统 target
+                      </Badge>
+                    ) : null}
+                    <p className="truncate text-xs text-muted-foreground">
+                      {isTargetGroup
+                        ? "Application Analysis 联动分组：这里的增删改会同步到 targets，系统分组不可删除。"
+                        : g.description || "点击下方「+ 加入自选」开始添加"}
+                    </p>
+                  </div>
+                  {!isTargetGroup ? (
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="size-7 rounded-lg text-muted-foreground hover:text-destructive"
+                      onClick={() => setConfirmDeleteGroupId(g.id)}
+                      disabled={pendingGroup === g.id}
+                      aria-label="delete group"
+                      title="删除分类"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  ) : null}
                 </div>
 
                 {/* items 网格：每个 item 一张卡 + 末尾加号 tile */}
@@ -409,9 +455,12 @@ export default function SelfSelectedPage() {
                       key={it.id}
                       item={it}
                       pending={pendingItem === it.id}
+                      systemGroup={isTargetGroup}
                       sectors={sectorsBySymbol[(it.symbol || "").trim()] ?? null}
                       sectorsLoading={loadingSectorSymbols.has((it.symbol || "").trim())}
                       inAnalysis={inAnalysisSymbols.has((it.symbol || "").toUpperCase())}
+                      canAddToTarget={!isTargetGroup && !inAnalysisSymbols.has((it.symbol || "").toUpperCase())}
+                      onAddToTarget={handleAddToTargetGroup}
                       onDelete={handleDeleteItem}
                       onEdit={setEditingItem}
                     />
@@ -419,6 +468,7 @@ export default function SelfSelectedPage() {
                   <AddItemTile
                     onClick={() => setAddDialogGroupId(g.id)}
                     accentClass={colors.border}
+                    label={isTargetGroup ? "加入 target 分组" : "加入自选"}
                   />
                 </div>
 

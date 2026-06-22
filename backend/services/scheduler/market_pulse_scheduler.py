@@ -1,6 +1,6 @@
 """Market Pulse 调度器:
-  - 盘内 (9:30-11:30, 13:00-15:00) 每 10 分钟自动 snapshot 一次
-  - 每个交易日 15:30 自动 snapshot 一次 (收盘后落盘)
+  - 盘内 (9:30-11:30, 13:00-15:00) 每 10 分钟自动 refresh 一次 Postgres 快照
+  - 每个交易日 15:30 自动 refresh 一次 (收盘后归档到 Postgres)
 
 启动方式: :mod:`backend.bootstrap` 调 :func:`start_market_pulse_scheduler`.
 环境变量关闭: ``MINIMAX_MARKET_PULSE_SCHEDULER_ENABLED=0``.
@@ -99,7 +99,7 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 # Job 函数
 # ---------------------------------------------------------------------------
 def _job_inside_refresh() -> None:
-    """盘内 10 分钟一次: 落盘当日 Top 10 + 顺手预热缓存."""
+    """盘内 10 分钟一次: 刷新当日 Postgres 快照."""
     now = _beijing_now()
     status = _load_job_status()
     if not is_trade_time(now):
@@ -129,7 +129,7 @@ def _job_inside_refresh() -> None:
 
 
 def _job_close_snapshot() -> None:
-    """15:30 收盘后强制落盘 (重置当日完整快照)."""
+    """15:30 收盘后强制刷新当日 Postgres 快照."""
     now = _beijing_now()
     if not is_trading_day(now.date()):
         logger.info("market_pulse close-snapshot skipped: %s not trading day", now.date())

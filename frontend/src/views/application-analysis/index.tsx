@@ -72,7 +72,7 @@ export default function ApplicationAnalysisPage() {
   const [horizon, setHorizon] = useState<Record<string, number>>(DEFAULT_HORIZON)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // 临时预览态：从自选页跳过来时 ?symbol=... 不直接持久化，先用 previewTarget
-  // 渲染分析面板。点「加入应用分析」才落盘到 targets.json。
+  // 渲染分析面板。点「加入应用分析」后才写入 Postgres target 主表。
   const [previewTarget, setPreviewTarget] = useState<ApplicationAnalysisTarget | null>(null)
   const [adjust, setAdjust] = useState<StockAdjust>("qfq")
   const [bars, setBars] = useState<StockKlineBar[]>([])
@@ -120,7 +120,7 @@ export default function ApplicationAnalysisPage() {
       latestHorizonRef.current = { ...DEFAULT_HORIZON, ...configHorizon }
 
       // URL query：?target_type=stock&symbol=600021&name=上海电力&market=SH
-      // 注意：只做预览，不主动加入 targets.json（用户需要的话点「加入应用分析」按钮）
+      // 注意：只做预览，不主动写入 Postgres target 主表（用户需要的话点「加入应用分析」按钮）
       // 1) symbol 已在 items → 直接选中，并清掉 query
       // 2) 不在 → 设 previewTarget（临时态），让面板能渲染它的 K 线 / 分时
       const symbol = searchParams.get("symbol")
@@ -556,7 +556,7 @@ export default function ApplicationAnalysisPage() {
     schedulePersist()
   }
 
-  // 把预览态的 target 落盘到 targets.json，同时切到持久态选中
+  // 把预览态的 target 写入 Postgres，同时切到持久态选中
   const handleAddPreview = async () => {
     if (!previewTarget) return
     setSaving(true)
@@ -623,10 +623,10 @@ export default function ApplicationAnalysisPage() {
     setInfo(null)
     try {
       await flushPersist()
-      setInfo("目标列表已保存到 reference/application-analysis/targets.json")
+      setInfo("目标列表已保存到 Postgres，并已同步 target 系统分组。")
       notification.success({
         title: "目标列表已保存",
-        description: "reference/application-analysis/targets.json",
+        description: "Application Analysis targets / Self-Selected target group",
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : "保存失败"

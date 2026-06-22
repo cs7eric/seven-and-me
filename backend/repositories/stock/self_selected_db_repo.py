@@ -48,6 +48,10 @@ def _iso(value: datetime | None) -> str | None:
 def _parse_datetime(value: Any) -> datetime | None:
     if not value:
         return None
+
+
+def _is_system_target_group(group: SelfSelectedGroup) -> bool:
+    return (group.list_kind or "").lower() == "system" and (group.name or "").strip().lower() == "target"
     if isinstance(value, datetime):
         return value
     try:
@@ -161,6 +165,12 @@ class SelfSelectedRepository:
     def _alive_items(self) -> Select[tuple[SelfSelectedItem]]:
         return select(SelfSelectedItem).where(SelfSelectedItem.deleted_at.is_(None))
 
+    def get_group_entity(self, group_id: str | UUID) -> SelfSelectedGroup | None:
+        return self.db.get(SelfSelectedGroup, _parse_uuid(group_id, "group_id"))
+
+    def get_item_entity(self, item_id: str | UUID) -> SelfSelectedItem | None:
+        return self.db.get(SelfSelectedItem, _parse_uuid(item_id, "item_id"))
+
     def list_groups(self) -> list[dict[str, Any]]:
         stmt = self._alive_groups().order_by(SelfSelectedGroup.sort_order.asc(), SelfSelectedGroup.created_at.asc())
         return [_group_to_dict(group) for group in self.db.scalars(stmt).all()]
@@ -216,6 +226,8 @@ class SelfSelectedRepository:
         group = self.db.get(SelfSelectedGroup, group_uuid)
         if group is None or group.deleted_at is not None:
             return False
+        if _is_system_target_group(group):
+            raise ValueError("system group target cannot be deleted")
         self.db.execute(
             text(
                 """
