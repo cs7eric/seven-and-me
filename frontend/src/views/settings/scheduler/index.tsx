@@ -115,7 +115,7 @@ function formatSeconds(value: number | null | undefined): string {
 function statusBadgeVariant(status: string | null | undefined): "default" | "secondary" | "destructive" | "outline" {
   switch ((status || "").toLowerCase()) {
     case "success":
-      return "default"
+      return "outline"
     case "failed":
     case "error":
     case "partial_failed":
@@ -125,6 +125,15 @@ function statusBadgeVariant(status: string | null | undefined): "default" | "sec
       return "secondary"
     default:
       return "outline"
+  }
+}
+
+function statusBadgeClass(status: string | null | undefined): string {
+  switch ((status || "").toLowerCase()) {
+    case "success":
+      return "bg-emerald-500/10 text-emerald-600 border-emerald-500/30"
+    default:
+      return ""
   }
 }
 
@@ -216,7 +225,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             ) : null}
             {/* 运行状态 */}
             {isRunning ? (
-              <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600/90">运行中</Badge>
+              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30">运行中</Badge>
             ) : (
               <Badge variant="secondary">已停止</Badge>
             )}
@@ -286,7 +295,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
           {/* 状态条 */}
           <div className="flex flex-wrap items-center gap-2">
             {isRunning ? (
-              <Badge variant="default" className="bg-emerald-600 hover:bg-emerald-600/90">运行中</Badge>
+              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30">运行中</Badge>
             ) : (
               <Badge variant="secondary">已停止</Badge>
             )}
@@ -333,7 +342,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground">状态：</span>
                 {lastStatus ? (
-                  <Badge variant={statusBadgeVariant(lastStatus)}>{lastStatus}</Badge>
+                  <Badge variant={statusBadgeVariant(lastStatus)} className={statusBadgeClass(lastStatus)}>{lastStatus}</Badge>
                 ) : <span>—</span>}
               </div>
               <div className="flex items-center gap-2">
@@ -407,7 +416,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                       <div key={targetId} className="flex items-center justify-between gap-3 text-xs">
                         <span className="font-mono">{targetId}</span>
                         <span className="flex items-center gap-2 text-muted-foreground">
-                          <Badge variant={statusBadgeVariant(status)} className="px-1.5 py-0">{status}</Badge>
+                          <Badge variant={statusBadgeVariant(status)} className={cn(statusBadgeClass(status), "px-1.5 py-0")}>{status}</Badge>
                           <span>{formatDateTime(pickValue<string>(infoRecord, "finished_at"))}</span>
                         </span>
                       </div>
@@ -585,7 +594,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
           "自动"
         )}
       </Badge>
-      <Badge variant={statusBadgeVariant(item.status)} className="px-1.5 py-0 text-[10px]">
+      <Badge variant={statusBadgeVariant(item.status)} className={cn(statusBadgeClass(item.status), "px-1.5 py-0 text-[10px]")}>
         {item.status}
       </Badge>
       <span className="font-mono tabular-nums text-muted-foreground">
