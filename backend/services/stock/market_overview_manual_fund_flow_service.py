@@ -129,6 +129,20 @@ def save_manual_fund_flow(trading_date: str, fields: dict[str, Any]) -> dict[str
     # 同步 merge 进 archive, 让 market-pulse 资金潮汐/资金结构 趋势图直接读到
     if cleaned:
         _merge_into_archive(trading_date, cleaned)
+
+    # 同步写 PG (非致命)
+    try:
+        from backend.services.stock._pg_writer import upsert_overview_to_pg
+
+        # 构造一个兼容的 payload (manual 字段只有资金流, 不包含 totalAmount/涨跌家数)
+        manual_payload = {
+            "tradingDate": trading_date,
+            **cleaned,
+        }
+        upsert_overview_to_pg(manual_payload, source_tag="manual")
+    except Exception as exc:
+        logger.debug("upsert_overview_to_pg failed (non-fatal): %s", exc)
+
     return payload
 
 

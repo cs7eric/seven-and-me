@@ -1,3 +1,31 @@
+/**
+ * Market Pulse 主页面 (当前启用页面).
+ *
+ * 数据源说明:
+ *  - 大盘成交额 / 主力净流入卡:
+ *    fetchMarketOverviewAkshare() + fetchMarketOverviewEltdx()
+ *    -> /api/stock-chart/market-overview-akshare
+ *    -> /api/stock-chart/market-overview-eltdx
+ *    读独立快照链路; 历史 diff 走 /market-overview-akshare/history.
+ *
+ *  - 市场脉搏历史趋势图:
+ *    fetchMarketPulseHistory()
+ *    -> /api/stock-chart/market-overview-akshare/history
+ *    优先 PostgreSQL / DuckDB 历史快照, 不足时回退 JSON archive.
+ *
+ *  - 风格板块涨跌幅:
+ *    fetchStyleSectors() -> /api/stock-chart/style-sectors
+ *    后端按 TDX 风格板块口径返回.
+ *
+ *  - 行业热力图:
+ *    fetchMarketHeatmap()
+ *    -> /api/stock-chart/industry-application/heatmap
+ *    后端实时构建热力图 payload, 不是直接读某张前端专用表.
+ *
+ *  - 涨跌停情绪:
+ *    /api/stock-chart/market-pulse/limit-emotion*
+ *    优先 PG, 不足时回退 JSON snapshot.
+ */
 import { useEffect, useMemo, useState } from "react"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"

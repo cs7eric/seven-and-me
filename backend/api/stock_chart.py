@@ -912,7 +912,28 @@ def stock_chart_market_overview_akshare_scheduler_status():
 
 @stock_chart_bp.route('/api/stock-chart/market-overview-akshare/archive/<string:trading_date>')
 def stock_chart_market_overview_akshare_archive(trading_date: str):
-    """按交易日 (YYYY-MM-DD 或 YYYYMMDD) 读历史 snapshot."""
+    """按交易日 (YYYY-MM-DD 或 YYYYMMDD) 读历史 snapshot. PG → JSON 兜底."""
+    # Normalise date format
+    td = trading_date.replace("-", "")
+    if len(td) == 8 and td.isdigit():
+        iso_date = f"{td[:4]}-{td[4:6]}-{td[6:8]}"
+    else:
+        iso_date = trading_date
+
+    # 1) Try PG
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
+
+        with session_scope() as db:
+            repo = MarketOverviewPgRepository(db)
+            row = repo.get(iso_date)
+        if row:
+            return jsonify(row)
+    except Exception as exc:
+        logger.warning("market overview archive from PG failed, fallback: %s", exc)
+
+    # 2) Fallback: JSON
     from backend.services.stock.market_overview_akshare_service import get_archived_snapshot
     snap = get_archived_snapshot(trading_date)
     if snap is None:
@@ -927,11 +948,13 @@ def stock_chart_market_overview_akshare_history():
     URL: GET /api/stock-chart/market-overview-akshare/history?range=60d
     range 接受: 20d / 60d / 120d / 1y (默认 60d, 上限 365d)
 
+    数据源优先级: PostgreSQL (主) → JSON archive (兜底)
+
     返回:
       {
         "ok": true,
         "range": "60d",
-        "source": "eastmoney",
+        "source": "postgres | eastmoney",
         "count": 60,
         "items": [
           {"date": "2025-12-11", "totalAmount": null, "risingCount": null,
@@ -943,8 +966,54 @@ def stock_chart_market_overview_akshare_history():
     range_param = (request.args.get("range") or "60d").strip().lower()
     days_map = {"20d": 20, "60d": 60, "120d": 120, "1y": 260}
     days = days_map.get(range_param, 60)
-    days = max(1, min(days, 365))  # 安全上限
+    days = max(1, min(days, 365))
 
+    # 1) Try PostgreSQL first
+    try:
+        from backend.config.database import session_scope
+        from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
+
+        with session_scope() as db:
+            repo = MarketOverviewPgRepository(db)
+            pg_items = repo.get_history(days=days)
+
+        if pg_items:
+            # Convert snake_case → camelCase for frontend compatibility
+            items = []
+            for pt in pg_items:
+                items.append({
+                    "date": pt.get("trade_date"),
+                    "totalAmount": pt.get("total_amount"),
+                    "totalVolume": pt.get("total_volume"),
+                    "risingCount": pt.get("rising_count"),
+                    "fallingCount": pt.get("falling_count"),
+                    "flatCount": pt.get("flat_count"),
+                    "limitUpCount": pt.get("limit_up_count"),
+                    "limitDownCount": pt.get("limit_down_count"),
+                    "stockCount": pt.get("stock_count"),
+                    "mainNetInflow": pt.get("main_net_inflow"),
+                    "superLargeNetInflow": pt.get("super_large_net_inflow"),
+                    "largeNetInflow": pt.get("large_net_inflow"),
+                    "mediumNetInflow": pt.get("medium_net_inflow"),
+                    "smallNetInflow": pt.get("small_net_inflow"),
+                    "mainNetInflowRatio": pt.get("main_net_inflow_ratio"),
+                    "superLargeNetInflowRatio": pt.get("super_large_net_ratio"),
+                    "largeNetInflowRatio": pt.get("large_net_ratio"),
+                    "mediumNetInflowRatio": pt.get("medium_net_ratio"),
+                    "smallNetInflowRatio": pt.get("small_net_ratio"),
+                    "source": pt.get("source"),
+                })
+            return jsonify({
+                "ok": True,
+                "range": range_param,
+                "source": "postgres",
+                "count": len(items),
+                "items": items,
+            })
+    except Exception as exc:
+        logger.warning("market overview history from PG failed, fallback to JSON: %s", exc)
+
+    # 2) Fallback: JSON archive
     from backend.services.stock.market_overview_akshare_service import get_history_points
     items = get_history_points(days=days)
     return jsonify({
@@ -3118,6 +3187,8 @@ def style_sector_constituents(name: str):
 #     - 收盘后落盘 daily/<date>.json (供次日连板用).
 #   GET  /api/stock-chart/market-pulse/limit-emotion/config
 #   PUT  /api/stock-chart/market-pulse/limit-emotion/config
+#   GET  /api/stock-chart/market-pulse/limit-emotion/history
+#     - 历史序列 (PG → JSON 兜底)
 # ---------------------------------------------------------------------------
 @stock_chart_bp.route('/api/stock-chart/market-pulse/limit-emotion')
 def market_pulse_limit_emotion():
@@ -3172,6 +3243,92 @@ def market_pulse_limit_emotion_daily_snapshot():
         "tradeDate": out.get("tradeDate"),
         "stockCount": out.get("stockCount"),
         "path": f"reference/market-limit/daily/{out.get('tradeDate')}.json",
+    })
+
+
+@stock_chart_bp.route('/api/stock-chart/market-pulse/limit-emotion/history')
+def market_pulse_limit_emotion_history():
+    """近 N 日 limit emotion 历史序列 (PG → JSON 兜底).
+
+    URL: GET /api/stock-chart/market-pulse/limit-emotion/history?days=60&end=YYYY-MM-DD
+    days 默认 60, 上限 365.
+    """
+    try:
+        raw_days = request.args.get("days") or "60"
+        days = max(1, min(int(raw_days), 365))
+    except (TypeError, ValueError):
+        days = 60
+    end_str = (request.args.get("end") or "").strip()
+
+    # 1) Try PG first
+    try:
+        from backend.config.database import session_scope  # noqa: PLC0415
+        from backend.repositories.market.market_limit_pg_repo import (  # noqa: PLC0415
+            MarketLimitPgRepository,
+        )
+
+        with session_scope() as db:
+            repo = MarketLimitPgRepository(db)
+            items = repo.get_history(days=days, end_date=end_str if end_str else None)
+
+        if items:
+            return jsonify({
+                "ok": True,
+                "days": days,
+                "count": len(items),
+                "source": "postgres",
+                "items": items,
+            })
+    except Exception as exc:
+        logger.warning("limit emotion history from PG failed, fallback: %s", exc)
+
+    # 2) Fallback: JSON snapshots archive
+    # 遍历 reference/market-pulse/snapshots/<date>/ 取每个日期最新的
+    from backend.config.settings import MARKET_PULSE_LIMIT_SNAPSHOTS_DIR  # noqa: PLC0415
+    from datetime import date as _date, timedelta  # noqa: PLC0415
+    # end date
+    try:
+        end = _date.fromisoformat(end_str) if end_str else _date.today()
+    except (TypeError, ValueError):
+        end = _date.today()
+    start = end - timedelta(days=days * 2)  # 宽松范围 (含非交易日)
+
+    items: list[dict] = []
+    current = start
+    while current <= end:
+        snap_dir = MARKET_PULSE_LIMIT_SNAPSHOTS_DIR / current.isoformat()
+        if snap_dir.is_dir():
+            snap_files = sorted(snap_dir.glob("*.json"))
+            if snap_files:
+                try:
+                    import json as _json  # noqa: PLC0415
+                    payload = _json.loads(snap_files[-1].read_text(encoding="utf-8"))
+                    if isinstance(payload, dict):
+                        items.append({
+                            "trade_date": current.isoformat(),
+                            "limit_up_count": (payload.get("limitUp") or {}).get("count"),
+                            "limit_down_count": (payload.get("limitDown") or {}).get("count"),
+                            "touched_count": (payload.get("breakBoard") or {}).get("touchedCount"),
+                            "broken_count": (payload.get("breakBoard") or {}).get("brokenCount"),
+                            "break_board_rate": (payload.get("breakBoard") or {}).get("rate"),
+                            "max_streak_height": (payload.get("streak") or {}).get("maxHeight"),
+                            "sentiment_level": (payload.get("streak") or {}).get("sentiment", {}).get("level"),
+                            "stock_count": (payload.get("_meta") or {}).get("stockCount"),
+                            "market_status": payload.get("marketStatus"),
+                            "data_status": payload.get("dataStatus"),
+                            "source": (payload.get("_meta") or {}).get("source"),
+                        })
+                except Exception:
+                    pass
+        current += timedelta(days=1)
+
+    items = [it for it in items if it.get("limit_up_count") is not None]
+    return jsonify({
+        "ok": True,
+        "days": days,
+        "count": len(items),
+        "source": "json_snapshots",
+        "items": items[-days:],
     })
 
 

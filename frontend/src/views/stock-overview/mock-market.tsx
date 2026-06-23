@@ -1,11 +1,33 @@
 /**
  * Stock Overview · 行情 (Market Pulse) 页面.
  *
- * 三个核心模块 + 趋势:
- *  1. 强势板块 (Strong Sectors)      - akshare 90 行业当日 Top N, 卡片点击钻入
- *  2. 主力净流入 (Capital Flow)       - akshare 90 行业真实资金流
- *  3. 行业轮动 (Rotation)             - 每天 15:30 落盘的 Top N 快照
- *  4. 行业轮动历史趋势 (Rotation Trend) - 跨日 Top 10 趋势: 出现/消失/排名变化
+ * 数据源说明:
+ *  1. 强势板块 (Strong Sectors)
+ *     - 前端: fetchMarketPulse() -> GET /api/stock-chart/market-pulse/all
+ *     - 后端: backend.services.stock.market_pulse_service.build_market_pulse()
+ *     - 数据形态: 读 Postgres 行业资金流日快照, 按 changePct 排序取 Top/Bottom
+ *
+ *  2. 行业主力净流入 (Capital Flow)
+ *     - 前端: fetchMarketPulse() -> flow
+ *     - 后端单独接口: GET /api/stock-chart/market-pulse/capital-flow
+ *     - 后端: backend.services.stock.market_pulse_service.build_capital_flow()
+ *     - 数据形态: 读 Postgres 行业资金流日快照, 按 mainNet 拆分 inflow/outflow
+ *
+ *  3. 行业轮动 · 日 Top 10 (Rotation)
+ *     - 前端: fetchMarketPulse() -> rotation
+ *     - 后端单独接口: GET /api/stock-chart/market-pulse/rotation
+ *     - 后端: backend.services.stock.market_pulse_service.build_industry_rotation()
+ *     - 数据形态: 读 Postgres 多交易日日快照, 每日取 Top N
+ *
+ *  4. 行业轮动历史趋势 (Rotation Trend)
+ *     - 前端: fetchMarketPulseRotationTrend()
+ *     - 接口: GET /api/stock-chart/market-pulse/rotation-trend
+ *     - 后端: backend.services.stock.market_pulse_service.build_rotation_trend()
+ *     - 数据形态: 基于 Postgres 历史快照拼每个行业的 rank/changePct 跨日序列
+ *
+ * 原始抓取来源:
+ *  - 当日行业资金流快照由后端 market_pulse_service 内部调用
+ *    akshare.stock_fund_flow_industry() 抓取后写入 Postgres.
  *
  * 自动刷新:
  *  - 交易时间内 (9:30-11:30, 13:00-15:00) 每 10 分钟轮询一次

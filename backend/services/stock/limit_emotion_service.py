@@ -142,6 +142,15 @@ def _write_json_atomic(path: Path, data: Any) -> None:
     tmp.replace(path)
 
 
+def _try_pg_write(payload: dict[str, Any], source_tag: str) -> None:
+    """非致命 PG 同步写."""
+    try:
+        from backend.services.stock._limit_pg_writer import upsert_limit_snapshot_to_pg  # noqa: PLC0415
+        upsert_limit_snapshot_to_pg(payload, source_tag=source_tag)
+    except Exception as exc:
+        logger.debug("upsert_limit_snapshot_to_pg failed (non-fatal): %s", exc)
+
+
 def _read_json_safe(path: Path, default: Any = None) -> Any:
     if not path.exists() or path.stat().st_size == 0:
         return default
@@ -1336,6 +1345,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                     _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
                 except Exception as exc:
                     logger.warning("write latest (pre_open from daily) failed: %s", exc)
+                _try_pg_write(payload, "daily_archive")
                 return payload
             # daily 缺失 → duckdb 兜底 (用 close/prev_close JOIN 算, 准头不如 daily 但比 empty 强)
             prev_td: date | None = None
@@ -1355,6 +1365,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                         _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
                     except Exception as exc:
                         logger.warning("write latest (pre_open from duckdb) failed: %s", exc)
+                    _try_pg_write(payload, "duckdb")
                     return payload
             # 都拿不到, fallthrough 到实时 (会拿到空数据, 写空 latest)
 
@@ -1373,6 +1384,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                         _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
                     except Exception as exc:
                         logger.warning("write market-pulse/latest.json (duckdb) failed: %s", exc)
+                    _try_pg_write(payload, "duckdb")
                     return payload
             # duckdb 没有 → 兜底 daily archive
             daily = _latest_daily_payload()
@@ -1387,6 +1399,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                     _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
                 except Exception as exc:
                     logger.warning("write market-pulse/latest.json failed: %s", exc)
+                _try_pg_write(payload, "daily_archive")
                 return payload
             # daily 也没有 → 当 empty
             payload = _empty_limit_emotion()
@@ -1398,6 +1411,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                 _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
             except Exception as exc:
                 logger.warning("write latest (empty) failed: %s", exc)
+            _try_pg_write(payload, "empty")
             return payload
 
         # 2) 交易日: stale 直接读盘
@@ -1433,6 +1447,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                         _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
                     except Exception as exc:
                         logger.warning("write latest (closed from daily) failed: %s", exc)
+                    _try_pg_write(payload, "daily_archive")
                     try:
                         snap_dir = MARKET_PULSE_LIMIT_SNAPSHOTS_DIR / today.isoformat()
                         snap_dir.mkdir(parents=True, exist_ok=True)
@@ -1470,6 +1485,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
             _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
         except Exception as exc:
             logger.warning("write market-pulse/latest.json failed: %s", exc)
+        _try_pg_write(payload, "realtime")
         try:
             snap_dir = MARKET_PULSE_LIMIT_SNAPSHOTS_DIR / today.isoformat()
             snap_dir.mkdir(parents=True, exist_ok=True)

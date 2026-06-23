@@ -244,6 +244,13 @@ def save_overview(payload: dict) -> None:
                 upsert_overview_eltdx(payload)
             except Exception as exc:
                 logger.debug("upsert_overview_eltdx to duckdb failed (non-fatal): %s", exc)
+
+            # 同步写 PG (非致命)
+            try:
+                from backend.services.stock._pg_writer import upsert_overview_to_pg
+                upsert_overview_to_pg(payload, source_tag="eltdx")
+            except Exception as exc:
+                logger.debug("upsert_overview_to_pg failed (non-fatal): %s", exc)
         else:
             logger.info(
                 "eltdx overview 无实质数据 (totalAmount=None), latest.json 保留旧内容"

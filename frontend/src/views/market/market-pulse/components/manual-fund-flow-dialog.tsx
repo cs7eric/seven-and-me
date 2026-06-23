@@ -88,7 +88,12 @@ export function parseFundFlowText(text: string): { fields: ManualFundFlow; match
     // 按 prefix 找第一个匹配的 ROW_MAP 项
     for (const row of ROW_MAP) {
       if (line.includes(row.prefix)) {
-        fields[row.inflowKey as string] = parseFloat(numbers[0])
+        let inflowValue = parseFloat(numbers[0])
+        // 单位转换: "万" → "亿" (除以 10000)
+        if (line.includes("万")) {
+          inflowValue = inflowValue / 10000
+        }
+        fields[row.inflowKey as string] = inflowValue
         fields[row.ratioKey as string] = parseFloat(numbers[1])
         matchedLines += 1
         break

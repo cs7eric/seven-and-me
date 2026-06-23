@@ -383,6 +383,13 @@ def capture_snapshot(*, force: bool = False, source: str = "akshare") -> dict[st
         except Exception as exc:
             logger.debug("upsert_overview_akshare to duckdb failed (non-fatal): %s", exc)
 
+        # 同步写 PG (非致命)
+        try:
+            from backend.services.stock._pg_writer import upsert_overview_to_pg
+            upsert_overview_to_pg(payload, source_tag="akshare")
+        except Exception as exc:
+            logger.debug("upsert_overview_to_pg failed (non-fatal): %s", exc)
+
         return payload
 
 
@@ -525,11 +532,11 @@ _HISTORY_FIELDS = [
 
 # eltdx archive 路径: reference/market-overview/market-overview/archive/YYYYMMDD.json
 # (akshare archive 是 reference/market-overview/archive/YYYYMMDD.json, 共享 dir 上层)
-_ELTDX_ARCHIVE_DIR = MARKET_OVERVIEW_FOLDER / "market-overview" / "archive"
+_ELTDX_ARCHIVE_DIR = MARKET_OVERVIEW_ARCHIVE_DIR.parent / "market-overview" / "archive"
 # manual 路径: reference/market-overview/fund-flow/manual/YYYYMMDD.json
 _MANUAL_DIR = _MARKET_OVERVIEW_FOLDER / "manual"
 # eltdx latest: reference/market-overview/market-overview/latest.json
-_ELTDX_LATEST_FILE = MARKET_OVERVIEW_FOLDER / "market-overview" / "latest.json"
+_ELTDX_LATEST_FILE = MARKET_OVERVIEW_ARCHIVE_DIR.parent / "market-overview" / "latest.json"
 
 
 def _yyyymmdd_to_iso(stem: str) -> str | None:
