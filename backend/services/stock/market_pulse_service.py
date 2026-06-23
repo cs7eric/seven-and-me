@@ -37,6 +37,9 @@ except ImportError:
 DEFAULT_TOP_N = 10
 DEFAULT_FLOW_TOP_N = 20
 DEFAULT_ROTATION_DAYS = 10
+COMPOSITE_WINDOW_DAYS = 30
+COMPOSITE_FLOW_AVG_WINDOW = 10
+MAX_INDUSTRY_COMPARE_COUNT = 20
 _LIVE_REFRESH_SECONDS = 10 * 60
 
 
@@ -335,6 +338,8 @@ def build_market_pulse(
 
 
 def build_rotation_trend(days: int = DEFAULT_ROTATION_DAYS, top_n: int = DEFAULT_TOP_N) -> dict[str, Any]:
+    from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
+
     with session_scope() as db:
         repo = MarketPulseRepository(db)
         repo.ensure_bootstrapped()
@@ -343,6 +348,10 @@ def build_rotation_trend(days: int = DEFAULT_ROTATION_DAYS, top_n: int = DEFAULT
         for trade_date in dates:
             daily_rows.append(_build_snapshot_payload(repo.get_trade_day_rows(trade_date), trade_date, top_n))
 
+        flow_repo = ThsIndustryFundFlowRepository(db)
+        flow_repo.ensure_bootstrapped()
+        flow_rows = flow_repo.get_fund_flow_history(days=max(COMPOSITE_WINDOW_DAYS, COMPOSITE_FLOW_AVG_WINDOW))
+
     name_set: set[str] = set()
     for row in daily_rows:
         for item in row.get("items") or []:
@@ -350,6 +359,17 @@ def build_rotation_trend(days: int = DEFAULT_ROTATION_DAYS, top_n: int = DEFAULT
             if name:
                 name_set.add(name)
 
+    flow_series_map: dict[str, list[float | None]] = {}
+    for row in flow_rows:
+        for item in row.get("items") or []:
+            name = str(item.get("name") or "").strip()
+            if not name or name not in name_set:
+                continue
+            flow_series_map.setdefault(name, []).append(item.get("mainNet"))
+    for values in flow_series_map.values():
+        values.reverse()
+
+    window_days = min(len(dates), COMPOSITE_WINDOW_DAYS)
     industries: list[dict[str, Any]] = []
     for name in sorted(name_set):
         ranks: list[int | None] = []
@@ -362,26 +382,40 @@ def build_rotation_trend(days: int = DEFAULT_ROTATION_DAYS, top_n: int = DEFAULT
                 continue
             ranks.append(item.get("rank"))
             cps.append(item.get("changePct"))
-        appearances = sum(1 for rank in ranks if rank is not None)
-        valid_ranks = [rank for rank in ranks if rank is not None]
+        recent_ranks = ranks[:window_days]
+        valid_recent_ranks = [rank for rank in recent_ranks if rank is not None]
+        appearances = len(valid_recent_ranks)
         latest_rank = ranks[0] if ranks else None
         latest_cp = cps[0] if cps else None
+        avg_main_net_10 = _avg_latest_window(flow_series_map.get(name, []), COMPOSITE_FLOW_AVG_WINDOW)
         industries.append(
             {
                 "name": name,
                 "appearances": appearances,
-                "avgRank": round(sum(valid_ranks) / len(valid_ranks), 2) if valid_ranks else None,
-                "bestRank": min(valid_ranks) if valid_ranks else None,
-                "worstRank": max(valid_ranks) if valid_ranks else None,
+                "avgRank": round(sum(valid_recent_ranks) / len(valid_recent_ranks), 2) if valid_recent_ranks else None,
+                "bestRank": min(valid_recent_ranks) if valid_recent_ranks else None,
+                "worstRank": max(valid_recent_ranks) if valid_recent_ranks else None,
                 "latestRank": latest_rank,
                 "latestChangePct": latest_cp,
+                "avgMainNet10": avg_main_net_10,
                 "ranks": ranks,
                 "changePcts": cps,
             }
         )
 
+    composite_meta = _build_composite_meta(industries, top_n=top_n, window_days=max(window_days, 1))
+    for item in industries:
+        meta = composite_meta.get(str(item.get("name") or ""), {})
+        item["appearanceRate"] = meta.get("appearanceRate")
+        item["avgRankScore"] = meta.get("avgRankScore")
+        item["flowScore"] = meta.get("flowScore")
+        item["compositeScore"] = meta.get("compositeScore")
+        item["compositeRank"] = meta.get("compositeRank")
+
     industries.sort(
         key=lambda row: (
+            row.get("compositeRank") is None,
+            row.get("compositeRank") if row.get("compositeRank") is not None else 10**6,
             row["latestRank"] is None,
             row["latestRank"] if row["latestRank"] is not None else 10**6,
             -row["appearances"],
@@ -391,7 +425,165 @@ def build_rotation_trend(days: int = DEFAULT_ROTATION_DAYS, top_n: int = DEFAULT
         "ok": True,
         "topN": top_n,
         "days": len(dates),
+        "compositeWindowDays": window_days,
         "dates": dates,
+        "industries": industries,
+    }
+
+
+def _avg_latest_window(values: list[float | None], window: int) -> float | None:
+    valid = [value for value in values if value is not None]
+    if len(valid) < window:
+        return None
+    sample = valid[-window:]
+    return round(sum(sample) / window, 4)
+
+
+def _rank_to_unit_interval(index: int, total: int) -> float:
+    if total <= 1:
+        return 1.0
+    return round((total - index - 1) / (total - 1), 4)
+
+
+def _build_composite_meta(
+    trend_industries: list[dict[str, Any]],
+    *,
+    top_n: int,
+    window_days: int,
+) -> dict[str, dict[str, float | int | None]]:
+    if not trend_industries or window_days <= 0:
+        return {}
+
+    flow_ranked = [item for item in trend_industries if isinstance(item.get("avgMainNet10"), (int, float))]
+    flow_ranked.sort(
+        key=lambda item: (
+            -(item.get("avgMainNet10") or 0),
+            item.get("name") or "",
+        )
+    )
+    flow_scores = {
+        str(item.get("name") or ""): _rank_to_unit_interval(index, len(flow_ranked))
+        for index, item in enumerate(flow_ranked)
+        if item.get("name")
+    }
+
+    scored: list[dict[str, Any]] = []
+    for item in trend_industries:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        appearances = int(item.get("appearances") or 0)
+        avg_rank = item.get("avgRank")
+        appearance_rate = round(appearances / window_days, 4)
+        avg_rank_score = 0.0
+        if isinstance(avg_rank, (int, float)) and top_n > 0:
+            avg_rank_score = max(0.0, min(1.0, (top_n + 1 - float(avg_rank)) / top_n))
+        flow_score = flow_scores.get(name, 0.0)
+        composite_score = round(0.5 * appearance_rate + 0.3 * avg_rank_score + 0.2 * flow_score, 4)
+        scored.append(
+            {
+                "name": name,
+                "appearanceRate": appearance_rate,
+                "avgRankScore": round(avg_rank_score, 4),
+                "flowScore": flow_score,
+                "compositeScore": composite_score,
+                "latestRank": item.get("latestRank"),
+                "latestChangePct": item.get("latestChangePct"),
+            }
+        )
+
+    scored.sort(
+        key=lambda item: (
+            -item["compositeScore"],
+            item["latestRank"] is None,
+            item["latestRank"] if item["latestRank"] is not None else 10**6,
+            -(item["latestChangePct"] or 0),
+            item["name"],
+        )
+    )
+    return {
+        item["name"]: {
+            "appearanceRate": item["appearanceRate"],
+            "avgRankScore": item["avgRankScore"],
+            "flowScore": item["flowScore"],
+            "compositeScore": item["compositeScore"],
+            "compositeRank": index + 1,
+        }
+        for index, item in enumerate(scored)
+    }
+
+
+def build_industry_compare(
+    names: list[str],
+    *,
+    days: int = 120,
+    end: str | None = None,
+) -> dict[str, Any]:
+    picked_names: list[str] = []
+    seen: set[str] = set()
+    for raw_name in names:
+        name = str(raw_name or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        picked_names.append(name)
+    picked_names = picked_names[:MAX_INDUSTRY_COMPARE_COUNT]
+
+    from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
+
+    with session_scope() as db:
+        repo = ThsIndustryFundFlowRepository(db)
+        repo.ensure_bootstrapped()
+        dates_desc = repo.list_trade_dates(limit=max(1, min(days, 365)))
+        if end:
+            dates_desc = [trade_date for trade_date in dates_desc if trade_date <= end]
+        dates = list(reversed(dates_desc))
+        industries: list[dict[str, Any]] = []
+        for name in picked_names:
+            rows = repo.get_fund_flow_for_industry(name, days=max(1, min(days, 365)), end=end)
+            row_map = {str(row.get("tradeDate") or ""): row for row in rows if row.get("tradeDate")}
+            points: list[dict[str, Any]] = []
+            net_series: list[float | None] = []
+            for trade_date in dates:
+                row = row_map.get(trade_date)
+                main_net = row.get("净额(亿)") if row else None
+                rank = row.get("序号") if row else None
+                change_pct = row.get("行业指数涨跌幅") if row else None
+                points.append({"date": trade_date, "mainNet": main_net, "rank": rank, "changePct": change_pct})
+                net_series.append(main_net if isinstance(main_net, (int, float)) else None)
+
+            latest_point = next(
+                (
+                    point
+                    for point in reversed(points)
+                    if point.get("mainNet") is not None or point.get("rank") is not None
+                ),
+                None,
+            )
+            industries.append(
+                {
+                    "name": name,
+                    "days": len(points),
+                    "appearances": sum(1 for point in points if point.get("rank") is not None),
+                    "latestMainNet": latest_point.get("mainNet") if latest_point else None,
+                    "latestRank": latest_point.get("rank") if latest_point else None,
+                    "latestChangePct": latest_point.get("changePct") if latest_point else None,
+                    "averages": {
+                        "5": _avg_latest_window(net_series, 5),
+                        "10": _avg_latest_window(net_series, 10),
+                        "30": _avg_latest_window(net_series, 30),
+                        "60": _avg_latest_window(net_series, 60),
+                    },
+                    "points": points,
+                }
+            )
+
+    return {
+        "ok": True,
+        "days": len(dates),
+        "dates": dates,
+        "requestedIndustries": picked_names,
+        "count": len(industries),
         "industries": industries,
     }
 
@@ -504,6 +696,7 @@ def build_industry_detail(name: str, top_n: int = 30) -> dict[str, Any]:
 
 __all__ = [
     "build_capital_flow",
+    "build_industry_compare",
     "build_industry_detail",
     "build_industry_rotation",
     "build_market_pulse",

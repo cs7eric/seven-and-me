@@ -2,5 +2,25 @@
 	"dependencies": {
 		"components": "^0.1.0",
 		"styled-components": "^6.4.2"
-	}
+	},
+	"name": "mp4-to-word-new",
+	"version": "1.0.0",
+	"description": "基于 Whisper Large-v3 语音识别 + MiniMax AI 润色的本地工具。",
+	"main": "index.js",
+	"devDependencies": {},
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cs7eric/seven-and-me.git"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "ISC",
+	"type": "commonjs",
+	"bugs": {
+		"url": "https://github.com/cs7eric/seven-and-me/issues"
+	},
+	"homepage": "https://github.com/cs7eric/seven-and-me#readme"
 }

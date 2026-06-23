@@ -88,6 +88,12 @@ export type TrendIndustry = {
   worstRank: number | null
   latestRank: number | null
   latestChangePct: number | null
+  avgMainNet10?: number | null
+  appearanceRate?: number | null
+  avgRankScore?: number | null
+  flowScore?: number | null
+  compositeScore?: number | null
+  compositeRank?: number | null
   ranks: (number | null)[]
   changePcts: (number | null)[]
 }
@@ -96,8 +102,59 @@ export type RotationTrendData = {
   ok: boolean
   topN: number
   days: number
+  compositeWindowDays?: number
   dates: string[]
   industries: TrendIndustry[]
+}
+
+export type IndustryComparePoint = {
+  date: string
+  mainNet: number | null
+  rank: number | null
+  changePct: number | null
+}
+
+export type IndustryCompareSeries = {
+  name: string
+  days: number
+  appearances: number
+  latestMainNet: number | null
+  latestRank: number | null
+  latestChangePct: number | null
+  compositeScore?: number | null
+  compositeRank?: number | null
+  averages: {
+    "5": number | null
+    "10": number | null
+    "30": number | null
+    "60": number | null
+  }
+  points: IndustryComparePoint[]
+}
+
+export type IndustryCompareResponse = {
+  ok: boolean
+  days: number
+  dates: string[]
+  requestedIndustries: string[]
+  count: number
+  industries: IndustryCompareSeries[]
+}
+
+export type IndustryFundFlowIndustryOption = {
+  industry: string
+  industryCode?: string | null
+  days: number
+  firstDate?: string | null
+  lastDate?: string | null
+}
+
+export type IndustryFundFlowIndustryListResponse = {
+  ok: boolean
+  days: number
+  count: number
+  items: IndustryFundFlowIndustryOption[]
+  error?: string
 }
 
 export type IndustryDetail = {

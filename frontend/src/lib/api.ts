@@ -11,6 +11,10 @@ import type {
   IndustryApplicationTargetCode,
   MarketHeatmapResponse,
 } from "@/views/industry-application/lib/types";
+import type {
+  IndustryCompareResponse,
+  IndustryFundFlowIndustryListResponse,
+} from "@/views/stock-overview/market-pulse/lib/types";
 
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
@@ -3274,6 +3278,33 @@ export async function fetchMarketPulseRotationTrend(
   const res = await fetchWithRetry(url)
   const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !data) throw new Error("获取轮动趋势失败")
+  return data
+}
+
+export async function fetchMarketPulseIndustryCompare(
+  industries: string[],
+  days = 120,
+): Promise<IndustryCompareResponse> {
+  const params = new URLSearchParams()
+  params.set("days", String(days))
+  industries
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((item) => params.append("industry", item))
+  const url = `${API_BASE}/api/stock-chart/market-pulse/industry-compare?${params.toString()}`
+  const res = await fetchWithRetry(url)
+  const data = (await res.json().catch(() => null)) as IndustryCompareResponse | null
+  if (!res.ok || !data) throw new Error("获取行业对比历史失败")
+  return data
+}
+
+export async function fetchIndustryFundFlowIndustryList(
+  days = 365,
+): Promise<IndustryFundFlowIndustryListResponse> {
+  const url = `${API_BASE}/api/stock-chart/ths-industry/fund-flow/industry-series?days=${days}`
+  const res = await fetchWithRetry(url)
+  const data = (await res.json().catch(() => null)) as IndustryFundFlowIndustryListResponse | null
+  if (!res.ok || !data) throw new Error("获取行业列表失败")
   return data
 }
 

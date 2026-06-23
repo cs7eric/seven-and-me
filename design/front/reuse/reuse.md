@@ -76,6 +76,21 @@
   - `onClose`: Close handler
 - Notes: Fetches its own detail payload once opened.
 
+#### IndustryComparePanel
+- Path: `frontend/src/views/stock-overview/market-pulse/components/IndustryComparePanel.tsx`
+- Purpose: Render the default composite top-10 multi-industry comparison, allow multi-select industry additions, expose a net-flow / rank chart toggle, and show a compact summary table.
+- Reuse Scope: Same domain pages
+- Props Summary:
+  - `options`: Full industry option names
+  - `selected`: Currently selected industries
+  - `defaultCount`: Default industry count label
+  - `loading`: Historical compare loading state
+  - `data`: Multi-industry compare payload
+  - `onAdd`: Add multiple industries from the select list
+  - `onRemove`: Remove one selected industry
+  - `onResetDefault`: Reset to the default top industries
+- Notes: Encapsulates the page's ECharts setup, composite-default compare presentation, and compact summary table.
+
 ### Lib Methods
 
 #### bandColor

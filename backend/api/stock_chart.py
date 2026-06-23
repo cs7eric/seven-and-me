@@ -2329,6 +2329,36 @@ def market_pulse_industry_detail():
         return jsonify({"ok": False, "error": str(exc), "constituents": []}), 200
 
 
+@stock_chart_bp.route('/api/stock-chart/market-pulse/industry-compare')
+def market_pulse_industry_compare():
+    """多行业跨日净流 / 排名对比.
+
+    URL: ?industries=半导体,软件服务&days=120&end=2026-06-23
+    URL: ?industry=半导体&industry=软件服务&days=120
+    """
+    from backend.services.stock.market_pulse_service import build_industry_compare
+
+    raw_names = []
+    industries_arg = (request.args.get("industries") or "").strip()
+    if industries_arg:
+        raw_names.extend(part.strip() for part in industries_arg.split(","))
+    raw_names.extend((item or "").strip() for item in request.args.getlist("industry"))
+    names = [item for item in raw_names if item]
+    if not names:
+        return jsonify({"ok": False, "error": "industry or industries is required", "industries": []}), 400
+
+    try:
+        days = int(request.args.get("days") or 120)
+    except (TypeError, ValueError):
+        days = 120
+    days = max(1, min(days, 365))
+    end = (request.args.get("end") or "").strip() or None
+    try:
+        return jsonify(build_industry_compare(names, days=days, end=end))
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc), "industries": [], "dates": []}), 200
+
+
 # ---------------------------------------------------------------------------
 # Scheduler 状态
 # ---------------------------------------------------------------------------

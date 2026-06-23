@@ -65,28 +65,39 @@
  *      a) DuckDB: market_pulse_sector_daily
  *      b) JSON: reference/stock-universe/market_pulse/rotation/*.json
  */
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { notification } from "@/components/ui/notification"
 import {
   fetchMarketPulse,
+  fetchIndustryFundFlowIndustryList,
+  fetchMarketPulseIndustryCompare,
   fetchMarketPulseRotationTrend,
   fetchMarketPulseSchedulerStatus,
   triggerMarketPulseSnapshot,
 } from "@/lib/api"
 
 import { CapitalFlow } from "./components/CapitalFlow"
+import { IndustryComparePanel } from "./components/IndustryComparePanel"
 import { IndustryDetailDrawer } from "./components/IndustryDetailDrawer"
 import { IndustryRotation } from "./components/IndustryRotation"
 import { PageHeader, SchedulerStatusBar, SummaryStrip } from "./components/PageHeader"
 import { RotationTrend } from "./components/RotationTrend"
 import { StrongSectors } from "./components/StrongSectors"
 import { INSIDE_REFRESH_MS } from "./lib/format"
-import type { MarketPulse, RotationTrendData, SchedulerStatus } from "./lib/types"
+import type {
+  IndustryCompareResponse,
+  IndustryFundFlowIndustryOption,
+  MarketPulse,
+  RotationTrendData,
+  SchedulerStatus,
+} from "./lib/types"
 
 const ROTATION_TREND_ALL_DAYS = 365
 const ROTATION_TREND_TOP_N = 10
+const INDUSTRY_COMPARE_ALL_DAYS = 365
+const INDUSTRY_COMPARE_DEFAULT_COUNT = 10
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -95,21 +106,81 @@ function getErrorMessage(error: unknown): string {
 export default function StockOverviewMarketPulsePage() {
   const [data, setData] = useState<MarketPulse | null>(null)
   const [trend, setTrend] = useState<RotationTrendData | null>(null)
+  const [industryCompare, setIndustryCompare] = useState<IndustryCompareResponse | null>(null)
+  const [industryCompareLoading, setIndustryCompareLoading] = useState(false)
+  const [industryOptions, setIndustryOptions] = useState<IndustryFundFlowIndustryOption[]>([])
+  const [selectedIndustries, setSelectedIndustries] = useState<string[]>([])
   const [scheduler, setScheduler] = useState<SchedulerStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [picked, setPicked] = useState<string | null>(null)
 
+  const compareOptions = useMemo(() => {
+    const fromDb = industryOptions.map((item) => item.industry)
+    const fromCurrentSnapshot = [
+      ...(data?.flow?.inflow ?? []).map((item) => item.name),
+      ...((data?.rotation?.rows ?? [])[0]?.items ?? []).map((item) => item.name),
+      ...(data?.strong?.top ?? []).map((item) => item.name),
+      ...(data?.flow?.outflow ?? []).map((item) => item.name),
+    ]
+    return [...new Set([...fromDb, ...fromCurrentSnapshot])].filter((item): item is string => Boolean(item))
+  }, [data, industryOptions])
+  const defaultCompareIndustries = useMemo(() => {
+    const compositeTop = [...(trend?.industries ?? [])]
+      .filter((item) => item.compositeRank != null && compareOptions.includes(item.name))
+      .sort((a, b) => {
+        const rankDiff = (a.compositeRank ?? Number.MAX_SAFE_INTEGER) - (b.compositeRank ?? Number.MAX_SAFE_INTEGER)
+        if (rankDiff !== 0) return rankDiff
+        return (b.compositeScore ?? -Infinity) - (a.compositeScore ?? -Infinity)
+      })
+      .map((item) => item.name)
+      .slice(0, INDUSTRY_COMPARE_DEFAULT_COUNT)
+    if (compositeTop.length) return compositeTop
+
+    return [
+      ...new Set([
+        ...(data?.flow?.inflow ?? []).map((item) => item.name),
+        ...((data?.rotation?.rows ?? [])[0]?.items ?? []).map((item) => item.name),
+        ...(data?.strong?.top ?? []).map((item) => item.name),
+      ]),
+    ]
+      .filter((item): item is string => Boolean(item) && compareOptions.includes(item))
+      .slice(0, INDUSTRY_COMPARE_DEFAULT_COUNT)
+  }, [compareOptions, data, trend?.industries])
+  const effectiveSelectedIndustries = useMemo(() => {
+    const kept = selectedIndustries.filter((item) => compareOptions.includes(item))
+    return kept.length ? kept : defaultCompareIndustries
+  }, [compareOptions, defaultCompareIndustries, selectedIndustries])
+  const trendIndustryMeta = useMemo(
+    () =>
+      new Map(
+        (trend?.industries ?? []).map((item) => [item.name, { compositeRank: item.compositeRank, compositeScore: item.compositeScore }]),
+      ),
+    [trend?.industries],
+  )
+  const effectiveIndustryCompare = useMemo<IndustryCompareResponse | null>(() => {
+    if (!industryCompare) return null
+    return {
+      ...industryCompare,
+      industries: industryCompare.industries.map((item) => ({
+        ...item,
+        ...trendIndustryMeta.get(item.name),
+      })),
+    }
+  }, [industryCompare, trendIndustryMeta])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [market, trendData, schedulerStatus] = await Promise.all([
+      const [market, trendData, schedulerStatus, industryList] = await Promise.all([
         fetchMarketPulse(),
         fetchMarketPulseRotationTrend(ROTATION_TREND_ALL_DAYS, ROTATION_TREND_TOP_N).catch(() => null),
         fetchMarketPulseSchedulerStatus().catch(() => null),
+        fetchIndustryFundFlowIndustryList(INDUSTRY_COMPARE_ALL_DAYS).catch(() => null),
       ])
       setData(market as MarketPulse)
       if (trendData) setTrend(trendData as RotationTrendData)
       if (schedulerStatus) setScheduler(schedulerStatus as SchedulerStatus)
+      if (industryList?.ok) setIndustryOptions(industryList.items)
     } catch (error: unknown) {
       notification.error(`行情数据加载失败: ${getErrorMessage(error)}`)
     } finally {
@@ -160,6 +231,56 @@ export default function StockOverviewMarketPulsePage() {
     return () => window.clearInterval(timer)
   }, [scheduler?.isTradeTime, load])
 
+  useEffect(() => {
+    if (!effectiveSelectedIndustries.length) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      if (!cancelled) setIndustryCompareLoading(true)
+    }, 0)
+    fetchMarketPulseIndustryCompare(effectiveSelectedIndustries, INDUSTRY_COMPARE_ALL_DAYS)
+      .then((result) => {
+        if (!cancelled) setIndustryCompare(result)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          notification.error(`行业对比数据加载失败: ${getErrorMessage(error)}`)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIndustryCompareLoading(false)
+      })
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [effectiveSelectedIndustries])
+
+  const handleAddIndustries = useCallback(
+    (names: string[]) => {
+      const validNames = names.filter((item) => compareOptions.includes(item))
+      if (!validNames.length) return
+      setSelectedIndustries((prev) => {
+        const current = (prev.length ? prev : defaultCompareIndustries).filter((item) => compareOptions.includes(item))
+        return [...new Set([...current, ...validNames])]
+      })
+    },
+    [compareOptions, defaultCompareIndustries],
+  )
+
+  const handleRemoveIndustry = useCallback(
+    (name: string) => {
+      setSelectedIndustries((prev) => {
+        const current = (prev.length ? prev : defaultCompareIndustries).filter((item) => compareOptions.includes(item))
+        return current.filter((item) => item !== name)
+      })
+    },
+    [compareOptions, defaultCompareIndustries],
+  )
+
+  const handleResetCompareIndustries = useCallback(() => {
+    setSelectedIndustries(defaultCompareIndustries)
+  }, [defaultCompareIndustries])
+
   return (
     <WorkspaceShell sectionLabel="Stock Overview" sectionUrl="/stock-overview" pageTitle="market pulse">
       <div className="h-[calc(100svh-4rem)] space-y-4 overflow-y-auto p-3 sm:p-4">
@@ -179,6 +300,16 @@ export default function StockOverviewMarketPulsePage() {
         </div>
         <IndustryRotation data={data?.rotation} onRefreshSnapshot={refreshSnapshot} onPick={setPicked} />
         <RotationTrend data={trend} onPick={setPicked} />
+        <IndustryComparePanel
+          options={compareOptions}
+          selected={effectiveSelectedIndustries}
+          defaultCount={INDUSTRY_COMPARE_DEFAULT_COUNT}
+          loading={industryCompareLoading}
+          data={effectiveSelectedIndustries.length ? effectiveIndustryCompare : null}
+          onAdd={handleAddIndustries}
+          onRemove={handleRemoveIndustry}
+          onResetDefault={handleResetCompareIndustries}
+        />
       </div>
       <IndustryDetailDrawer name={picked} onClose={() => setPicked(null)} />
     </WorkspaceShell>

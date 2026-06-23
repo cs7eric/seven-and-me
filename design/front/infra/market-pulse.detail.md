@@ -2,7 +2,7 @@
 
 ## Overview
 
-This page presents stock-overview market pulse data as a workspace with strong sectors, capital flow, daily rotation, and cross-day rotation trends.
+This page presents stock-overview market pulse data as a workspace with strong sectors, capital flow, daily rotation, cross-day rotation trends, and multi-industry comparison analysis.
 It keeps the route `/stock-overview/market` while reorganizing the implementation into a semantic page module.
 
 ## Route
@@ -22,6 +22,8 @@ It keeps the route `/stock-overview/market` while reorganizing the implementatio
 
 - `/api/stock-chart/market-pulse/all`: Load strong sectors, capital flow, and daily rotation blocks
 - `/api/stock-chart/market-pulse/rotation-trend`: Load cross-day rank and change-percent trend data
+- `/api/stock-chart/market-pulse/industry-compare`: Load multi-industry historical net-flow series, rank series, and 5/10/30/60-day averages
+- `/api/stock-chart/ths-industry/fund-flow/industry-series`: Load all industries with historical fund-flow records for the compare selector
 - `/api/stock-chart/market-pulse/scheduler/status`: Load scheduler runtime state
 - `/api/stock-chart/market-pulse/snapshot`: Trigger a manual snapshot refresh
 - `/api/stock-chart/market-pulse/industry-detail`: Load drill-down details for one picked industry
@@ -35,6 +37,7 @@ It keeps the route `/stock-overview/market` while reorganizing the implementatio
 - `CapitalFlow`: Inflow and outflow panels
 - `IndustryRotation`: Daily top-N rotation matrix
 - `RotationTrend`: Cross-day ranking trend table
+- `IndustryComparePanel`: ECharts-based multi-industry net-flow / rank comparison, multi-select add list, and rolling-average table
 - `IndustryDetailDrawer`: Sector drill-down drawer
 
 ## Lib
@@ -47,6 +50,12 @@ It keeps the route `/stock-overview/market` while reorganizing the implementatio
 `/api/stock-chart/market-pulse/all` -> page state in `index.tsx` -> extracted sector/flow/rotation components -> UI rendering.
 
 `/api/stock-chart/market-pulse/rotation-trend` -> page state in `index.tsx` -> `RotationTrend` -> UI rendering.
+
+`/api/stock-chart/ths-industry/fund-flow/industry-series` -> page state in `index.tsx` -> `IndustryComparePanel` selector options.
+
+Default compare selection now prefers the composite top 10 from `/api/stock-chart/market-pulse/rotation-trend` (based on recent appearance frequency, average rank, and 10-day average net flow), then falls back to the latest snapshot-derived list if trend data is unavailable.
+
+`/api/stock-chart/market-pulse/industry-compare` -> page state in `index.tsx` -> `IndustryComparePanel` -> single-chart trend toggle plus compact summary table.
 
 ## Maintenance Notes
 
