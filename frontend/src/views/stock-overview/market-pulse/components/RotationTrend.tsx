@@ -18,6 +18,7 @@ export function RotationTrend({
     () => (data?.industries ?? []).filter((item) => item.appearances >= 1).slice(0, 30),
     [data?.industries],
   )
+  const tableMinWidth = 320 + dates.length * 72
 
   if (!filtered.length) {
     return (
@@ -54,7 +55,7 @@ export function RotationTrend({
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-sm">
+          <table className="w-full border-collapse text-sm" style={{ minWidth: `${tableMinWidth}px` }}>
             <colgroup>
               <col className="w-44" />
               <col className="w-16" />
@@ -62,7 +63,7 @@ export function RotationTrend({
               <col className="w-16" />
               <col className="w-16" />
               {dates.map((date) => (
-                <col key={date} />
+                <col key={date} className="w-[4.5rem]" />
               ))}
             </colgroup>
             <thead>

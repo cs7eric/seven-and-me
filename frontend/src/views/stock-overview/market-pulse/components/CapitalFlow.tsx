@@ -75,7 +75,7 @@ function FlowColumn({
         {isUp ? <ArrowUpRight className="size-4" /> : <ArrowDownRight className="size-4" />}
         {title} ({rows.length})
       </div>
-      <div className="space-y-2.5">
+      <div className="max-h-[28rem] space-y-2.5 overflow-y-auto pr-1">
         {rows.map((row) => {
           const width = Math.max(6, Math.min(100, (Math.abs(row.mainNet) / maxAbs) * 100))
           return (
