@@ -12,7 +12,7 @@ import SchedulerSettingsPage from "../views/settings/scheduler"
 import SelfSelectedPage from "../views/self-selected"
 import StockChartPage from "../views/stock-chart"
 import StockOverviewPage from "../views/stock-overview"
-import MarketPulseMock from "../views/stock-overview/mock-market"
+import StockOverviewMarketPulsePage from "../views/stock-overview/market-pulse"
 import MarketPulsePage from "../views/market/market-pulse"
 import MarketSentimentPage from "../views/market/market-sentiment"
 import PocPage from "../views/poc"
@@ -57,7 +57,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "stock-overview/market",
-        element: <MarketPulseMock />,
+        element: <StockOverviewMarketPulsePage />,
       },
       {
         path: "market/pulse",
