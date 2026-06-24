@@ -1,0 +1,5 @@
+interface:
+  display_name: "Enterprise Dual-End Adaptation"
+  short_description: "Adapt existing pages for desktop and mobile"
+  default_prompt: "Use $enterprise-dual-end-adaptation to adapt this page for PC and mobile with intentional layout changes, overflow fixes, and preserved desktop behavior."
+
