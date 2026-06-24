@@ -24,7 +24,7 @@ export function RotationTrend({
     return (
       <Card className={cardChrome}>
         <CardHeader className="border-b border-slate-100 pb-5">
-          <div>
+          <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">M4</div>
             <CardTitle className="mt-1 text-xl font-semibold tracking-[-0.025em] text-slate-950">
               <TrendingUp className="mr-2 inline-block size-5 text-cyan-500" />
@@ -42,7 +42,7 @@ export function RotationTrend({
   return (
     <Card className={cardChrome}>
       <CardHeader className="border-b border-slate-100 pb-5">
-        <div>
+        <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">M4</div>
           <CardTitle className="mt-1 text-xl font-semibold tracking-[-0.025em] text-slate-950">
             <TrendingUp className="mr-2 inline-block size-5 text-cyan-500" />
@@ -87,7 +87,7 @@ export function RotationTrend({
               {filtered.map((industry) => (
                 <tr key={industry.name} className="border-b border-slate-50">
                   <td className="px-3 py-2">
-                    <button onClick={() => onPick(industry.name)} className="text-left text-sm font-medium text-slate-900 hover:underline">
+                    <button onClick={() => onPick(industry.name)} className="max-w-full truncate text-left text-sm font-medium text-slate-900 hover:underline">
                       {industry.name}
                     </button>
                   </td>

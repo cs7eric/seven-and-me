@@ -61,9 +61,9 @@ function riskTone(value: unknown) {
 
 function MetricPill({ label, value, tone }: { label: string; value: unknown; tone?: string }) {
   return (
-    <div className={cn("rounded-xl border px-3 py-2", tone || "border-slate-200 bg-white")}>
+    <div className={cn("min-w-0 rounded-xl border px-3 py-2", tone || "border-slate-200 bg-white")}>
       <div className="text-[10px] text-slate-500">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-semibold">{fmt(value)}</div>
+      <div className="mt-0.5 break-words text-sm font-semibold sm:truncate">{fmt(value)}</div>
     </div>
   )
 }
@@ -71,11 +71,11 @@ function MetricPill({ label, value, tone }: { label: string; value: unknown; ton
 function SectionList({ title, items }: { title: string; items: string[] }) {
   if (!items.length) return null
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+    <div className="min-w-0 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
       <div className="text-[11px] font-medium text-slate-500">{title}</div>
       <div className="mt-2 grid gap-1.5 text-xs leading-5 text-slate-700">
         {items.slice(0, 8).map((item, index) => (
-          <div key={`${title}-${index}`} className="rounded-lg bg-white px-2 py-1 shadow-[0_1px_3px_rgba(15,23,42,0.04)]">
+          <div key={`${title}-${index}`} className="break-words rounded-lg bg-white px-2 py-1 shadow-[0_1px_3px_rgba(15,23,42,0.04)]">
             {item}
           </div>
         ))}
@@ -101,7 +101,7 @@ function StyleViewCard({
   const observation = safeString(data.observation) || safeString(data.watch_5min)
   const mainRisks = textList(data.main_risks)
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+    <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-[11px] font-medium text-slate-500">
           {icon}
@@ -111,9 +111,9 @@ function StyleViewCard({
           {fmt(score)}
         </Badge>
       </div>
-      <div className="mt-2 text-sm font-semibold text-slate-900">{state}</div>
+      <div className="mt-2 break-words text-sm font-semibold text-slate-900">{state}</div>
       <div className="mt-1 text-[11px] text-slate-500">置信 {fmt(confidence)}</div>
-      {observation ? <div className="mt-2 text-xs leading-5 text-slate-600">{observation}</div> : null}
+      {observation ? <div className="mt-2 break-words text-xs leading-5 text-slate-600">{observation}</div> : null}
       {mainRisks.length ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {mainRisks.slice(0, 4).map((item) => (
@@ -166,7 +166,7 @@ function AuctionAiPanel({
   const hasResult = Boolean(response?.analysis_result)
 
   return (
-    <Card className="border-white/70 bg-white/85 shadow-sm">
+    <Card className="min-w-0 border-white/70 bg-white/85 shadow-sm">
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -176,7 +176,7 @@ function AuctionAiPanel({
             </CardTitle>
             <div className="mt-1 text-xs text-slate-500">集合竞价、技术位置、行业市场、财务风险的压缩摘要分析</div>
           </div>
-          <Button size="sm" onClick={onRefresh} disabled={loading} className="gap-2">
+          <Button size="sm" onClick={onRefresh} disabled={loading} className="w-full gap-2 sm:w-auto">
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
             {loading ? "读取中" : "刷新结果"}
           </Button>
@@ -206,12 +206,12 @@ function AuctionAiPanel({
         {!hasResult ? (
           <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
             <div>今日暂无持久化竞价 AI 解读。调度器会在工作日 09:26 后生成，盘中读取默认不会再次调用 AI。</div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Button size="sm" onClick={onRunNow} disabled={actionLoading} className="gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap">
+              <Button size="sm" onClick={onRunNow} disabled={actionLoading} className="w-full gap-2 sm:w-auto">
                 <Play className="size-4" />
                 {actionLoading ? "处理中" : "立即生成当前标的"}
               </Button>
-              <Button size="sm" variant="outline" onClick={onTriggerJob} disabled={actionLoading} className="gap-2">
+              <Button size="sm" variant="outline" onClick={onTriggerJob} disabled={actionLoading} className="w-full gap-2 sm:w-auto">
                 <RefreshCw className={cn("size-4", actionLoading && "animate-spin")} />
                 触发今日批量任务
               </Button>
@@ -232,10 +232,10 @@ function AuctionAiPanel({
                     置信 {fmt(conclusion.confidence)}
                   </Badge>
                 </div>
-                <div className="mt-3 text-base font-semibold leading-6 text-slate-900">
+                <div className="mt-3 break-words text-base font-semibold leading-6 text-slate-900">
                   {safeString(conclusion.summary) || "—"}
                 </div>
-                <div className="mt-2 text-sm leading-6 text-slate-600">
+                <div className="mt-2 break-words text-sm leading-6 text-slate-600">
                   {safeString(conclusion.key_reason) || "—"}
                 </div>
               </div>
@@ -272,8 +272,8 @@ function AuctionAiPanel({
                     <div className="text-[11px] font-medium text-slate-500">
                       {key === "bullish_case" ? "偏强情景" : key === "base_case" ? "基准情景" : "偏弱情景"}
                     </div>
-                    <div className="mt-2 text-xs leading-5 text-slate-700">{safeString(item.condition) || "—"}</div>
-                    <div className="mt-1 text-xs leading-5 text-slate-500">{safeString(item.meaning) || "—"}</div>
+                    <div className="mt-2 break-words text-xs leading-5 text-slate-700">{safeString(item.condition) || "—"}</div>
+                    <div className="mt-1 break-words text-xs leading-5 text-slate-500">{safeString(item.meaning) || "—"}</div>
                     <Badge variant="outline" className={cn("mt-2 rounded-full px-2 py-0 text-[10px]", scoreTone(item.confidence))}>
                       置信 {fmt(item.confidence)}
                     </Badge>
@@ -429,7 +429,7 @@ export function AuctionTab({
   }, [targetType, symbol])
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <AuctionAiPanel
         response={aiResponse}
         loading={aiLoading}
@@ -446,7 +446,9 @@ export function AuctionTab({
           加载集合竞价失败：{error}
         </div>
       ) : (
-        <AuctionPanel auction={auction} />
+        <div className="max-w-full overflow-x-auto">
+          <AuctionPanel auction={auction} />
+        </div>
       )}
     </div>
   )

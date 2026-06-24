@@ -255,7 +255,7 @@ function CandleOverlay({
       </svg>
 
       {hoverBar ? (
-        <div className="pointer-events-none absolute right-3 top-3 z-10 w-[200px] rounded-lg border border-slate-700/40 bg-slate-900/95 px-3 py-2 text-xs text-slate-100 shadow-lg">
+        <div className="pointer-events-none absolute right-2 top-2 z-10 w-[min(200px,calc(100%-1rem))] rounded-lg border border-slate-700/40 bg-slate-900/95 px-3 py-2 text-xs text-slate-100 shadow-lg sm:right-3 sm:top-3">
           <div className="mb-1.5 text-[13px] font-semibold text-white">
             {hoverBar.trade_date ? `${hoverBar.trade_date} ` : ""}{hoverBar.time_label}
           </div>
@@ -587,9 +587,9 @@ export function IntradayAnalysisDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[92vh] !max-w-[96vw] flex-col overflow-hidden rounded-2xl border-slate-200 bg-white p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)]">
-        <DialogHeader className="border-b border-slate-200 px-6 py-5">
-          <DialogTitle className="pr-10 text-xl text-slate-900">{name} · 当日分时分析</DialogTitle>
+      <DialogContent className="flex h-[94svh] w-[calc(100vw-1rem)] !max-w-[96vw] flex-col overflow-hidden rounded-2xl border-slate-200 bg-white p-0 shadow-[0_24px_80px_rgba(15,23,42,0.18)] sm:h-[92vh] sm:w-auto">
+        <DialogHeader className="border-b border-slate-200 px-4 py-4 sm:px-6 sm:py-5">
+          <DialogTitle className="break-words pr-10 text-lg text-slate-900 sm:text-xl">{name} · 当日分时分析</DialogTitle>
           <DialogDescription className="flex flex-wrap items-center gap-3 text-slate-500">
             <span>{symbol}</span>
             <span>交易日 {payload?.trade_date || "—"}</span>
@@ -597,10 +597,10 @@ export function IntradayAnalysisDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 py-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-4 sm:px-6 sm:py-5 xl:overflow-hidden">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <Tabs value={tab} onValueChange={(value) => value && setTab(value as IntradayTab)}>
-              <TabsList className="rounded-lg border border-slate-200 bg-slate-50 p-1">
+              <TabsList className="w-full rounded-lg border border-slate-200 bg-slate-50 p-1 sm:w-auto">
                 <TabsTrigger value="timeshare" className="rounded-md px-4 py-1.5 text-xs data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm">
                   分时
                 </TabsTrigger>
@@ -609,8 +609,8 @@ export function IntradayAnalysisDialog({
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2 text-xs text-slate-500">
+            <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-slate-500">
                 {tab === "timeshare" ? (
                   <>
                     <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-slate-900" />分时</span>
@@ -644,8 +644,8 @@ export function IntradayAnalysisDialog({
             </div>
           ) : (
             <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
-              <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
+              <section className="flex min-h-[520px] min-w-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 xl:min-h-0">
+                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="text-sm font-semibold text-slate-900">
                       {tab === "timeshare" ? "分时图" : `分钟 K (${period})`}
@@ -696,7 +696,7 @@ export function IntradayAnalysisDialog({
                 <div
                   ref={chartWrapperRef}
                   onClick={handleChartWrapperClick}
-                  className={`relative min-h-0 flex-1 ${markerMode !== "none" && tab === "timeshare" ? "cursor-crosshair" : ""}`}
+                  className={`relative min-h-0 min-w-0 flex-1 ${markerMode !== "none" && tab === "timeshare" ? "cursor-crosshair" : ""}`}
                 >
                   {tab === "timeshare" ? (
                     <ResponsiveContainer width="100%" height="100%">
@@ -878,12 +878,12 @@ export function IntradayAnalysisDialog({
                 ) : null}
               </section>
 
-              <aside className="flex min-h-0 flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+              <aside className="flex min-h-0 min-w-0 flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-3 sm:p-4">
                 {/* AI 逻辑分析 */}
                 <div className="flex min-h-0 flex-1 flex-col gap-2">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm font-semibold text-slate-900">AI 逻辑分析</div>
-                    <Button size="sm" onClick={handleRunAiAnalysis} disabled={aiLoading} className="h-7 px-3 text-xs">
+                    <Button size="sm" onClick={handleRunAiAnalysis} disabled={aiLoading} className="h-8 w-full px-3 text-xs sm:h-7 sm:w-auto">
                       {aiLoading ? "分析中…" : "运行分析"}
                     </Button>
                   </div>
@@ -900,7 +900,7 @@ export function IntradayAnalysisDialog({
                     ) : aiAnalysis ? (
                       <div className="space-y-3">
                         {typeof aiSummary?.current_status === "string" && aiSummary.current_status ? (
-                          <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800">
+                            <div className="break-words rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800">
                             <span className="text-slate-400">当前状态：</span>
                             {aiSummary.current_status}
                           </div>
@@ -960,9 +960,9 @@ export function IntradayAnalysisDialog({
                             <div className="mb-1 text-xs font-medium text-slate-700">趋势状态</div>
                             <div className="space-y-0.5 text-xs text-slate-700">
                               {Object.entries(aiTrend).slice(0, 6).map(([key, value]) => (
-                                <div key={key} className="flex justify-between gap-2">
-                                  <span className="text-slate-400">{key}</span>
-                                  <span className="text-right">
+                                <div key={key} className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:gap-2">
+                                  <span className="break-all text-slate-400">{key}</span>
+                                  <span className="break-words text-left sm:text-right">
                                     {value === null || value === undefined
                                       ? "—"
                                       : typeof value === "object"
@@ -979,9 +979,9 @@ export function IntradayAnalysisDialog({
                             <div className="mb-1 text-xs font-medium text-slate-700">市场情绪</div>
                             <div className="space-y-0.5 text-xs text-slate-700">
                               {Object.entries(aiSentiment).slice(0, 6).map(([key, value]) => (
-                                <div key={key} className="flex justify-between gap-2">
-                                  <span className="text-slate-400">{key}</span>
-                                  <span className="text-right">
+                                <div key={key} className="flex flex-col gap-1 sm:flex-row sm:justify-between sm:gap-2">
+                                  <span className="break-all text-slate-400">{key}</span>
+                                  <span className="break-words text-left sm:text-right">
                                     {value === null || value === undefined
                                       ? "—"
                                       : typeof value === "object"
@@ -1017,7 +1017,7 @@ export function IntradayAnalysisDialog({
                 </div>
 
                 <div className="flex justify-end">
-                  <Button variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
+                  <Button className="w-full sm:w-auto" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
                 </div>
               </aside>
             </div>

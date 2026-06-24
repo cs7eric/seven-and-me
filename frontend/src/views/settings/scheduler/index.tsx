@@ -210,19 +210,19 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   }, [dialogOpen, job.id, pending])
 
   return (
-    <Card className="mb-4 break-inside-avoid border-0 shadow-none bg-muted/60">
+    <Card className="mb-4 max-w-full break-inside-avoid border-0 bg-muted/60 shadow-none">
       {/* 列表项: 点击打开 dialog 查看详情 */}
       <CardHeader
         className="cursor-pointer select-none py-0 transition-colors hover:bg-muted/30"
         onClick={() => setDialogOpen(true)}
       >
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Settings2 className="size-4 shrink-0 text-muted-foreground" />
             <CardTitle className="truncate text-base font-medium">{job.name}</CardTitle>
           </div>
           <div
-            className="flex flex-wrap items-center gap-2"
+            className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center"
             onClick={(e) => e.stopPropagation()}
           >
             {/* 启用状态 */}
@@ -243,7 +243,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="rounded-xl"
+                  className="w-full rounded-xl sm:w-auto"
                   disabled={isActionPending("disable")}
                   onClick={() => onAction(job.id, "disable")}
                 >
@@ -254,7 +254,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <Button
                   size="sm"
                   variant="default"
-                  className="rounded-xl"
+                  className="w-full rounded-xl sm:w-auto"
                   disabled={isActionPending("enable")}
                   onClick={() => onAction(job.id, "enable")}
                 >
@@ -267,7 +267,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             <Button
               size="sm"
               variant="secondary"
-              className="rounded-xl"
+              className="w-full rounded-xl sm:w-auto"
               disabled={isActionPending("trigger")}
               onClick={() => onAction(job.id, "trigger")}
             >
@@ -280,12 +280,12 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
 
       {/* Dialog 详情 */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-[1120px]">
+        <DialogContent className="max-h-[88vh] w-[calc(100vw-1rem)] overflow-y-auto p-4 sm:w-[calc(100vw-2rem)] sm:max-w-[1120px] sm:p-6">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex min-w-0 flex-wrap items-center gap-2 pr-6 leading-6">
               <Settings2 className="size-4" />
-              {job.name}
-              <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+              <span className="min-w-0 break-words">{job.name}</span>
+              <span className="max-w-full break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
                 {job.id}
               </span>
             </DialogTitle>
@@ -321,7 +321,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                   计算逻辑
                 </div>
-                <div className="whitespace-pre-wrap rounded-2xl border border-border/40 bg-background/70 p-3 text-xs leading-6 text-muted-foreground">
+                <div className="whitespace-pre-wrap break-words rounded-2xl border border-border/40 bg-background/70 p-3 text-xs leading-6 text-muted-foreground">
                   {job.description}
                 </div>
               </div>
@@ -343,50 +343,50 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5 text-sm">
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">上次运行</div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">时间：</span>
                 <span>{formatDateTime(lastRunAt)}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">状态：</span>
                 {lastStatus ? (
                   <Badge variant={statusBadgeVariant(lastStatus)} className={statusBadgeClass(lastStatus)}>{lastStatus}</Badge>
                 ) : <span>—</span>}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">处理标的：</span>
                 <span>{lastTargets ?? "—"} 个</span>
               </div>
               {lastError ? (
                 <div className={cn("flex items-start gap-2", lastStatus === "skipped" ? "text-amber-600" : "text-destructive")}>
                   <AlertTriangle className="mt-0.5 size-3.5" />
-                  <span className="text-xs leading-5">{lastError}</span>
+                  <span className="break-words text-xs leading-5">{lastError}</span>
                 </div>
               ) : null}
               {!lastError && lastMessage ? (
                 <div className="flex items-start gap-2 text-emerald-600">
                   <CheckCircle2 className="mt-0.5 size-3.5" />
-                  <span className="text-xs leading-5">{lastMessage}</span>
+                  <span className="break-words text-xs leading-5">{lastMessage}</span>
                 </div>
               ) : null}
             </div>
 
             <div className="space-y-1.5 text-sm">
               <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">注册信息</div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <FileCode2 className="size-3.5 text-muted-foreground" />
                 <span className="text-muted-foreground">config：</span>
                 <span className="break-all font-mono text-xs">{job.config_file || "—"}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">service：</span>
                 <span className="break-all font-mono text-xs">{job.service_class || "—"}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">module：</span>
                 <span className="break-all font-mono text-xs">{job.service_module || "—"}</span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <span className="text-muted-foreground">注册时间：</span>
                 <span>{formatDateTime(job.registered_at)}</span>
               </div>
@@ -401,7 +401,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">正在执行</div>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(inflight).map(([targetId, startedAtValue]) => (
-                    <Badge key={targetId} variant="secondary">
+                    <Badge key={targetId} variant="secondary" className="max-w-full whitespace-normal break-all text-left">
                       {targetId} · {formatDateTime(startedAtValue)}
                     </Badge>
                   ))}
@@ -421,9 +421,9 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                     const infoRecord = info as Record<string, unknown> | undefined
                     const status = pickValue<string>(infoRecord, "status") || "—"
                     return (
-                      <div key={targetId} className="flex items-center justify-between gap-3 text-xs">
-                        <span className="font-mono">{targetId}</span>
-                        <span className="flex items-center gap-2 text-muted-foreground">
+                      <div key={targetId} className="flex flex-col gap-1 text-xs sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                        <span className="break-all font-mono">{targetId}</span>
+                        <span className="flex flex-wrap items-center gap-2 text-muted-foreground">
                           <Badge variant={statusBadgeVariant(status)} className={cn(statusBadgeClass(status), "px-1.5 py-0")}>{status}</Badge>
                           <span>{formatDateTime(pickValue<string>(infoRecord, "finished_at"))}</span>
                         </span>
@@ -445,14 +445,14 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
           <Separator />
 
           {/* 操作按钮组 */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
             {isRunning ? (
-              <Button size="sm" variant="destructive" className="rounded-xl" disabled={isActionPending("stop")} onClick={() => onAction(job.id, "stop")}>
+              <Button size="sm" variant="destructive" className="w-full rounded-xl sm:w-auto" disabled={isActionPending("stop")} onClick={() => onAction(job.id, "stop")}>
                 <CirclePause className="size-3.5" />
                 {isActionPending("stop") ? "停止中…" : "停止调度"}
               </Button>
             ) : (
-              <Button size="sm" variant="default" className="rounded-xl" disabled={isActionPending("start")} onClick={() => onAction(job.id, "start")}>
+              <Button size="sm" variant="default" className="w-full rounded-xl sm:w-auto" disabled={isActionPending("start")} onClick={() => onAction(job.id, "start")}>
                 <Play className="size-3.5" />
                 {isActionPending("start") ? "启动中…" : "启动调度"}
               </Button>
@@ -460,12 +460,12 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
 
             {job.supports_enable ? (
               job.config_enabled ? (
-                <Button size="sm" variant="outline" className="rounded-xl" disabled={isActionPending("disable")} onClick={() => onAction(job.id, "disable")}>
+                <Button size="sm" variant="outline" className="w-full rounded-xl sm:w-auto" disabled={isActionPending("disable")} onClick={() => onAction(job.id, "disable")}>
                   <PowerOff className="size-3.5" />
                   {isActionPending("disable") ? "禁用中…" : "禁用"}
                 </Button>
               ) : (
-                <Button size="sm" variant="default" className="rounded-xl" disabled={isActionPending("enable")} onClick={() => onAction(job.id, "enable")}>
+                <Button size="sm" variant="default" className="w-full rounded-xl sm:w-auto" disabled={isActionPending("enable")} onClick={() => onAction(job.id, "enable")}>
                   <Power className="size-3.5" />
                   {isActionPending("enable") ? "启用中…" : "启用"}
                 </Button>
@@ -488,7 +488,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             <Button
               size="sm"
               variant="secondary"
-              className="rounded-xl"
+              className="w-full rounded-xl sm:w-auto"
               disabled={isActionPending("trigger")}
               onClick={() => onAction(job.id, "trigger")}
             >
@@ -525,8 +525,8 @@ function JobHistorySection({
 
   return (
     <div className="space-y-1.5 text-sm">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           <HistoryIcon className="size-3.5" />
           <span>历史记录</span>
           <span className="text-[10px] text-muted-foreground/60">
@@ -555,7 +555,7 @@ function JobHistorySection({
         </div>
       ) : (
         <div className="overflow-hidden rounded-md border border-border/30">
-          <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 bg-muted/30 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          <div className="hidden grid-cols-[1fr_auto_auto_auto] gap-2 bg-muted/30 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:grid">
             <span>开始时间</span>
             <span>触发</span>
             <span>状态</span>
@@ -596,7 +596,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
   return (
     <div
       className={cn(
-        "grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-2 py-1.5 text-xs",
+        "grid grid-cols-1 gap-2 px-2 py-2 text-xs sm:grid-cols-[1fr_auto_auto_auto] sm:items-center sm:py-1.5",
         isFailed && "bg-red-50/50 dark:bg-red-950/10",
         isSkipped && "bg-amber-50/50 dark:bg-amber-950/10",
         isProcessing && "bg-sky-50/50 dark:bg-sky-950/10",
@@ -626,7 +626,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
       </div>
       <Badge
         variant={isManual ? "secondary" : "outline"}
-        className="px-1.5 py-0 text-[10px]"
+        className="w-fit px-1.5 py-0 text-[10px]"
         title={isManual ? "用户手动触发" : "cron 自动触发"}
       >
         {isManual ? (
@@ -638,7 +638,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
           "自动"
         )}
       </Badge>
-      <Badge variant={statusBadgeVariant(item.status)} className={cn(statusBadgeClass(item.status), "px-1.5 py-0 text-[10px]")}>
+      <Badge variant={statusBadgeVariant(item.status)} className={cn(statusBadgeClass(item.status), "w-fit px-1.5 py-0 text-[10px]")}>
         {isProcessing ? (
           <>
             <RefreshCw className="mr-0.5 size-2.5 animate-spin" />
@@ -654,7 +654,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
 
       {hasDetail && expanded ? (
         <div className={cn(
-          "col-span-4 mt-1 flex items-start gap-1.5 rounded border px-2 py-1.5 text-[11px] leading-5",
+          "mt-1 flex items-start gap-1.5 rounded border px-2 py-1.5 text-[11px] leading-5 sm:col-span-4",
           isSkipped
             ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/20 dark:text-amber-400"
             : isSuccess
@@ -671,7 +671,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
       ) : null}
 
       {!isFailed && item.target_count != null && item.target_count > 0 ? (
-        <div className="col-span-4 mt-0.5 text-[10px] text-muted-foreground">
+        <div className="mt-0.5 text-[10px] text-muted-foreground sm:col-span-4">
           处理标的 {item.target_count} 个, 成功 {item.succeeded ?? 0}
         </div>
       ) : null}
@@ -697,22 +697,22 @@ function DeleteJobButton({
         <Button
           size="sm"
           variant="ghost"
-          className="ml-auto rounded-xl text-destructive hover:bg-destructive/10 hover:text-destructive"
+          className="w-full rounded-xl text-destructive hover:bg-destructive/10 hover:text-destructive sm:ml-auto sm:w-auto"
           disabled={pending}
         >
           <Trash2 className="size-3.5" />
           {pending ? "删除中…" : "删除"}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-[calc(100vw-1rem)] p-4 sm:max-w-md sm:p-6">
         <DialogHeader>
           <DialogTitle>删除调度任务</DialogTitle>
           <DialogDescription>
-            确认要删除 <span className="font-mono font-semibold">{jobId}</span> 吗？
+            确认要删除 <span className="break-all font-mono font-semibold">{jobId}</span> 吗？
           </DialogDescription>
         </DialogHeader>
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm leading-6 text-foreground">
-          <div className="font-medium">{jobName}</div>
+          <div className="break-words font-medium">{jobName}</div>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
             <li>会从 <code className="rounded bg-muted px-1">scheduler/jobs.json</code> 注册表里移除</li>
             <li>后端会停掉该 job 的调度器线程（如果正在运行）</li>
@@ -722,12 +722,12 @@ function DeleteJobButton({
         </div>
         <DialogFooter>
           <DialogClose asChild>
-            <Button variant="outline" className="rounded-xl">取消</Button>
+            <Button variant="outline" className="w-full rounded-xl sm:w-auto">取消</Button>
           </DialogClose>
           <DialogClose asChild>
             <Button
               variant="destructive"
-              className="rounded-xl"
+              className="w-full rounded-xl sm:w-auto"
               disabled={pending}
               onClick={onConfirm}
             >
@@ -751,12 +751,12 @@ function Stat({
   value: React.ReactNode
 }) {
   return (
-    <div className="rounded-xl border border-border/30 bg-muted/30 p-3">
+    <div className="min-w-0 rounded-xl border border-border/30 bg-muted/30 p-3">
       <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
         {icon}
         {label}
       </div>
-      <div className="text-sm font-medium text-foreground">{value}</div>
+      <div className="break-words text-sm font-medium text-foreground">{value}</div>
     </div>
   )
 }
@@ -963,32 +963,32 @@ export default function SchedulerSettingsPage() {
 
   return (
     <WorkspaceShell sectionLabel="Settings" pageTitle="Scheduler">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-2">
+      <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-end">
+        <div className="min-w-0 space-y-2">
           <div className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
             <Settings2 className="size-3.5" />
             Settings · Scheduler
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
             调度任务管理
           </h1>
           <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
-            统一管理 <code className="rounded bg-muted px-1.5 py-0.5 text-xs">scheduler/jobs.json</code> 注册的调度任务：
+            统一管理 <code className="break-all rounded bg-muted px-1.5 py-0.5 text-xs">scheduler/jobs.json</code> 注册的调度任务：
             实时查看线程状态、上一轮运行情况，并支持启用 / 禁用 / 启动 / 停止 / 手动触发。
           </p>
         </div>
-        <div className="flex flex-col items-end gap-1.5">
+        <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
           <Button
             size="sm"
             variant="outline"
-            className="rounded-xl"
+            className="w-full rounded-xl sm:w-auto"
             onClick={() => void refresh(false)}
             disabled={loading}
           >
             <RefreshCcw className="size-3.5" />
             立即刷新
           </Button>
-          <div className="text-xs text-muted-foreground">
+          <div className="text-left text-xs text-muted-foreground sm:text-right">
             {lastUpdated
               ? `最近刷新：${lastUpdated.toLocaleTimeString("zh-CN", { hour12: false })} · 每 ${REFRESH_INTERVAL_MS / 1000}s 自动刷新`
               : `每 ${REFRESH_INTERVAL_MS / 1000}s 自动刷新`}
@@ -1019,14 +1019,14 @@ export default function SchedulerSettingsPage() {
 
       {/* 每日运行统计 */}
       {dailyStats.length > 0 ? (
-        <Card className="overflow-hidden border-0 bg-muted/60 shadow-none py-0">
-          <div className="flex items-center justify-between gap-4 px-4 pt-4 pb-2">
+        <Card className="overflow-hidden border-0 bg-muted/60 py-0 shadow-none">
+          <div className="flex flex-col gap-3 px-3 pb-2 pt-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
             <div className="flex items-center gap-2 text-sm font-medium text-foreground">
               <BarChart3 className="size-4 text-muted-foreground" />
               运行统计
             </div>
             {dailyStatsSummary ? (
-              <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <span className="inline-block size-2 rounded-full bg-emerald-500/80" />
                   成功 {dailyStatsSummary.total - dailyStatsSummary.failed}
@@ -1045,7 +1045,7 @@ export default function SchedulerSettingsPage() {
               </div>
             ) : null}
           </div>
-          <CardContent className="px-4 pb-3">
+          <CardContent className="px-3 pb-3 sm:px-4">
             <DailyStatsChart items={dailyStats} />
           </CardContent>
         </Card>
@@ -1054,42 +1054,44 @@ export default function SchedulerSettingsPage() {
       {/* shadcn Tabs: 按 category 切换. 默认 variant (bg-muted) 保证 trigger 可见,
           每个 tab 一个 <TabsContent> 渲染对应 jobs. 不传 forceMount, 让 shadcn
           按 active tab 自动 mount/unmount. */}
-      <Tabs value={activeCategory} onValueChange={setActiveCategory} className="w-full">
-        <TabsList>
-          {/* "全部" tab 固定第一个, 不来自 API */}
-          <TabsTrigger value={ALL_TAB}>
-            <LayoutGrid className="size-3.5" />
-            全部
-            <Badge
-              variant={activeCategory === ALL_TAB ? "default" : "secondary"}
-              className="ml-1 px-1.5 py-0 text-[10px]"
-            >
-              {categoryCounts[ALL_TAB] ?? 0}
-            </Badge>
-          </TabsTrigger>
-          {categories.map((cat) => {
-            const Icon = iconFor(cat.icon_hint)
-            const count = categoryCounts[cat.id] ?? cat.count
-            const value = String(cat.id)
-            return (
-              <TabsTrigger
-                key={cat.id}
-                value={value}
-                disabled={count === 0}
-                title={cat.description}
+      <Tabs value={activeCategory} onValueChange={setActiveCategory} className="w-full min-w-0">
+        <div className="w-full overflow-x-auto pb-1">
+          <TabsList className="min-w-max">
+            {/* "全部" tab 固定第一个, 不来自 API */}
+            <TabsTrigger value={ALL_TAB}>
+              <LayoutGrid className="size-3.5" />
+              全部
+              <Badge
+                variant={activeCategory === ALL_TAB ? "default" : "secondary"}
+                className="ml-1 px-1.5 py-0 text-[10px]"
               >
-                <Icon className="size-3.5" />
-                {cat.label}
-                <Badge
-                  variant={activeCategory === value ? "default" : "secondary"}
-                  className="ml-1 px-1.5 py-0 text-[10px]"
+                {categoryCounts[ALL_TAB] ?? 0}
+              </Badge>
+            </TabsTrigger>
+            {categories.map((cat) => {
+              const Icon = iconFor(cat.icon_hint)
+              const count = categoryCounts[cat.id] ?? cat.count
+              const value = String(cat.id)
+              return (
+                <TabsTrigger
+                  key={cat.id}
+                  value={value}
+                  disabled={count === 0}
+                  title={cat.description}
                 >
-                  {count}
-                </Badge>
-              </TabsTrigger>
-            )
-          })}
-        </TabsList>
+                  <Icon className="size-3.5" />
+                  {cat.label}
+                  <Badge
+                    variant={activeCategory === value ? "default" : "secondary"}
+                    className="ml-1 px-1.5 py-0 text-[10px]"
+                  >
+                    {count}
+                  </Badge>
+                </TabsTrigger>
+              )
+            })}
+          </TabsList>
+        </div>
 
         {error ? (
           <Alert variant="destructive">
@@ -1179,7 +1181,7 @@ function JobsGrid({
 }) {
   if (jobs.length === 0) return <>{emptyState}</>
   return (
-    <div className="columns-1 gap-4 md:columns-2 2xl:columns-3">
+    <div className="max-w-full columns-1 gap-4 md:columns-2 2xl:columns-3">
       {jobs.map((job) => (
         <JobCard
           key={job.id}
@@ -1196,8 +1198,8 @@ function DailyStatsChart({ items }: { items: SchedulerDailyStatItem[] }) {
   const maxTotal = Math.max(1, ...items.map((item) => item.total || 0))
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-7 gap-2 md:grid-cols-14">
+    <div className="max-w-full space-y-3 overflow-x-auto pb-1">
+      <div className="grid min-w-[620px] grid-cols-14 gap-2">
         {items.map((item) => {
           const totalHeight = Math.max(10, Math.round((item.total / maxTotal) * 100))
           const failedHeight =
@@ -1218,7 +1220,7 @@ function DailyStatsChart({ items }: { items: SchedulerDailyStatItem[] }) {
 
           return (
             <div key={item.date} className="space-y-1">
-              <div className="group flex h-36 flex-col justify-end rounded-2xl border border-border/30 bg-background/70 px-2 py-2">
+              <div className="group flex h-32 flex-col justify-end rounded-2xl border border-border/30 bg-background/70 px-2 py-2 sm:h-36">
                 <div className="relative mx-auto flex h-24 w-full max-w-[18px] flex-col justify-end overflow-hidden rounded-full bg-muted">
                   {successHeight > 0 ? (
                     <div
@@ -1304,11 +1306,11 @@ function SummaryCard({
         <div className="flex size-9 items-center justify-center rounded-xl bg-muted text-foreground">
           {icon}
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-2xl font-semibold leading-none text-foreground">{value}</div>
           <div className="mt-1 text-xs text-muted-foreground">{label}</div>
         </div>
-        <div className="ml-auto text-right text-xs text-muted-foreground">{hint}</div>
+        <div className="ml-auto max-w-[48%] text-right text-xs text-muted-foreground sm:max-w-none">{hint}</div>
       </CardContent>
     </Card>
   )

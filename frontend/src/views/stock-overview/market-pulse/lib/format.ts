@@ -49,7 +49,7 @@ export function fmtYi(value: number | null | undefined) {
 }
 
 export const cardChrome =
-  "overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.045)]"
+  "max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.045)]"
 
 export function prettyDate(date: string) {
   return date.slice(5)

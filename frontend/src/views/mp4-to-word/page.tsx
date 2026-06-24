@@ -803,24 +803,24 @@ export default function Mp4ToWordPage() {
 
   return (
     <WorkspaceShell sectionLabel="MP4 to Word" pageTitle="Workspace">
-      <div className="container">
+      <div className="container max-w-full px-3 sm:px-6">
         <style>{QA_STYLE_FIX}</style>
         <Card className="mb-5 overflow-hidden border-white/70 bg-gradient-to-br from-white via-slate-50 to-indigo-50/70 shadow-[0_24px_90px_rgba(15,23,42,0.10)]">
-          <CardContent className="space-y-6 p-6 sm:p-8">
-            <div className="flex flex-wrap items-start justify-between gap-5">
-              <div className="max-w-3xl space-y-3">
+          <CardContent className="space-y-6 p-4 sm:p-8">
+            <div className="flex flex-col items-stretch justify-between gap-5 sm:flex-row sm:items-start">
+              <div className="min-w-0 max-w-3xl space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary">MP4 to Text</Badge>
                   <Badge variant="outline">AI Workspace</Badge>
                 </div>
                 <div>
-                  <h1 className="text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">MP4 to Text</h1>
+                  <h1 className="text-2xl font-semibold tracking-tight text-slate-950 sm:text-4xl">MP4 to Text</h1>
                   <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
                     Upload video, transcribe automatically, polish with AI, and generate a clean summary for trading and investing content.
                   </p>
                 </div>
               </div>
-              <div className="min-w-[180px] rounded-2xl border border-white/70 bg-white/75 px-4 py-3 text-right shadow-sm">
+              <div className="w-full rounded-2xl border border-white/70 bg-white/75 px-4 py-3 text-left shadow-sm sm:w-auto sm:min-w-[180px] sm:text-right">
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Overall Process</div>
                 <div className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">{processProgress}%</div>
               </div>
@@ -828,17 +828,17 @@ export default function Mp4ToWordPage() {
 
             <div className="space-y-3">
               <Progress value={processProgress} className="h-2" />
-              <div className="rounded-3xl border border-slate-200 bg-white/70 p-4 shadow-sm">
-                <div className="flex items-center gap-0 overflow-x-auto pb-1">
+              <div className="rounded-3xl border border-slate-200 bg-white/70 p-3 shadow-sm sm:p-4">
+                <div className="flex items-center gap-0 overflow-x-auto pb-1 pr-1">
                   {workflowSteps.map((step, index) => {
                     const Icon = step.icon;
                     const active = index === currentStep;
                     const completed = index < currentStep || phase === "done";
                     const pending = !active && !completed;
                     return (
-                      <div key={step.label} className="flex min-w-[150px] flex-1 items-center">
+                      <div key={step.label} className="flex min-w-[132px] flex-1 items-center sm:min-w-[150px]">
                         <div
-                          className={`relative flex min-w-[126px] items-center gap-3 rounded-2xl border px-3 py-3 transition ${
+                          className={`relative flex min-w-[112px] items-center gap-2 rounded-2xl border px-2.5 py-3 transition sm:min-w-[126px] sm:gap-3 sm:px-3 max-sm:min-w-[104px] max-sm:px-2 ${
                             active
                               ? "border-slate-900 bg-slate-950 text-white shadow-lg shadow-slate-950/10"
                               : completed
@@ -889,17 +889,17 @@ export default function Mp4ToWordPage() {
         {remoteDraft && (
           <Card className="mb-5 overflow-hidden border-white/70 bg-gradient-to-br from-white via-slate-50 to-sky-50/80 shadow-[0_24px_80px_rgba(15,23,42,0.10)]">
             <CardHeader className="pb-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex flex-col items-stretch justify-between gap-4 sm:flex-row sm:items-start">
                 <div className="min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="secondary">Remote Parse Intake</Badge>
                     <Badge variant="outline">{remoteDraft.platform}</Badge>
                     <Badge variant="outline">{remoteDraft.noteType || "video"}</Badge>
                   </div>
-                  <CardTitle className="max-w-3xl truncate text-2xl tracking-tight">{remoteDraft.title}</CardTitle>
+                  <CardTitle className="max-w-3xl break-words text-xl tracking-tight sm:text-2xl">{remoteDraft.title}</CardTitle>
                   <CardDescription>资源已接管，页面会自动完成下载、上传与 MP4 to Word 处理。</CardDescription>
                 </div>
-                <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-3 text-right shadow-sm">
+                <div className="w-full rounded-2xl border border-white/70 bg-white/70 px-4 py-3 text-left shadow-sm sm:w-auto sm:text-right">
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Task</div>
                   <div className="mt-1 max-w-[180px] truncate font-mono text-xs text-slate-700">{taskId || "creating..."}</div>
                 </div>
@@ -921,14 +921,14 @@ export default function Mp4ToWordPage() {
                 </div>
               </div>
               <Separator />
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-white">
+              <div className="flex flex-col items-stretch justify-between gap-3 rounded-2xl bg-slate-950 px-4 py-3 text-white sm:flex-row sm:items-center">
                 <div className="min-w-0">
                   <div className="text-xs text-white/55">Source</div>
-                  <div className="max-w-[min(760px,70vw)] truncate text-sm font-medium" title={remoteDraft.sourceUrl}>
+                  <div className="max-w-full break-all text-sm font-medium sm:max-w-[min(760px,70vw)] sm:truncate" title={remoteDraft.sourceUrl}>
                     {compactUrl(remoteDraft.sourceUrl)}
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-2">
+                <div className="flex shrink-0 flex-wrap justify-end gap-2">
                   <Button size="icon-sm" variant="secondary" title="Copy source" aria-label="Copy source" onClick={() => handleCopyText(remoteDraft.sourceUrl)}>
                     <Copy className="size-4" />
                   </Button>
@@ -947,7 +947,7 @@ export default function Mp4ToWordPage() {
           onDragOver={(e) => e.preventDefault()}
           onDrop={handleDrop}
         >
-          <CardContent className="flex flex-col items-center justify-center px-6 py-10 text-center">
+          <CardContent className="flex flex-col items-center justify-center px-4 py-8 text-center sm:px-6 sm:py-10">
             <input
               ref={fileInputRef}
               type="file"
@@ -956,8 +956,8 @@ export default function Mp4ToWordPage() {
               onChange={handleFileChange}
             />
             <div className="mb-4 inline-flex size-14 items-center justify-center rounded-2xl bg-slate-950 text-2xl text-white shadow-lg shadow-slate-950/15">🎧</div>
-            <div className="text-lg font-semibold tracking-tight text-slate-950">Drop your file here, or click to browse</div>
-            <div className="mt-2 text-sm text-muted-foreground">Supports MP4, MP3, WAV, M4A. Local upload and remote intake are independent flows.</div>
+            <div className="text-lg font-semibold tracking-tight text-slate-950 sm:text-xl">Drop your file here, or click to browse</div>
+            <div className="mt-2 max-w-xl text-sm text-muted-foreground">Supports MP4, MP3, WAV, M4A. Local upload and remote intake are independent flows.</div>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
               <Badge variant="secondary">Local Upload</Badge>
               <Badge variant="outline">Audio Extract</Badge>

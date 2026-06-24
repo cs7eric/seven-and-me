@@ -109,7 +109,7 @@ function ChartBody({ option }: { option: echarts.EChartsCoreOption | null }) {
   const ref = useRef<HTMLDivElement | null>(null)
   useLineChart(ref, option)
 
-  return <div ref={ref} className="h-[340px] w-full" />
+  return <div ref={ref} className="h-[300px] min-w-[640px] sm:h-[340px]" />
 }
 
 export function IndustryComparePanel({
@@ -288,7 +288,7 @@ export function IndustryComparePanel({
     <Card className={cardChrome}>
       <CardHeader className="border-b border-slate-100 pb-5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
+          <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">M5</div>
             <CardTitle className="mt-1 text-xl font-semibold tracking-[-0.025em] text-slate-950">
               <GitCompareArrows className="mr-2 inline-block size-5 text-indigo-500" />
@@ -325,25 +325,25 @@ export function IndustryComparePanel({
               ))}
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="grid shrink-0 grid-cols-1 gap-2 sm:flex sm:items-center">
             <Button
               type="button"
               variant="outline"
               size="sm"
               onClick={onResetDefault}
-              className="h-8 rounded-full border-slate-200 bg-white px-3 text-xs text-slate-600"
+              className="h-8 w-full rounded-full border-slate-200 bg-white px-3 text-xs text-slate-600 sm:w-auto"
             >
               <RotateCcw className="mr-1.5 size-3.5" />
               恢复综合 Top {defaultCount}
             </Button>
             <DropdownMenu open={pickerOpen} onOpenChange={setPickerOpen}>
               <DropdownMenuTrigger asChild>
-                <Button type="button" size="sm" className="h-8 rounded-full bg-slate-900 px-3 text-xs text-white hover:bg-slate-800">
+                <Button type="button" size="sm" className="h-8 w-full rounded-full bg-slate-900 px-3 text-xs text-white hover:bg-slate-800 sm:w-auto">
                   <ListPlus className="mr-1.5 size-3.5" />
                   添加行业
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72 p-0">
+              <DropdownMenuContent align="end" className="w-[calc(100vw-2rem)] p-0 sm:w-72">
                 <DropdownMenuLabel className="flex items-center justify-between px-3 py-2">
                   <span className="text-xs font-semibold text-slate-600">可选行业</span>
                   <span className="text-[11px] font-normal text-slate-400">{addableOptions.length} 个</span>
@@ -405,7 +405,7 @@ export function IndustryComparePanel({
           <>
             <Card className="rounded-2xl border-slate-200">
               <CardHeader className="gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
+                <div className="min-w-0">
                   <CardTitle className="text-sm font-semibold text-slate-900">
                     {chartMode === "netFlow" ? "多行业历史净流趋势图" : "多行业排名趋势图"}
                   </CardTitle>
@@ -413,24 +413,24 @@ export function IndustryComparePanel({
                     {chartMode === "netFlow" ? `近 ${dates.length} 个交易日 · 单位: 亿` : "排名越靠上数值越小，未上榜日期保持断点"}
                   </CardDescription>
                 </div>
-                <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1">
+                <div className="inline-flex w-full rounded-full border border-slate-200 bg-slate-50 p-1 sm:w-auto">
                   <button
                     type="button"
                     onClick={() => setChartMode("netFlow")}
-                    className={`rounded-full px-3 py-1 text-xs font-medium ${chartMode === "netFlow" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                    className={`flex-1 rounded-full px-3 py-1 text-xs font-medium sm:flex-none ${chartMode === "netFlow" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
                   >
                     净流趋势
                   </button>
                   <button
                     type="button"
                     onClick={() => setChartMode("rank")}
-                    className={`rounded-full px-3 py-1 text-xs font-medium ${chartMode === "rank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                    className={`flex-1 rounded-full px-3 py-1 text-xs font-medium sm:flex-none ${chartMode === "rank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
                   >
                     排名趋势
                   </button>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="overflow-x-auto">
                 <div className="mb-3 text-xs text-slate-500">默认组合：综合 Top {defaultCount}（近 30 日）</div>
                 <ChartBody option={chartMode === "netFlow" ? netFlowOption : rankOption} />
               </CardContent>
@@ -447,7 +447,7 @@ export function IndustryComparePanel({
                 </CardDescription>
               </CardHeader>
               <CardContent className="overflow-x-auto">
-                <table className="min-w-full border-collapse text-sm">
+                <table className="min-w-[760px] border-collapse text-sm">
                   <thead>
                     <tr className="border-b border-slate-100 text-xs text-slate-500">
                       <th className="px-3 py-2 text-left font-semibold">行业</th>

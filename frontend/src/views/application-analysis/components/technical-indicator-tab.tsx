@@ -187,12 +187,14 @@ export function TechnicalIndicatorTab({
   }
 
   return (
-    <TechnicalIndicatorPanel
-      bars={bars}
-      indexBarsMap={indexBarsMap}
-      stockMeta={stockMeta}
-      breadth={breadth}
-      breadthSeries={breadthSeries}
-    />
+    <div className="min-w-0 max-w-full overflow-x-auto">
+      <TechnicalIndicatorPanel
+        bars={bars}
+        indexBarsMap={indexBarsMap}
+        stockMeta={stockMeta}
+        breadth={breadth}
+        breadthSeries={breadthSeries}
+      />
+    </div>
   )
 }

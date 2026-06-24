@@ -693,10 +693,10 @@ export default function ApplicationAnalysisPage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis" fullBleed>
-      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-4 sm:p-6">
-        <div className="grid h-full min-h-0 gap-4 xl:grid-cols-[486px_minmax(0,1fr)]">
+      <div className="min-h-[calc(100svh-4rem)] w-full max-w-[100vw] overflow-x-hidden rounded-none border-0 bg-[#f6f7f9] p-2 sm:p-6 xl:h-[calc(100svh-4rem)] xl:overflow-hidden">
+        <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(0,486px)_minmax(0,1fr)]">
           {/* 左侧：信息辅助区 */}
-          <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
+          <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-visible xl:h-full xl:overflow-y-auto">
             <TargetCard
               targets={targets}
               searchKeyword={searchKeyword}
@@ -747,17 +747,17 @@ export default function ApplicationAnalysisPage() {
           <Tabs
             value={activeMainTab}
             onValueChange={(value) => setActiveMainTab(value as MainTab)}
-            className="flex h-full min-h-0 flex-col gap-4"
+            className="flex min-w-0 flex-col gap-4 xl:h-full xl:min-h-0"
           >
             <header className="flex min-h-0 shrink-0 flex-col gap-3">
               {/* 预览态 banner：从自选跳过来、还没加入 targets 时浮在最上方 */}
               {previewTarget ? (
-                <div className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-amber-800">
+                <div className="flex flex-col gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-amber-800 sm:flex-row sm:items-center sm:px-4">
                   <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-500/20 text-amber-700">
                     <Eye className="size-3.5" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold">
+                    <div className="break-words text-sm font-semibold sm:truncate">
                       正在预览 {previewTarget.name} · {previewTarget.symbol}
                     </div>
                     <div className="text-xs text-amber-700/80">
@@ -767,7 +767,7 @@ export default function ApplicationAnalysisPage() {
                   <Button
                     size="sm"
                     variant="default"
-                    className="h-7 gap-1.5 bg-amber-600 text-white hover:bg-amber-700"
+                    className="h-8 w-full gap-1.5 bg-amber-600 text-white hover:bg-amber-700 sm:h-7 sm:w-auto"
                     onClick={() => void handleAddPreview()}
                     disabled={saving}
                   >
@@ -777,7 +777,7 @@ export default function ApplicationAnalysisPage() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-7 text-amber-800 hover:bg-amber-500/20 hover:text-amber-900"
+                    className="h-8 w-full text-amber-800 hover:bg-amber-500/20 hover:text-amber-900 sm:h-7 sm:w-auto"
                     onClick={() => setPreviewTarget(null)}
                   >
                     取消预览
@@ -803,8 +803,9 @@ export default function ApplicationAnalysisPage() {
               />
 
               {/* Tab 栏 */}
-              <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-                <TabsList>
+              <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                <div className="min-w-0 overflow-x-auto">
+                <TabsList className="min-w-max">
                   <TabsTrigger value="chart">图表</TabsTrigger>
                   <TabsTrigger value="ai-direction">AI 方向</TabsTrigger>
                   <TabsTrigger value="analysis">分析详情</TabsTrigger>
@@ -812,7 +813,8 @@ export default function ApplicationAnalysisPage() {
                   <TabsTrigger value="ma-support">技术指标</TabsTrigger>
                   <TabsTrigger value="fund-flow">资金</TabsTrigger>
                 </TabsList>
-                <div className="flex items-center gap-3 text-[11px] text-slate-500">
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
                   <span>K 线 {bars.length}</span>
                   <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
                   <span>{running ? "分析中" : result ? "已完成" : previewTarget ? "预览中" : "待执行"}</span>
@@ -823,10 +825,10 @@ export default function ApplicationAnalysisPage() {
             </header>
 
             {/* 主内容区：填充剩余高度 */}
-            <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <main className="min-w-0 xl:min-h-0 xl:flex-1 xl:overflow-hidden">
               <TabsContent
                 value="chart"
-                className="m-0 flex h-full min-h-0 flex-col overflow-hidden"
+                className="m-0 min-w-0 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden"
               >
                 {displayedTarget ? (
                   <ChartCard
@@ -846,7 +848,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="ai-direction"
-                className="m-0 h-full min-h-0 overflow-auto"
+                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
               >
                 {previewTarget ? (
                   <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-500">
@@ -867,7 +869,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="analysis"
-                className="m-0 h-full min-h-0 overflow-auto"
+                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
               >
                 {previewTarget ? (
                   <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-500">
@@ -880,7 +882,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="auction"
-                className="m-0 h-full min-h-0 overflow-auto"
+                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
               >
                 {displayedTarget ? (
                   <AuctionTab
@@ -894,7 +896,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="ma-support"
-                className="m-0 h-full min-h-0 overflow-auto"
+                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
               >
                 {displayedTarget ? (
                   <TechnicalIndicatorTab
@@ -909,7 +911,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="fund-flow"
-                className="m-0 h-full min-h-0 overflow-auto"
+                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
               >
                 {displayedTarget ? (
                   <FundFlowTab

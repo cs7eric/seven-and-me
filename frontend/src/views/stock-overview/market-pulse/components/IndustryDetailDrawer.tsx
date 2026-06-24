@@ -39,13 +39,13 @@ export function IndustryDetailDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      <div className="flex-1 bg-slate-900/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="hidden flex-1 bg-slate-900/30 backdrop-blur-sm sm:block" onClick={onClose} />
       <div className="flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl">
-        <div className="flex items-start justify-between border-b border-slate-100 p-5">
-          <div>
+        <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4 sm:p-5">
+          <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">行业钻入</div>
-            <div className="mt-1 flex items-baseline gap-3">
-              <span className="text-2xl font-semibold tracking-[-0.025em] text-slate-950">{name}</span>
+            <div className="mt-1 flex flex-wrap items-baseline gap-3">
+              <span className="break-words text-xl font-semibold text-slate-950 sm:text-2xl">{name}</span>
               {visibleData?.changePct != null ? (
                 <span
                   className="rounded-md px-2 py-0.5 text-sm font-semibold tabular-nums"
@@ -66,7 +66,7 @@ export function IndustryDetailDrawer({
             <X className="size-4" />
           </Button>
         </div>
-        <div className="flex-1 space-y-5 overflow-y-auto p-5">
+        <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
           {loading ? (
             <div className="p-10 text-center text-sm text-slate-500">加载中...</div>
           ) : !visibleData?.ok ? (
@@ -77,10 +77,10 @@ export function IndustryDetailDrawer({
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-semibold text-slate-900">领涨股</CardTitle>
                 </CardHeader>
-                <CardContent className="grid grid-cols-2 gap-3 text-sm">
+                <CardContent className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                   <div>
                     <div className="text-[11px] text-slate-500">名称</div>
-                      <div className="mt-0.5 font-semibold text-slate-900">{visibleData.leadingStock ?? "—"}</div>
+                      <div className="mt-0.5 break-words font-semibold text-slate-900">{visibleData.leadingStock ?? "—"}</div>
                   </div>
                   <div>
                     <div className="text-[11px] text-slate-500">当日涨跌幅</div>
@@ -120,7 +120,7 @@ export function IndustryDetailDrawer({
                     数据源 eltdx 200742 · seed = {visibleData.leadingFlowSeed ?? "—"}
                   </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="overflow-x-auto">
                   {!visibleData.leadingFlow30d?.length ? (
                     <div className="p-6 text-center text-xs text-slate-500">暂无数据</div>
                   ) : (
@@ -135,7 +135,7 @@ export function IndustryDetailDrawer({
                     <CardTitle className="text-sm font-semibold text-slate-900">60 日 K 线 (领涨股)</CardTitle>
                     <CardDescription className="text-xs text-slate-500">{visibleData.leadingKLine.length} bars</CardDescription>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="overflow-x-auto">
                     <KLineMini bars={visibleData.leadingKLine} />
                   </CardContent>
                 </Card>
@@ -172,7 +172,7 @@ function FlowMiniChart({ rows }: { rows: Array<{ date?: string; mainNet?: number
   const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(row.mainNet ?? 0)))
 
   return (
-    <div className="flex h-32 items-end gap-1.5">
+    <div className="flex h-32 min-w-[420px] items-end gap-1.5">
       {rows.slice(-30).map((row, index) => {
         const value = row.mainNet ?? 0
         const ratio = Math.abs(value) / maxAbs
@@ -203,7 +203,7 @@ function KLineMini({ bars }: { bars: Array<Record<string, unknown>> }) {
   const width = 100 / closes.length
 
   return (
-    <div className="flex h-32 items-end">
+    <div className="flex h-32 min-w-[420px] items-end">
       {closes.map((close, index) => {
         const ratio = max === min ? 0.5 : (close - min) / (max - min)
         return (

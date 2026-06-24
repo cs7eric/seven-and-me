@@ -29,14 +29,14 @@ export function ChartHeader({
   const title = target ? `${target.name} · ${target.symbol}` : selectedLabel || "请选择左侧目标"
   return (
     <Card className="rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-      <CardHeader className="pb-3">
+      <CardHeader className="px-3 pb-3 pt-4 sm:px-6">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
+          <div className="flex min-w-0 items-start gap-3 sm:items-center">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm">
               <Sparkles className="size-4" />
             </div>
             <div className="min-w-0 space-y-1">
-              <CardTitle className="truncate text-lg font-semibold tracking-[-0.02em] text-slate-950">
+              <CardTitle className="break-words text-base font-semibold text-slate-950 sm:truncate sm:text-lg">
                 {title}
               </CardTitle>
               {target ? (
@@ -78,9 +78,9 @@ export function ChartHeader({
               ) : null}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center xl:justify-end">
             <Select value={adjust} onValueChange={(value) => onAdjustChange(value as StockAdjust)}>
-              <SelectTrigger className="h-8 w-28 rounded-lg text-xs"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-8 w-full rounded-lg text-xs sm:w-28"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="qfq">前复权</SelectItem>
                 <SelectItem value="none">不复权</SelectItem>
@@ -88,14 +88,14 @@ export function ChartHeader({
               </SelectContent>
             </Select>
             <Button
-              className="h-8 rounded-lg bg-slate-950 px-3 text-xs text-white hover:bg-slate-800"
+              className="h-8 w-full rounded-lg bg-slate-950 px-3 text-xs text-white hover:bg-slate-800 sm:w-auto"
               onClick={onTrigger}
               disabled={!canRun || running}
             >
               <RefreshCw className={`mr-1.5 size-3.5 ${running ? "animate-spin" : ""}`} />120 日 / 4 段刷新
             </Button>
             <Button
-              className="h-8 rounded-lg px-3 text-xs"
+              className="h-8 w-full rounded-lg px-3 text-xs sm:w-auto"
               variant="outline"
               onClick={onManualRun}
               disabled={!canRun || running}

@@ -39,7 +39,7 @@ export function SelectionPanel(props: {
     <div ref={panelRef}>
       <CollapsibleCard
         title="选中分析项"
-        description="图上可多选 K 柱；选中后不再在图中显示 tooltip，详情统一在这里展示"
+        description="图上可多选 K 柱；详情会在这里集中展示"
         icon={Sparkles}
         badge={String(items.length)}
         collapsed={collapsed}
@@ -81,10 +81,10 @@ export function SelectionPanel(props: {
                   >
                     <X className="h-4 w-4" />
                   </button>
-                  <div className="pl-3 pr-8">
+                    <div className="min-w-0 pl-3 pr-8">
                     {item.kind === "bar" ? (
                       <>
-                        <div className="mb-2 flex items-start justify-between gap-2">
+                        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0 flex-1">
                             <BarSummary
                               bar={item.bar}
@@ -99,7 +99,7 @@ export function SelectionPanel(props: {
                             type="button"
                             size="xs"
                             variant="outline"
-                            className="mt-0.5 h-7 gap-1.5 rounded-md border-slate-200 px-2.5 text-[11px]"
+                            className="mt-0.5 h-7 w-full gap-1.5 rounded-md border-slate-200 px-2.5 text-[11px] sm:w-auto"
                             onClick={() => onAnalyzeBar(item)}
                           >
                             <Activity className="h-3.5 w-3.5" />
@@ -109,10 +109,10 @@ export function SelectionPanel(props: {
                       </>
                     ) : (
                       <>
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                          <div className="truncate text-sm font-semibold text-slate-900">{item.typeLabel} · {item.shortText}</div>
+                        <div className="mb-1.5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="break-words text-sm font-semibold text-slate-900 sm:truncate">{item.typeLabel} · {item.shortText}</div>
                           <Badge
-                            className="rounded-full bg-white text-[10px]"
+                            className="w-fit rounded-full bg-white text-[10px]"
                             style={{ borderColor: color, color }}
                             variant="outline"
                           >
@@ -123,13 +123,13 @@ export function SelectionPanel(props: {
                           <div className="line-clamp-2">{item.fullText || "未提供 annotation 描述"}</div>
                           <div>
                             <span className="text-slate-400">区间</span>{" "}
-                            <span className="font-mono text-slate-700">
+                            <span className="break-all font-mono text-slate-700">
                               {fmtDateTime(item.startTimestamp)} → {fmtDateTime(item.endTimestamp)}
                             </span>
                           </div>
                           <div>
                             <span className="text-slate-400">价格</span>{" "}
-                            <span className="font-mono text-slate-700">
+                            <span className="break-all font-mono text-slate-700">
                               {item.minValue.toFixed(2)} - {item.maxValue.toFixed(2)}
                             </span>{" "}
                             <span className="text-slate-400">· 点位 {item.annotation.points.length}</span>
@@ -143,8 +143,8 @@ export function SelectionPanel(props: {
             })}
           </div>
         ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-[11px] text-slate-500">
-            先在右侧 K 线图中点击 K 柱，或点选 annotation 标签，这里会展示当前选中的分析对象。
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center text-[11px] leading-5 break-words text-slate-500">
+            先在右侧 K 线图中点击 K 柱，或点选标注标签，这里会展示当前选中的分析对象。
           </div>
         )}
       </CollapsibleCard>

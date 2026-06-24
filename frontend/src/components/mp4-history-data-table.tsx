@@ -96,7 +96,7 @@ function getColumns(onDelete: (item: MP4HistoryListItem) => void): ColumnDef<MP4
     header: "Title",
     cell: ({ row }) => (
       <div className="min-w-0 space-y-1">
-        <Button asChild variant="link" className="h-auto max-w-[420px] justify-start px-0 text-left text-foreground">
+        <Button asChild variant="link" className="h-auto max-w-[280px] justify-start px-0 text-left text-foreground sm:max-w-[420px]">
           <Link to={`/mp4-to-word/history/${row.original.id}`} className="truncate text-sm font-medium">
             {row.original.title}
           </Link>
@@ -244,16 +244,16 @@ export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryLis
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/70 p-4 shadow-[0_20px_60px_rgba(15,23,42,0.06)]">
+      <div className="flex flex-col items-stretch justify-between gap-3 rounded-2xl border border-white/70 bg-white/70 p-3 shadow-[0_20px_60px_rgba(15,23,42,0.06)] sm:flex-row sm:items-center sm:p-4">
         <Input
           placeholder="Filter history title..."
           value={(table.getColumn("title")?.getFilterValue() as string) ?? ""}
           onChange={(event) => table.getColumn("title")?.setFilterValue(event.target.value)}
-          className="max-w-sm border-slate-200 bg-white"
+          className="w-full border-slate-200 bg-white sm:max-w-sm"
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="rounded-full border-slate-200 bg-white">
+            <Button variant="outline" size="sm" className="w-full rounded-full border-slate-200 bg-white sm:w-auto">
               Columns
               <ChevronDown className="size-4" />
             </Button>
@@ -276,14 +276,14 @@ export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryLis
         </DropdownMenu>
       </div>
 
-      <div className="overflow-hidden rounded-2xl bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
+      <div className="max-w-full overflow-hidden rounded-2xl bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
         <DndContext
           collisionDetection={closestCenter}
           modifiers={[restrictToVerticalAxis, restrictToHorizontalAxis]}
           onDragEnd={handleDragEnd}
           sensors={sensors}
         >
-          <Table>
+          <Table className="min-w-[760px]">
             <TableHeader className="bg-slate-50/90">
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id} className="border-b border-slate-100/80 hover:bg-transparent">
@@ -314,11 +314,11 @@ export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryLis
         </DndContext>
       </div>
 
-      <div className="flex items-center justify-between gap-3 rounded-2xl bg-white/70 px-4 py-3 shadow-sm">
+      <div className="flex flex-col items-stretch justify-between gap-3 rounded-2xl bg-white/70 px-3 py-3 shadow-sm sm:flex-row sm:items-center sm:px-4">
         <div className="hidden text-sm text-muted-foreground sm:block">
           {table.getFilteredRowModel().rows.length} record(s)
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center justify-between gap-3 sm:justify-start sm:gap-6">
           <div className="hidden items-center gap-2 lg:flex">
             <Label htmlFor="history-rows-per-page" className="text-sm font-medium">
               Rows
@@ -336,10 +336,10 @@ export function MP4HistoryDataTable({ data: initialData }: { data: MP4HistoryLis
               </SelectContent>
             </Select>
           </div>
-          <div className="text-sm font-medium">
+          <div className="whitespace-nowrap text-sm font-medium">
             Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount() || 1}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Button variant="outline" size="icon" className="hidden size-8 rounded-full border-slate-200 bg-white lg:flex" onClick={() => table.setPageIndex(0)} disabled={!table.getCanPreviousPage()}>
               <ChevronsLeft className="size-4" />
             </Button>

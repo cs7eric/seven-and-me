@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, FileText, Search } from "lucide-react";
-import { askHistoryQuestion, getMP4History, listMP4History } from "@/lib/api";
+import { askHistoryQuestion, deleteMP4History, getMP4History, listMP4History } from "@/lib/api";
 import type { MP4HistoryListItem, MP4HistoryRecord } from "@/lib/history-types";
 import { MP4HistoryDataTable } from "@/components/mp4-history-data-table";
 import { WorkspaceShell } from "@/layout/workspace-shell";
@@ -31,7 +31,7 @@ function formatDate(value?: string) {
 
 function DetailPanel({ html, text }: { html: string; text: string }) {
   return (
-    <div className="overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
+    <div className="max-w-full overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
       <div className="result-body">{text ? <div dangerouslySetInnerHTML={{ __html: html }} /> : <div className="text-muted-foreground">暂无内容</div>}</div>
     </div>
   );
@@ -61,6 +61,96 @@ function AskHistoryPanel({
       onToggleItem={onToggleItem}
       onFollowupClick={onFollowupClick}
     />
+  );
+}
+
+function MobileHistoryList({
+  items,
+  onDelete,
+}: {
+  items: MP4HistoryListItem[];
+  onDelete: (item: MP4HistoryListItem) => void;
+}) {
+  const [query, setQuery] = useState("");
+
+  const filteredItems = useMemo(() => {
+    const nextQuery = query.trim().toLowerCase();
+    if (!nextQuery) return items;
+    return items.filter((item) => {
+      return [item.title, item.file_name || "", item.task_id, item.status, item.data_file]
+        .join(" ")
+        .toLowerCase()
+        .includes(nextQuery);
+    });
+  }, [items, query]);
+
+  return (
+    <div className="space-y-3 pb-3 sm:hidden">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search history"
+          className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-4 text-[16px] text-slate-900 shadow-sm outline-none transition placeholder:text-muted-foreground focus:border-sky-400"
+        />
+      </div>
+
+      <div className="space-y-3">
+        {filteredItems.length ? filteredItems.map((item) => (
+          <Card key={item.id} className="overflow-hidden border-white/70 bg-white/80 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+            <CardContent className="space-y-3 p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary">{item.status || "unknown"}</Badge>
+                    <Badge variant="outline">{formatDate(item.created_at)}</Badge>
+                  </div>
+                  <Link
+                    to={`/mp4-to-word/history/${item.id}`}
+                    className="block break-words text-base font-semibold leading-6 tracking-tight text-slate-950"
+                  >
+                    {item.title}
+                  </Link>
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-2xl bg-slate-50/80 p-3 text-sm text-slate-700">
+                <div className="space-y-0.5">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">File</div>
+                  <div className="break-words text-sm text-slate-900">{item.file_name || "--"}</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Task</div>
+                  <div className="truncate font-mono text-xs text-slate-900">{item.task_id}</div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <Button asChild className="h-11 w-full rounded-xl">
+                  <Link to={`/mp4-to-word/history/${item.id}`}>View detail</Link>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-11 w-full rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                  onClick={() => onDelete(item)}
+                >
+                  Delete
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )) : (
+          <Card className="border-dashed border-slate-200 bg-white/75">
+            <CardContent className="flex flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
+              <Search className="size-8" />
+              <div>{query ? "No matching history records." : "暂无历史记录，请在 MP4 解析完成后点击导出历史记录。"}</div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -141,13 +231,13 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
       );
     }
     return (
-      <div className="overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
+      <div className="max-w-full overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
         <div className="summary-stage">
           <div className="summary-workspace" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
         </div>
       </div>
     );
-  }, [activeView, collapsedAsk, collapsedQaItems, handleToggleQaItem, polishedHtml, qaItems, summaryHtml, task.polished, task.transcript, transcriptHtml]);
+  }, [activeView, collapsedAsk, collapsedQaItems, handleFollowupAsk, handleToggleQaItem, polishedHtml, qaItems, summaryHtml, task.polished, task.transcript, transcriptHtml]);
 
   return (
     <div className="space-y-5">
@@ -161,14 +251,14 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
       </div>
 
       <Card className="overflow-hidden border-white/70 bg-gradient-to-br from-white via-slate-50 to-slate-100/80 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
-        <CardContent className="space-y-5 p-6">
+        <CardContent className="space-y-5 p-4 sm:p-6">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">{record.type}</Badge>
               <Badge variant="outline">{task.status || "done"}</Badge>
             </div>
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-950">{record.title}</h1>
+              <h1 className="break-words text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">{record.title}</h1>
               <p className="mt-2 text-sm text-muted-foreground">{formatDate(record.created_at)}</p>
             </div>
           </div>
@@ -210,7 +300,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
       </Card>
 
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/70 bg-white/75 p-2 shadow-sm">
+        <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/70 bg-white/75 p-2 shadow-sm sm:flex sm:flex-wrap sm:items-center">
           {[
             { key: "summary", label: "Summary" },
             { key: "polished", label: "Polished" },
@@ -220,7 +310,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
             <Button
               key={item.key}
               variant={activeView === item.key ? "default" : "ghost"}
-              className="rounded-xl"
+              className="w-full rounded-xl sm:w-auto"
               onClick={() => setActiveView(item.key as "summary" | "polished" | "transcript" | "ask")}
             >
               {item.label}
@@ -272,6 +362,20 @@ export default function Mp4HistoryPage() {
     }
   }, [id]);
 
+  const handleDelete = useCallback(async (item: MP4HistoryListItem) => {
+    try {
+      const deleted = await deleteMP4History(item.id);
+      setItems((prev) => prev.filter((entry) => entry.id !== item.id));
+      notification.success({
+        title: "已删除历史记录",
+        description: deleted.title || item.title,
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "删除历史记录失败";
+      notification.danger({ title: "删除历史记录失败", description: msg });
+    }
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void load();
@@ -281,14 +385,14 @@ export default function Mp4HistoryPage() {
 
   return (
     <WorkspaceShell sectionLabel="MP4 to Word" pageTitle="History">
-      <div className="container space-y-5">
+      <div className="container max-w-full space-y-5 px-3 sm:px-6">
         <style>{QA_STYLE_FIX}</style>
         {id ? null : (
           <Card className="border-white/70 bg-white/80 shadow-[0_20px_70px_rgba(15,23,42,0.08)]">
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <CardTitle className="flex items-center gap-2 text-2xl">
+                  <CardTitle className="flex items-center gap-2 text-xl sm:text-2xl">
                     <FileText className="size-5" /> MP4 History
                   </CardTitle>
                   <CardDescription>从 reference JSON 索引中读取已导出的结构化历史记录。</CardDescription>
@@ -309,15 +413,13 @@ export default function Mp4HistoryPage() {
           <DogLoader overlay size={25} label="正在加载历史记录..." />
         ) : id && record ? (
           <HistoryContent record={record} />
-        ) : items.length ? (
-          <MP4HistoryDataTable data={items} />
         ) : (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center gap-3 p-10 text-center text-muted-foreground">
-              <Search className="size-8" />
-              <div>暂无历史记录，请在 MP4 解析完成后点击导出历史记录。</div>
-            </CardContent>
-          </Card>
+          <>
+            <MobileHistoryList items={items} onDelete={handleDelete} />
+            <div className="hidden sm:block">
+              <MP4HistoryDataTable data={items} />
+            </div>
+          </>
         )}
       </div>
     </WorkspaceShell>

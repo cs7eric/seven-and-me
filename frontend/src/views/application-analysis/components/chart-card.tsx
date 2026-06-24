@@ -36,7 +36,7 @@ export function ChartCard({
       collapsed={collapsed}
       onToggle={onToggle}
     >
-      <div className="-mx-1 h-full min-h-0 flex-1">
+      <div className="-mx-1 h-[520px] min-h-0 max-w-full overflow-hidden xl:h-full xl:flex-1">
         <ChartPanel
           bars={bars}
           annotations={[]}

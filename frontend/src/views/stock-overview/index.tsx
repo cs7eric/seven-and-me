@@ -207,8 +207,8 @@ interface MarketOverview {
   similarScenarioBacktest: MarketOverview["similarScenarios"]
 }
 
-const cardChrome = "overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.045)]"
-const panelChrome = "rounded-2xl border border-slate-200 bg-slate-50/70"
+const cardChrome = "max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_12px_34px_rgba(15,23,42,0.045)]"
+const panelChrome = "min-w-0 rounded-2xl border border-slate-200 bg-slate-50/70"
 const ink = "text-slate-950"
 const secondaryInk = "text-slate-500"
 
@@ -257,7 +257,7 @@ function SectionHeader({ eyebrow, title, description }: { eyebrow: string; title
     <CardHeader className="border-b border-slate-100 bg-white pb-5">
       <div className="space-y-2">
         <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">{eyebrow}</div>
-        <CardTitle className={`text-xl font-semibold tracking-[-0.025em] ${ink}`}>{title}</CardTitle>
+        <CardTitle className={`break-words text-lg font-semibold ${ink} sm:text-xl`}>{title}</CardTitle>
         <CardDescription className={`max-w-3xl leading-6 ${secondaryInk}`}>{description}</CardDescription>
       </div>
     </CardHeader>
@@ -266,20 +266,20 @@ function SectionHeader({ eyebrow, title, description }: { eyebrow: string; title
 
 function RegimeHero({ data, onRefresh, loading }: { data: MarketOverview; onRefresh: () => void; loading: boolean }) {
   return (
-    <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-      <div className="border-b border-slate-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-6 sm:p-8 xl:p-10">
+    <div className="max-w-full overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <div className="border-b border-slate-100 bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-4 sm:p-8 xl:p-10">
         <div className="flex flex-col gap-8 xl:flex-row xl:items-start xl:justify-between">
-          <div className="max-w-5xl space-y-6">
-            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm">
+          <div className="min-w-0 max-w-5xl space-y-6">
+            <div className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm">
               <LineChart className="size-3.5 text-slate-500" />
               A股市场情景驾驶舱 · {data.tradeDate}
             </div>
             <div className="space-y-4">
-              <h1 className="max-w-5xl text-4xl font-semibold leading-[1.08] tracking-[-0.055em] text-slate-950 sm:text-6xl">{data.hero.headline}</h1>
+              <h1 className="max-w-5xl break-words text-3xl font-semibold leading-tight text-slate-950 sm:text-6xl">{data.hero.headline}</h1>
               <p className="max-w-3xl text-base leading-8 text-slate-600">{data.hero.oneSentence}</p>
             </div>
           </div>
-          <div className="grid min-w-72 gap-3 sm:grid-cols-3 xl:w-80 xl:grid-cols-1">
+          <div className="grid w-full gap-3 sm:grid-cols-3 xl:w-80 xl:grid-cols-1">
             <HeroStat label="综合环境分" value={String(data.hero.overallScore)} suffix="/100" progress={data.hero.overallScore} />
             <HeroStat label="进攻等级" value={String(data.hero.attackLevel)} suffix="/5" />
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -327,12 +327,12 @@ function ActionPlanCard({ data }: { data: MarketOverview }) {
     <Card className={cardChrome}>
       <SectionHeader eyebrow="Playbook" title="今日行动剧本" description="把情景判断翻译成适合、回避、确认和失效信号。" />
       <CardContent className="space-y-4 p-5">
-        <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <div className="text-xs text-slate-500">当前策略姿态</div>
             <div className="mt-1 text-2xl font-semibold tracking-[-0.035em] text-slate-950">{data.actionPlan.stance}</div>
           </div>
-          <Badge className={`rounded-full px-3 py-1 ${stanceTone(data.actionPlan.stance)}`} variant="outline">进攻 {data.hero.attackLevel}/5</Badge>
+          <Badge className={`w-fit rounded-full px-3 py-1 ${stanceTone(data.actionPlan.stance)}`} variant="outline">进攻 {data.hero.attackLevel}/5</Badge>
         </div>
         <div className="grid gap-3 md:grid-cols-2">
           <SignalList icon={CheckCircle2} title="适合" items={data.actionPlan.suitable} tone="success" />
@@ -363,7 +363,7 @@ function SignalList({ icon: Icon, title, items, tone }: { icon: typeof CheckCirc
       <div className={`mb-3 flex items-center gap-2 text-sm font-semibold ${iconTone[tone]}`}><Icon className="size-4" />{title}</div>
       <div className="space-y-2">
         {items.map((item) => (
-          <div key={item} className="rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">{item}</div>
+          <div key={item} className="break-words rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">{item}</div>
         ))}
       </div>
     </div>
@@ -425,7 +425,7 @@ function ShanghaiZoneMap({ data }: { data: MarketOverview }) {
   return (
     <Card className={cardChrome}>
       <SectionHeader eyebrow="K-Line Zone POC" title="上证 K 线区间图" description="把压力/支撑直接叠加到 K 线上：颜色深浅代表区间权重，下方同步观察成交量、成交额代理换手强度和涨停情绪。" />
-      <CardContent className="space-y-4 p-5">
+      <CardContent className="space-y-4 p-4 sm:p-5">
         <div className="grid gap-3 md:grid-cols-4">
           <ZoneSummaryCard label="最近压力" zone={data.shanghaiMap.nearestResistance} tone="danger" />
           <ZoneSummaryCard label="最近支撑" zone={data.shanghaiMap.nearestSupport} tone="success" />
@@ -541,7 +541,7 @@ function CycleMatrix({ data }: { data: MarketOverview }) {
       <SectionHeader eyebrow="Cycle Matrix" title="多周期结构矩阵" description={data.shanghai.cycleConclusion ?? "短、中、长周期结构对照。"} />
       <CardContent className="p-5">
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <Table>
+          <Table className="min-w-[640px]">
             <TableHeader className="bg-slate-50">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="font-semibold text-slate-500">周期</TableHead>
@@ -576,7 +576,7 @@ function InternalStructurePanel({ data }: { data: MarketOverview }) {
   return (
     <Card className={cardChrome}>
       <SectionHeader eyebrow="Market Internals" title="情绪 / 风格 / 行业三联动" description={data.internalStructure.combinedConclusion} />
-      <CardContent className="grid gap-4 p-5 xl:grid-cols-3">
+      <CardContent className="grid gap-4 p-4 sm:p-5 xl:grid-cols-3">
         <StructureCard icon={Activity} title="市场情绪" value={String(Math.round(sentiment.todayScore))} tone="neutral" lines={[`5日趋势：${sentiment.trend}`, `风险扩散：${fmtNum(sentiment.riskDiffusionScore, 0)}`, `5日 / 20日：${fmtNum(sentiment.score5, 0)} / ${fmtNum(sentiment.score20, 0)}`]} />
         <StructureCard icon={Zap} title="主导风格" value={style.dominantStyle} tone="neutral" lines={[style.conclusion, `20日风格分化：${fmtPct(style.spread20)}`, `状态：${style.dominant?.state ?? "均衡"}`]} />
         <StructureCard icon={BarChart3} title="行业主线" value={industry.available ? `${industry.strongCount} 强` : "未接入"} tone="neutral" lines={[industry.conclusion, `弱势行业：${industry.weakCount}`, industry.available ? industry.leadings.map((item) => item.name).slice(0, 3).join(" / ") : "不使用风格数据冒充行业"]} />
@@ -593,7 +593,7 @@ function StructureCard({ icon: Icon, title, value, lines }: { icon: typeof Activ
         <Badge className="rounded-full border-slate-200 bg-white px-3 py-1 text-slate-700" variant="outline">{value}</Badge>
       </div>
       <div className="mt-5 space-y-2 text-sm leading-6 text-slate-600">
-        {lines.map((line) => <div key={line} className="rounded-xl border border-slate-200 bg-white px-3 py-2">{line}</div>)}
+        {lines.map((line) => <div key={line} className="break-words rounded-xl border border-slate-200 bg-white px-3 py-2">{line}</div>)}
       </div>
     </div>
   )
@@ -612,7 +612,7 @@ function SimilarScenarioPanel({ data }: { data: MarketOverview }) {
           <MetricTile label="20日平均收益" value={fmtPct(stat20?.avgReturn)} />
         </div>
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <Table>
+          <Table className="min-w-[620px]">
             <TableHeader className="bg-slate-50">
               <TableRow className="hover:bg-transparent">
                 <TableHead className="font-semibold text-slate-500">后续</TableHead>
@@ -644,7 +644,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-3 text-3xl font-semibold tracking-[-0.055em] text-slate-950">{value}</div>
+      <div className="mt-3 break-words text-2xl font-semibold text-slate-950 sm:text-3xl">{value}</div>
     </div>
   )
 }
@@ -661,7 +661,7 @@ function IndustryLeadership({ data }: { data: MarketOverview }) {
   return (
     <Card className={cardChrome}>
       <SectionHeader eyebrow="Leadership" title="强弱行业排行" description="基于真实行业指数相对上证表现，不再用风格数据代替行业。" />
-      <CardContent className="grid gap-5 p-5 xl:grid-cols-2">
+      <CardContent className="grid gap-5 p-4 sm:p-5 xl:grid-cols-2">
         <IndustryList title="强势行业" icon={TrendingUp} items={industry.leadings} tone="success" />
         <IndustryList title="弱势行业" icon={ShieldAlert} items={industry.laggings} tone="danger" />
       </CardContent>
@@ -677,15 +677,15 @@ function IndustryList({ title, icon: Icon, items, tone }: { title: string; icon:
       <div className="space-y-3">
         {items.map((item, index) => (
           <div key={`${title}-${item.symbol}-${item.name}`} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
                 <div className="flex size-8 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">{index + 1}</div>
                 <div>
-                  <div className="font-semibold text-slate-900">{item.name}</div>
+                  <div className="break-words font-semibold text-slate-900">{item.name}</div>
                   <div className="mt-1 text-xs text-slate-400">{item.indexName} · {item.symbol}</div>
                 </div>
               </div>
-              <Badge className={`rounded-full ${isStrong ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`} variant="outline">{item.state}</Badge>
+              <Badge className={`w-fit rounded-full ${isStrong ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`} variant="outline">{item.state}</Badge>
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
               <IndustryStat label="5日" value={fmtPct(item.relativeReturn5)} valueClass={trendTone(item.relativeReturn5)} />
@@ -739,7 +739,7 @@ export default function StockOverviewPage() {
 
   return (
     <WorkspaceShell sectionLabel="Market Regime" pageTitle="市场情景驾驶舱">
-      <div className="relative -mx-2 -my-4 rounded-3xl border border-slate-200 bg-[#f6f7f9] p-3 sm:p-5 xl:p-6">
+      <div className="relative -mx-2 -my-4 max-w-full overflow-hidden rounded-3xl border border-slate-200 bg-[#f6f7f9] p-2 sm:p-5 xl:p-6">
         <div className="relative space-y-6">
           {error ? (
             <Alert variant="destructive" className="rounded-2xl border-red-200 bg-red-50">

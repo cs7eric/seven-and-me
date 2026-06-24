@@ -24,7 +24,7 @@ export function IndustryRotation({
     return (
       <Card className={cardChrome}>
         <CardHeader className="border-b border-slate-100 pb-5">
-          <div>
+          <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">M3</div>
             <CardTitle className="mt-1 text-xl font-semibold tracking-[-0.025em] text-slate-950">
               <Shuffle className="mr-2 inline-block size-5 text-indigo-500" />
@@ -53,11 +53,11 @@ export function IndustryRotation({
               每个交易日, 按 TDX 56 行业指数当日涨跌幅排序, 取前 {topN}。横轴日期 (最新在左), 纵轴排名。
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="rounded-full px-3 py-1 text-xs text-slate-500">
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
+            <Badge variant="outline" className="w-fit rounded-full px-3 py-1 text-xs text-slate-500">
               <Calendar className="mr-1 size-3" /> {dates[0]} ~ {dates[dates.length - 1]} · {dates.length} 个交易日
             </Badge>
-            <Button variant="outline" size="sm" className="rounded-xl" onClick={onRefreshSnapshot}>
+            <Button variant="outline" size="sm" className="w-full rounded-xl sm:w-auto" onClick={onRefreshSnapshot}>
               <RefreshCcw className="mr-1.5 size-4" /> 刷新今日快照
             </Button>
           </div>
@@ -65,7 +65,7 @@ export function IndustryRotation({
       </CardHeader>
       <CardContent className="p-0">
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-sm">
+          <table className="min-w-[760px] table-fixed border-collapse text-sm">
             <colgroup>
               <col className="w-20" />
               {dates.map((date) => (

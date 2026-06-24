@@ -283,7 +283,7 @@ export default function StockOverviewMarketPulsePage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" sectionUrl="/stock-overview" pageTitle="market pulse">
-      <div className="h-[calc(100svh-4rem)] space-y-4 overflow-y-auto p-3 sm:p-4">
+      <div className="h-[calc(100svh-4rem)] max-w-full space-y-4 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
         <PageHeader
           onRefresh={load}
           loading={loading}

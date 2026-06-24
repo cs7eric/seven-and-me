@@ -107,15 +107,15 @@ export function TargetCard({
   }, [targets, stockSearchResults, searchKeyword, targetIdSet])
 
   return (
-    <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-      <CardHeader>
+    <Card className="w-full min-w-0 max-w-full overflow-hidden rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <CardHeader className="px-3 pt-4 sm:px-6">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2 text-base">
               <Target className="size-4 text-slate-600" />
               Watchlist
             </CardTitle>
-            <CardDescription>Postgres application analysis targets + self-selected target sync</CardDescription>
+            <CardDescription className="break-words">Postgres application analysis targets + self-selected target sync</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -130,7 +130,7 @@ export function TargetCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-3 px-3 pb-4 sm:px-6">
         <div className="space-y-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
@@ -167,32 +167,32 @@ export function TargetCard({
                       isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-400"
                     }`}
                   >
-                    <div className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left">
-                      <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex w-full flex-col gap-2 px-3 py-3 text-left sm:flex-row sm:items-center sm:justify-between">
+                      <div className="flex min-w-0 items-start gap-2 sm:items-center">
                         {!collapsed ? (
-                          isExpanded ? <ChevronDown className="size-3.5 text-slate-500" /> : <ChevronRight className="size-3.5 text-slate-500" />
+                          isExpanded ? <ChevronDown className="mt-0.5 size-3.5 shrink-0 text-slate-500 sm:mt-0" /> : <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-slate-500 sm:mt-0" />
                         ) : null}
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                            <span className="truncate">{target.name}</span>
-                            <span className="text-slate-400">· {target.symbol}</span>
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-slate-800">
+                            <span className="min-w-0 break-words">{target.name}</span>
+                            <span className="shrink-0 text-slate-400">· {target.symbol}</span>
                           </div>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                            <Clock className="size-3" />每 {target.interval_minutes} 分钟
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                            <Clock className="size-3 shrink-0" />每 {target.interval_minutes} 分钟
                             {target.enabled ? <Badge className="rounded-full border-emerald-200 bg-emerald-50 text-emerald-700" variant="outline">启用</Badge> : <Badge className="rounded-full border-slate-200 bg-slate-100 text-slate-500" variant="outline">停用</Badge>}
                             {target.last_updated_at ? <span>· 最近 {new Date(target.last_updated_at).toLocaleString()}</span> : null}
                           </div>
                         </div>
                       </div>
-                      <Badge className="rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{target.target_type}</Badge>
+                      <Badge className="w-fit rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{target.target_type}</Badge>
                     </div>
                     {isExpanded ? (
                       <div className="space-y-3 border-t border-slate-100 bg-slate-50/60 px-3 py-3" onClick={(event) => event.stopPropagation()}>
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
+                        <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                          <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                             调整
                             <Select value={target.adjust} onValueChange={(value) => onUpdateTarget(target.id, { adjust: value })}>
-                              <SelectTrigger className="h-7 w-20"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-7 w-full sm:w-20"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="qfq">前复权</SelectItem>
                                 <SelectItem value="none">不复权</SelectItem>
@@ -200,13 +200,13 @@ export function TargetCard({
                               </SelectContent>
                             </Select>
                           </label>
-                          <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
+                          <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                             周期
                             <Select
                               value={target.interval_minutes.toString()}
                               onValueChange={(value) => onUpdateTarget(target.id, { interval_minutes: Number(value) })}
                             >
-                              <SelectTrigger className="h-7 w-24"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className="h-7 w-full sm:w-24"><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="15">15 分钟</SelectItem>
                                 <SelectItem value="30">30 分钟</SelectItem>
@@ -218,14 +218,14 @@ export function TargetCard({
                             </Select>
                           </label>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 text-xs">
-                          <Button size="sm" variant="outline" className="rounded-xl" onClick={() => onUpdateTarget(target.id, { enabled: !target.enabled })}>
+                        <div className="grid grid-cols-1 gap-2 text-xs sm:flex sm:flex-wrap sm:items-center">
+                          <Button size="sm" variant="outline" className="w-full rounded-xl sm:w-auto" onClick={() => onUpdateTarget(target.id, { enabled: !target.enabled })}>
                             {target.enabled ? "停用" : "启用"}
                           </Button>
-                          <Button size="sm" variant="outline" className="rounded-xl" onClick={() => onTriggerTarget(target.id)}>
+                          <Button size="sm" variant="outline" className="w-full rounded-xl sm:w-auto" onClick={() => onTriggerTarget(target.id)}>
                             <RefreshCw className="mr-1 size-3.5" />立即刷新
                           </Button>
-                          <Button size="sm" variant="ghost" className="rounded-xl text-slate-500" onClick={() => onRemove(target.id)}>
+                          <Button size="sm" variant="ghost" className="w-full rounded-xl text-slate-500 sm:w-auto" onClick={() => onRemove(target.id)}>
                             <Trash2 className="mr-1 size-3.5" />删除
                           </Button>
                         </div>
@@ -241,22 +241,22 @@ export function TargetCard({
                   className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/60 transition hover:border-slate-400 hover:bg-slate-50"
                   onClick={(event) => event.stopPropagation()}
                 >
-                  <div className="flex w-full items-center justify-between gap-2 px-3 py-3 text-left">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <Plus className="size-3.5 shrink-0 text-slate-400" />
+                  <div className="flex w-full flex-col gap-2 px-3 py-3 text-left sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-2 sm:items-center">
+                      <Plus className="mt-0.5 size-3.5 shrink-0 text-slate-400 sm:mt-0" />
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                          <span className="truncate">{searchItem.name}</span>
-                          <span className="text-slate-400">· {searchItem.symbol}</span>
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold text-slate-800">
+                          <span className="min-w-0 break-words">{searchItem.name}</span>
+                          <span className="shrink-0 text-slate-400">· {searchItem.symbol}</span>
                         </div>
-                        <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
-                          <Clock className="size-3" />每 60 分钟
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+                          <Clock className="size-3 shrink-0" />每 60 分钟
                           <Badge className="rounded-full border-slate-200 bg-slate-100 text-slate-500" variant="outline">停用</Badge>
                           <span>· 未添加到目标</span>
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-2 sm:justify-end">
                       <Badge className="rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{searchItem.target_type}</Badge>
                       <button
                         type="button"
@@ -287,57 +287,57 @@ export function TargetCard({
         {!collapsed ? (
           <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold text-slate-600">数据范围（horizon）</div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                 天数<input
                   type="number"
                   min={30}
                   value={horizon.days}
                   onChange={(event) => onHorizonChange({ days: Number(event.target.value) || 120 })}
-                  className="w-16 rounded-md border border-slate-200 px-1 text-right"
+                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
                 />
               </label>
-              <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
+              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                 段数<input
                   type="number"
                   min={1}
                   value={horizon.segments}
                   onChange={(event) => onHorizonChange({ segments: Number(event.target.value) || 4 })}
-                  className="w-16 rounded-md border border-slate-200 px-1 text-right"
+                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
                 />
               </label>
-              <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
+              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                 月 K<input
                   type="number"
                   min={1}
                   value={horizon.monthly_keep}
                   onChange={(event) => onHorizonChange({ monthly_keep: Number(event.target.value) || 6 })}
-                  className="w-16 rounded-md border border-slate-200 px-1 text-right"
+                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
                 />
               </label>
-              <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">
+              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
                 周 K<input
                   type="number"
                   min={1}
                   value={horizon.weekly_keep}
                   onChange={(event) => onHorizonChange({ weekly_keep: Number(event.target.value) || 12 })}
-                  className="w-16 rounded-md border border-slate-200 px-1 text-right"
+                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
                 />
               </label>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button className="rounded-xl" size="sm" disabled={saving} onClick={onSave}>
+            <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+              <Button className="w-full rounded-xl sm:w-auto" size="sm" disabled={saving} onClick={onSave}>
                 <Save className="mr-1 size-3.5" />{saving ? "保存中" : "保存配置"}
               </Button>
               <Button
-                className="rounded-xl"
+                className="w-full rounded-xl sm:w-auto"
                 size="sm"
                 variant={scheduler?.running ? "destructive" : "default"}
                 onClick={onToggleScheduler}
               >
                 {scheduler?.running ? "停止调度" : "启动调度"}
               </Button>
-              <Button className="rounded-xl" size="sm" variant="outline" onClick={onRefreshAll}>
+              <Button className="w-full rounded-xl sm:w-auto" size="sm" variant="outline" onClick={onRefreshAll}>
                 全部刷新
               </Button>
             </div>

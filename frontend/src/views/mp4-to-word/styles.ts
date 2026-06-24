@@ -471,6 +471,24 @@ export const QA_STYLE_FIX = `
   line-height: 1.86;
   color: #1f2937;
 }
+.columns,
+.result-box,
+.summary-box,
+.summary-stage,
+.summary-workspace,
+.qa-box,
+.qa-json-response {
+  min-width: 0;
+  max-width: 100%;
+}
+.summary-workspace,
+.qa-json-response,
+.qa-json-core,
+.qa-json-logic-pane,
+.qa-json-support-block,
+.qa-fallback-card {
+  overflow-wrap: anywhere;
+}
 @media (max-width: 900px) {
   .qa-json-top,
   .qa-json-footer {
@@ -482,6 +500,90 @@ export const QA_STYLE_FIX = `
   }
   .qa-json-flow-arrow {
     display: none;
+  }
+}
+@media (max-width: 640px) {
+  .columns {
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+  .result-box,
+  .summary-box,
+  .qa-box {
+    border-radius: 22px;
+  }
+  .result-header,
+  .qa-item-header {
+    align-items: flex-start;
+    padding: 14px;
+  }
+  .result-title {
+    min-width: 0;
+    line-height: 1.35;
+  }
+  .result-meta {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+  .result-body {
+    min-height: 280px;
+    max-height: 58vh;
+    padding: 16px;
+    font-size: 14px;
+    line-height: 1.8;
+    overflow-x: auto;
+  }
+  .summary-stage {
+    padding: 14px;
+  }
+  .summary-workspace {
+    gap: 12px;
+  }
+  .summary-panel,
+  .qa-json-core,
+  .qa-json-logic-pane,
+  .qa-json-support-block {
+    border-radius: 18px;
+    padding: 14px;
+  }
+  .qa-body {
+    padding: 14px;
+  }
+  .qa-floating-anchor {
+    height: 92px;
+  }
+  .qa-floating-wrap {
+    bottom: 14px;
+    width: calc(100vw - 24px);
+  }
+  .qa-floating-inner {
+    gap: 8px;
+    align-items: stretch;
+  }
+  .qa-search-box {
+    width: 100%;
+  }
+  .qa-search-input {
+    padding: 12px 44px 12px 14px;
+    border-radius: 16px;
+    font-size: 16px;
+  }
+  .qa-json-title {
+    font-size: 17px;
+    line-height: 1.35;
+  }
+  .qa-json-pills,
+  .qa-json-actions,
+  .qa-json-followups {
+    justify-content: flex-start;
+  }
+  .qa-action-btn,
+  .qa-followup-chip {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
   }
 }
 `;

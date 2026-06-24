@@ -18,7 +18,7 @@ export function AnalysisDetail({
   const trendEntries = Object.entries(trendState)
 
   return (
-    <>
+    <div className="min-w-0 space-y-4">
       {trendEntries.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {trendEntries.map(([key, value]) => (
@@ -27,7 +27,7 @@ export function AnalysisDetail({
         </div>
       ) : null}
 
-      <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <Card className="min-w-0 rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
         <CardHeader>
           <CardTitle>结构摘要</CardTitle>
           <CardDescription>仅展示 AI JSON 中的摘要字段，不额外编造结论。</CardDescription>
@@ -48,11 +48,11 @@ export function AnalysisDetail({
           <CardDescription>用于核对 AI 返回是否符合 annotation.md schema。</CardDescription>
         </CardHeader>
         <CardContent>
-          <pre className="max-h-[520px] overflow-auto rounded-2xl border border-slate-200 bg-slate-950 p-4 text-xs leading-5 text-slate-100">
+          <pre className="max-h-[520px] max-w-full overflow-auto rounded-2xl border border-slate-200 bg-slate-950 p-3 text-xs leading-5 text-slate-100 sm:p-4">
             {JSON.stringify(analysis, null, 2)}
           </pre>
         </CardContent>
       </Card>
-    </>
+    </div>
   )
 }

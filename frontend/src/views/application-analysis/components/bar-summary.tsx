@@ -60,8 +60,8 @@ export function BarSummary({
       : "bg-slate-50 border-slate-200"
   return (
     <>
-      <div className="mb-1.5 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-slate-900">K 柱 · {fmtDateTime(bar.timestamp)}</div>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <div className="break-words text-sm font-semibold text-slate-900">K 柱 · {fmtDateTime(bar.timestamp)}</div>
         <Badge
           className="rounded-full bg-white text-[10px]"
           style={{ borderColor: color, color }}
@@ -70,7 +70,7 @@ export function BarSummary({
           K Line
         </Badge>
       </div>
-      <div className="grid gap-0.5 text-[11px] leading-5 text-slate-600">
+      <div className="grid min-w-0 gap-0.5 text-[11px] leading-5 text-slate-600">
         <div>
           <span className="text-slate-400">开</span>{" "}
           <span className="font-mono text-slate-700">{bar.open.toFixed(2)}</span>
@@ -86,24 +86,24 @@ export function BarSummary({
         </div>
         <div>
           <span className="text-slate-400">成交量</span>{" "}
-          <span className="font-mono text-slate-700">{bar.volume.toLocaleString()}</span>
+          <span className="break-all font-mono text-slate-700">{bar.volume.toLocaleString()}</span>
           {hasPrevVol ? (
             <>
               <span className="mx-1.5 text-slate-300">·</span>
               <span className="text-slate-400">昨量</span>{" "}
-              <span className="font-mono text-slate-700">{(prevVolume as number).toLocaleString()}</span>
+              <span className="break-all font-mono text-slate-700">{(prevVolume as number).toLocaleString()}</span>
             </>
           ) : null}
           {hasTurnover ? (
             <>
               <span className="mx-1.5 text-slate-300">·</span>
               <span className="text-slate-400">成交额</span>{" "}
-              <span className="font-mono text-slate-700">{(bar.turnover as number).toLocaleString()}</span>
+              <span className="break-all font-mono text-slate-700">{(bar.turnover as number).toLocaleString()}</span>
               {hasPrevTurnover ? (
                 <>
                   <span className="mx-1.5 text-slate-300">·</span>
                   <span className="text-slate-400">昨额</span>{" "}
-                  <span className="font-mono text-slate-700">{(prevTurnover as number).toLocaleString()}</span>
+                  <span className="break-all font-mono text-slate-700">{(prevTurnover as number).toLocaleString()}</span>
                 </>
               ) : null}
             </>
@@ -128,42 +128,42 @@ export function BarSummary({
           ) : null}
         </div>
         {change !== null && changePct !== null ? (
-          <div className={`mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${toneBg} ${toneText}`}>
+          <div className={`mt-1 inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${toneBg} ${toneText}`}>
             <span>{upTone ? "▲" : downTone ? "▼" : "■"}</span>
             <span className="font-mono">{fmtSigned(change)}</span>
             <span className="font-mono">{fmtPercent(changePct)}</span>
             <span className="text-slate-400">{upTone ? "涨幅" : downTone ? "跌幅" : "持平"}</span>
           </div>
         ) : (
-          <div className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
+          <div className="mt-1 inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
             <span>■</span>
             <span className="font-mono">—</span>
             <span className="text-slate-400">无昨收参考</span>
           </div>
         )}
         {volDelta !== null && volDeltaPct !== null ? (
-          <div className={`mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${volToneBg} ${volToneText}`}>
+          <div className={`mt-1 inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${volToneBg} ${volToneText}`}>
             <span>{volUpTone ? "▲" : volDownTone ? "▼" : "■"}</span>
             <span className="font-mono">{fmtNumberWithCompact(volDelta)}</span>
             <span className="font-mono">{fmtPercent(volDeltaPct)}</span>
             <span className="text-slate-400">{volUpTone ? "放量" : volDownTone ? "缩量" : "持平"}</span>
           </div>
         ) : (
-          <div className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
+          <div className="mt-1 inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
             <span>■</span>
             <span className="font-mono">—</span>
             <span className="text-slate-400">无昨量参考</span>
           </div>
         )}
         {turnoverDelta !== null && turnoverDeltaPct !== null ? (
-          <div className={`mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${turnoverToneBg} ${turnoverToneText}`}>
+          <div className={`mt-1 inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border px-1.5 py-0.5 text-[11px] font-medium ${turnoverToneBg} ${turnoverToneText}`}>
             <span>{turnoverUpTone ? "▲" : turnoverDownTone ? "▼" : "■"}</span>
             <span className="font-mono">{fmtNumberWithCompact(turnoverDelta)}</span>
             <span className="font-mono">{fmtPercent(turnoverDeltaPct)}</span>
             <span className="text-slate-400">{turnoverUpTone ? "放额" : turnoverDownTone ? "缩额" : "持平"}</span>
           </div>
         ) : hasTurnover ? (
-          <div className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
+          <div className="mt-1 inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-500">
             <span>■</span>
             <span className="font-mono">—</span>
             <span className="text-slate-400">无昨额参考</span>
