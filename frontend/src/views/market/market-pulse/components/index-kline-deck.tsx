@@ -143,8 +143,8 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
   return (
     <section className="space-y-3">
       {/* 头部: 标题 + replay/today pill + 刷新 */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-foreground">
             三大指数分时图
           </h2>
@@ -223,7 +223,7 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
       ) : null}
 
       {/* 3 张分时卡 */}
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
         {sortedItems.length > 0 ? (
           sortedItems.map((item) => (
             <IndexKlineCard
@@ -244,14 +244,14 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
                   {dateText}
                 </span>
               </div>
-              <div className="flex h-[460px] w-full items-center justify-center bg-white text-xs text-slate-400">
+              <div className="flex h-[300px] w-full items-center justify-center bg-white text-xs text-slate-400 sm:h-[360px] xl:h-[460px]">
                 <Loader2 className="mr-1 size-3.5 animate-spin" />
                 加载 {INDEX_NAMES[code]} 分时…
               </div>
             </div>
           ))
         ) : (
-          <div className="col-span-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-sm text-slate-500">
+          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/50 p-6 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-3">
             暂无指数分时数据
           </div>
         )}

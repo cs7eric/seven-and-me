@@ -609,7 +609,7 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
 
   return (
     <section className="flex h-full flex-col gap-2">
-      <div className="flex items-baseline gap-2">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <div className="text-sm font-semibold text-slate-900">{item.name}</div>
         <div className={`text-2xl font-bold tabular-nums ${heroTone}`}>
           {formatClose(lastPrice)}
@@ -624,7 +624,7 @@ export function IndexKlineCard({ item, loading, directionTone }: Props) {
         ) : null}
       </div>
 
-      <div className="relative h-[460px] w-full overflow-hidden bg-white">
+      <div className="relative h-[300px] w-full overflow-hidden bg-white sm:h-[360px] xl:h-[460px]">
         {loading && item.timeshare.length === 0 ? (
           <div className="flex h-full w-full items-center justify-center text-xs text-slate-400">
             <Loader2 className="mr-1 size-3.5 animate-spin" />

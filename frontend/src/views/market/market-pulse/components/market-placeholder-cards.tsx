@@ -37,20 +37,20 @@ const PLACEHOLDER_CARDS: Array<{ title: string; description: string }> = [
  */
 export function MarketPlaceholderCards() {
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 lg:gap-4">
       {PLACEHOLDER_CARDS.map((item) => (
         <section
           key={item.title}
-          className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm"
+          className="rounded-2xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-5 sm:py-4"
         >
-          <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
-            <Activity className="size-4 text-slate-400" />
-            {item.title}
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 sm:text-base">
+            <Activity className="size-4 shrink-0 text-slate-400" />
+            <span className="min-w-0 truncate">{item.title}</span>
           </div>
           <div className="mt-1 text-xs font-medium uppercase tracking-[0.18em] text-slate-400">
             Mock · 待接入
           </div>
-          <p className="mt-3 text-sm leading-6 text-slate-500">{item.description}</p>
+          <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-500 sm:mt-3 sm:text-sm sm:leading-6">{item.description}</p>
         </section>
       ))}
     </div>

@@ -10,7 +10,7 @@ import { TrendingUp } from "lucide-react"
  */
 export function MarketRoadmapNote() {
   return (
-    <div className="rounded-2xl border border-dashed border-border/40 bg-muted/20 p-5 text-sm text-muted-foreground">
+    <div className="max-w-3xl rounded-2xl border border-dashed border-border/40 bg-muted/20 p-4 text-sm text-muted-foreground sm:p-5">
       <div className="mb-2 flex items-center gap-2 font-medium text-foreground">
         <TrendingUp className="size-4" />
         路线

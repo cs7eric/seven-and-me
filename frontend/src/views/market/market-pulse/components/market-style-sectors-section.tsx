@@ -37,12 +37,12 @@ export function MarketStyleSectorsSection({
   )
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-foreground">
             风格板块涨跌幅
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm leading-6 text-muted-foreground">
             29 个动态股票池, 等权平均涨跌幅 (TDX 风格板块口径)
             {fetchedAt ? ` · ${fetchedAt} 拉取` : ""}
           </p>
@@ -64,13 +64,13 @@ export function MarketStyleSectorsSection({
       )}
 
       {loading && items.length === 0 ? (
-        <div className="h-[420px] w-full animate-pulse rounded-2xl border border-border/30 bg-muted/30" />
+        <div className="h-[320px] w-full animate-pulse rounded-2xl border border-border/30 bg-muted/30 sm:h-[380px] lg:h-[420px]" />
       ) : (
         // **h-[420px] 固定高度父容器**: StyleSectorsHeatmap 内部用
         // flex h-full min-h-0 flex-col, h-full 一路吃高度到这里的 420px,
         // 才能让 treemap 拿到稳定 420-legend 高度的 canvas. 不写这个父级
         // h-[420px], heatmap 自己没高度, treemap canvas 就是 0, 渲染怪.
-        <div className="h-[420px]">
+        <div className="h-[320px] sm:h-[380px] lg:h-[420px]">
           <StyleSectorsHeatmap
             items={sorted}
             loading={loading}

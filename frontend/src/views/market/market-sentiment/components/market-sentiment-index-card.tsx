@@ -190,18 +190,16 @@ export function MarketSentimentIndexCard({
   const shOverlay = (() => {
     if (!shIndex || shIndex.length === 0) return undefined
     const shMap = new Map(shIndex.map((it) => [it.tradeDate, it.close]))
-    const data: (number | null)[] = sortedHistory.map((it) => {
+    const data: Array<{ date: string; value: number }> = sortedHistory.flatMap((it) => {
       const v = shMap.get(it.tradeDate)
-      return v == null ? null : v
+      return v == null ? [] : [{ date: it.tradeDate.slice(5), value: v }]
     })
-    const hitCount = data.filter((v) => v != null).length
+    const hitCount = data.length
     if (hitCount < 2) return undefined
     return {
       name: "上证指数",
       color: "#475569",  // slate-600 全不透明 (card bg-muted/50 浅灰, 浅色糊掉)
-      data: data.map((v, i) =>
-        v == null ? null : { date: sortedHistory[i].tradeDate.slice(5), value: v },
-      ),
+      data,
     }
   })()
 
@@ -237,15 +235,17 @@ export function MarketSentimentIndexCard({
 
     const flowHitCount = flowData.filter((d) => d.value != null).length
     const amountHitCount = amountData.filter((d) => d.value != null).length
+    const filterSeriesData = (items: typeof flowData) =>
+      items.flatMap((it) => (it.value == null ? [] : [{ date: it.date, value: it.value }]))
 
     return {
       mainNetFlowOverlay:
         flowHitCount >= 2
-          ? ({ name: "主力净流", color: "#ef4444", data: flowData } as SentimentOverlaySeries)
+          ? ({ name: "主力净流", color: "#ef4444", data: filterSeriesData(flowData) } as SentimentOverlaySeries)
           : undefined,
       amountOverlay:
         amountHitCount >= 2
-          ? ({ name: "成交额", color: "#5470c6", data: amountData } as SentimentOverlaySeries)
+          ? ({ name: "成交额", color: "#5470c6", data: filterSeriesData(amountData) } as SentimentOverlaySeries)
           : undefined,
     }
   }, [sortedHistory, overview, turnoverHistory])
@@ -258,15 +258,15 @@ export function MarketSentimentIndexCard({
         ) : score == null ? (
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
-          <div className="grid h-full grid-rows-[3fr_1fr] gap-3">
+          <div className="grid h-full grid-rows-[3fr_1fr] gap-3 max-md:grid-rows-[auto_auto]">
             {/* 上 3/4: 折线图区 */}
-            <div className="flex min-h-0 flex-col gap-2">
-              <div className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground self-start">
+            <div className="flex min-h-0 flex-col gap-2 max-md:gap-3">
+              <div className="inline-flex items-center gap-2 rounded-full bg-background px-3 py-1 text-xs font-medium text-muted-foreground self-start max-sm:px-2.5 max-sm:py-0.5">
                 <Smile className="size-3.5" />
                 Market Sentiment
               </div>
-              <div className="flex items-end gap-3">
-                <span className={`text-5xl font-semibold tabular-nums ${tone}`}>
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-1 max-sm:items-start max-sm:gap-x-2">
+                <span className={`text-5xl font-semibold tabular-nums max-sm:text-[2.7rem] ${tone}`}>
                   {score.toFixed(1)}
                 </span>
                 <span className="text-xs text-muted-foreground">/ 100</span>
@@ -279,18 +279,18 @@ export function MarketSentimentIndexCard({
                   {meta.label}
                 </span>
                 {data?.tradeDate && (
-                  <span className="ml-1 inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
+                  <span className="ml-1 inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums max-sm:ml-0">
                     <Popover>
                       <PopoverTrigger asChild>
                         <button
                           type="button"
                           aria-label="选择历史日期"
-                          className="inline-flex items-center text-xs text-muted-foreground tabular-nums underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
+                          className="inline-flex items-center rounded-sm text-xs tabular-nums underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring max-sm:py-1"
                         >
                           {date ?? data.tradeDate}
                         </button>
                       </PopoverTrigger>
-                      <PopoverContent className="w-auto p-0" align="start">
+                      <PopoverContent className="w-[calc(100vw-1.5rem)] max-w-[18rem] p-0 sm:w-auto sm:max-w-none" align="start">
                         <CalendarUi
                           mode="single"
                           selected={toLocalDate(date ?? data.tradeDate)}
@@ -319,19 +319,19 @@ export function MarketSentimentIndexCard({
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-muted-foreground max-sm:leading-4">
                 <Activity className="size-3.5" />
                 <span>实时情绪指标</span>
-                <span className="text-red-600/70">≥70 极热</span>
+                <span className="text-red-600/70 max-sm:basis-full">≥70 极热</span>
                 <span className="text-orange-600/70">60-70 偏热</span>
                 <span className="text-amber-600/70">50-60 偏多</span>
                 <span className="text-sky-500/80">40-50 偏弱</span>
                 <span className="text-blue-600/70">30-40 低迷</span>
                 <span className="text-slate-400">＜30 冰点</span>
                 <span className="text-border">·</span>
-                <span className="text-xs">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
+                <span className="text-xs max-sm:basis-full max-sm:hidden">顶部 1 张合成指数 + 9 张子卡 / duckdb 持久化 / 工作日自动更新</span>
               </div>
-              <div className="min-h-0 flex-1">
+              <div className="min-h-[340px] max-sm:min-h-[420px] flex-1">
                 <SentimentOverlay
                   data={sentimentPoints}
                   height="100%"
@@ -341,9 +341,8 @@ export function MarketSentimentIndexCard({
                 />
               </div>
             </div>
-
             {/* 下 1/4: 预留区 (后续接入) */}
-            <div className="min-h-0 rounded-xl border border-dashed border-border/40 bg-background/40 flex items-center justify-center text-xs text-muted-foreground">
+            <div className="min-h-0 rounded-xl border border-dashed border-border/40 bg-background/40 flex items-center justify-center text-xs text-muted-foreground max-sm:hidden">
               预留区 · 下方 1/4
             </div>
           </div>

@@ -404,8 +404,8 @@ export default function MarketPulsePage() {
     <WorkspaceShell sectionLabel="Market Pulse" pageTitle="Mock Workspace">
       <MarketPulseHeader />
 
-      {/* === 页面正文: 统一 24px section 间距, 5 大区块按 spec 顺序堆叠 === */}
-      <div className="space-y-6">
+      {/* === 页面正文: 小屏收紧间距, PC 保持 24px section 间距 === */}
+      <div className="space-y-4 sm:space-y-6">
         {/* === 大盘成交额 / 主力净流入 (AKShare 双源) === */}
         <MarketOverviewCards
           overview={overview}
@@ -461,7 +461,7 @@ export default function MarketPulsePage() {
         />
 
         {/* === 行业板块热力图 (同花顺式 ECharts Treemap) === */}
-        <div className="h-[420px]">
+        <div className="h-[320px] sm:h-[380px] lg:h-[420px]">
           <IndustryHeatmap
             data={heatmapData as never}
             loading={heatmapLoading}

@@ -256,8 +256,8 @@ export function LimitEmotionPanel({ refreshSignal = 0 }: { refreshSignal?: numbe
         industryName={selectedStock?.industry ?? null}
       />
       {/* 头部 */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-foreground">
             涨跌停情绪
           </h2>
@@ -293,7 +293,7 @@ export function LimitEmotionPanel({ refreshSignal = 0 }: { refreshSignal?: numbe
 
       {/* 4 大核心指标 + 情绪文案 */}
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <div className="grid gap-px bg-slate-200 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-px bg-slate-200 lg:grid-cols-4">
           <Cell
             label="涨停"
             value={formatCount(data?.limitUp?.count)}

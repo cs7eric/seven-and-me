@@ -40,7 +40,7 @@ export function IndustryDetailDrawer({
   return (
     <div className="fixed inset-0 z-50 flex">
       <div className="hidden flex-1 bg-slate-900/30 backdrop-blur-sm sm:block" onClick={onClose} />
-      <div className="flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl">
+      <div className="flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl sm:w-auto">
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4 sm:p-5">
           <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">行业钻入</div>
@@ -172,7 +172,7 @@ function FlowMiniChart({ rows }: { rows: Array<{ date?: string; mainNet?: number
   const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(row.mainNet ?? 0)))
 
   return (
-    <div className="flex h-32 min-w-[420px] items-end gap-1.5">
+      <div className="flex h-32 min-w-0 items-end gap-1.5 sm:min-w-[420px]">
       {rows.slice(-30).map((row, index) => {
         const value = row.mainNet ?? 0
         const ratio = Math.abs(value) / maxAbs
@@ -203,7 +203,7 @@ function KLineMini({ bars }: { bars: Array<Record<string, unknown>> }) {
   const width = 100 / closes.length
 
   return (
-    <div className="flex h-32 min-w-[420px] items-end">
+      <div className="flex h-32 min-w-0 items-end sm:min-w-[420px]">
       {closes.map((close, index) => {
         const ratio = max === min ? 0.5 : (close - min) / (max - min)
         return (

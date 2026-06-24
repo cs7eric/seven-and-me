@@ -89,8 +89,8 @@ export function ProfitEffectCard({ date }: { date: string | null }) {
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
           <>
-            <div className="flex items-baseline gap-3">
-              <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className={`text-3xl font-semibold tabular-nums max-sm:text-2xl ${tone}`}>
                 {score.toFixed(1)}
               </span>
               <span className={`text-xs font-medium ${tone}`}>{levelLabel}</span>
@@ -116,7 +116,7 @@ export function ProfitEffectCard({ date }: { date: string | null }) {
               />
             </div>
 
-            <div className="mt-1 flex gap-3 text-[10px] text-muted-foreground">
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
               <span className="text-red-600/70">≥60 赚钱面宽</span>
               <span className="text-amber-600/70">40-60 中性</span>
               <span className="text-emerald-600/70">＜40 亏钱效应</span>

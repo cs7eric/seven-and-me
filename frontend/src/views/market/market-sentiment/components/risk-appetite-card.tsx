@@ -78,22 +78,22 @@ export function RiskAppetiteCard({ date }: { date: string | null }) {
           <SubCardSkeleton />
         ) : (
           <>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className={`text-3xl font-semibold tabular-nums max-sm:text-2xl ${tone}`}>
                 {score == null ? "—" : score.toFixed(1)}
               </span>
               <span className="text-xs text-muted-foreground">/ 100 · 历史分位</span>
             </div>
 
             {rawValue != null && (
-              <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+              <div className="mt-1 text-xs leading-5 tabular-nums text-muted-foreground">
                 沪深300跑赢债券ETF {rawValue > 0 ? "+" : ""}{rawValue.toFixed(2)}%
                 {score != null && <span> · 高于过去3年{score.toFixed(0)}%的时间</span>}
               </div>
             )}
 
             {(spread511010 != null || spread511090 != null) && (
-              <div className="mt-2 flex gap-3 text-xs tabular-nums text-muted-foreground">
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
                 {spread511010 != null && (
                   <span>
                     511010

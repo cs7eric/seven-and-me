@@ -108,7 +108,7 @@ export function TargetCard({
 
   return (
     <Card className="w-full min-w-0 max-w-full overflow-hidden rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-      <CardHeader className="px-3 pt-4 sm:px-6">
+      <CardHeader className="px-3 pt-4 sm:px-4 2xl:px-6">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -130,7 +130,7 @@ export function TargetCard({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3 px-3 pb-4 sm:px-6">
+      <CardContent className="space-y-3 px-3 pb-4 sm:px-4 2xl:px-6">
         <div className="space-y-2">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />

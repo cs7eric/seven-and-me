@@ -109,7 +109,7 @@ function ChartBody({ option }: { option: echarts.EChartsCoreOption | null }) {
   const ref = useRef<HTMLDivElement | null>(null)
   useLineChart(ref, option)
 
-  return <div ref={ref} className="h-[300px] min-w-[640px] sm:h-[340px]" />
+  return <div ref={ref} className="h-[240px] w-full min-w-0 sm:h-[340px]" />
 }
 
 export function IndustryComparePanel({

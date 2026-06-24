@@ -112,9 +112,9 @@ export function SentimentOverlay({
   const ref = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<echarts.ECharts | null>(null)
   const [zoomRange, setZoomRange] = useState<{ start: number; end: number } | null>(null)
-  const [chartWidth, setChartWidth] = useState(1200)
+  const [chartWidth, setChartWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1200))
 
-  const option = useMemo<EChartsOption>(() => {
+  const option = useMemo(() => {
     const dates = data.map((d) => d.date)
     const values = data.map((d) => d.value)
 
@@ -594,20 +594,35 @@ export function SentimentOverlay({
     const AMOUNT_GRID_BOTTOM = 88
     const AMOUNT_GRID_TOP = AMOUNT_GRID_BASE_TOP - EXTRA_OVERLAY_HEIGHT
     const AMOUNT_GRID_HEIGHT = AMOUNT_GRID_BOTTOM - AMOUNT_GRID_TOP
+    const isCompact = chartWidth < 640
+    const showChrome = !isCompact
+    const sideOffset = isCompact ? 10 : 42
+    const gridSide = isCompact ? 18 : 96
+    const compactLegend = isCompact
+      ? ["市场情绪指数", "成交额", "主力净流"].filter((name) =>
+          name === "市场情绪指数"
+            ? true
+            : name === "成交额"
+              ? Boolean(amountOverlay)
+              : Boolean(mainNetFlowOverlay),
+        )
+      : ["成交额", "主力净流", "市场情绪指数", "上证指数"]
 
     return {
       backgroundColor: "#fff",
 
       legend: {
-        bottom: 34,
+        show: showChrome,
+        bottom: isCompact ? 6 : 34,
         left: 8,
-        itemWidth: 18,
-        itemHeight: 10,
-        textStyle: { color: fg, fontSize: 12 },
-        data: ["成交额", "主力净流", "市场情绪指数", "上证指数"],
+        itemWidth: isCompact ? 12 : 18,
+        itemHeight: isCompact ? 8 : 10,
+        textStyle: { color: fg, fontSize: isCompact ? 10 : 12 },
+        data: compactLegend,
       },
 
       toolbox: {
+        show: showChrome,
         right: 8,
         top: 0,
         feature: {
@@ -624,22 +639,22 @@ export function SentimentOverlay({
 
       grid: [
         {
-          left: 86,
-          right: 96,
+          left: gridSide,
+          right: gridSide,
           top: `${FLOW_GRID_TOP}%`,
           height: `${FLOW_GRID_HEIGHT}%`,
           containLabel: false,
         },
         {
-          left: 86,
-          right: 96,
+          left: gridSide,
+          right: gridSide,
           top: `${MIDDLE_GRID_TOP}%`,
           height: `${MIDDLE_GRID_HEIGHT}%`,
           containLabel: false,
         },
         {
-          left: 86,
-          right: 96,
+          left: gridSide,
+          right: gridSide,
           top: `${AMOUNT_GRID_TOP}%`,
           height: `${AMOUNT_GRID_HEIGHT}%`,
           containLabel: false,
@@ -781,7 +796,7 @@ export function SentimentOverlay({
         {
           type: "value",
           name: "主力净流(亿)",
-          nameTextStyle: { color: "#047857", fontSize: 12 },
+          nameTextStyle: { color: "#047857", fontSize: isCompact ? 10 : 12 },
           gridIndex: 0,
           min: 0,
           max: Math.ceil(maxFlowVisualRain * 1.15),
@@ -790,32 +805,34 @@ export function SentimentOverlay({
           offset: 42,
           splitNumber: 4,
           axisLabel: {
+            show: showChrome,
             color: "#047857",
-            fontSize: 11,
+            fontSize: isCompact ? 9 : 11,
             formatter: (value: number) => formatFlowAxis(Number(value)),
-            margin: 6,
+            margin: 4,
           },
           axisPointer: {
             label: {
+              show: showChrome,
               formatter: (params: { value: number }) =>
                 `${formatFlowAxis(Number(params.value))}亿`,
             },
           },
           splitLine: { lineStyle: { color: "rgba(217,222,232,0.38)" } },
-          axisLine: { show: true, lineStyle: { color: "#86efac" } },
+          axisLine: { show: showChrome, lineStyle: { color: "#86efac" } },
           axisTick: { show: false },
         },
         {
           type: "value",
           name: "情绪分",
-          nameTextStyle: { color: fg, fontSize: 12 },
+          nameTextStyle: { color: fg, fontSize: isCompact ? 10 : 12 },
           gridIndex: 1,
           min: yMin,
           max: yMax,
           splitNumber: 4,
           position: "left",
           offset: 0,
-          axisLabel: { color: fg, fontSize: 11, formatter: "{value}" },
+          axisLabel: { color: fg, fontSize: isCompact ? 10 : 11, formatter: "{value}" },
           splitLine: { lineStyle: { color: splitLine } },
           axisLine: { show: true, lineStyle: { color: axisLine } },
           axisTick: { show: false },
@@ -823,64 +840,67 @@ export function SentimentOverlay({
         {
           type: "value",
           name: "上证",
-          nameTextStyle: { color: "#475569", fontSize: 12 },
+          nameTextStyle: { color: "#475569", fontSize: isCompact ? 10 : 12 },
           gridIndex: 1,
           scale: true,
           position: "right",
           offset: 0,
           splitNumber: 3,
           axisLabel: {
+            show: showChrome,
             color: "#475569",
-            fontSize: 11,
+            fontSize: isCompact ? 9 : 11,
             formatter: "{value}",
           },
           splitLine: { show: false },
-          axisLine: { show: true, lineStyle: { color: "#94a3b8" } },
+          axisLine: { show: showChrome, lineStyle: { color: "#94a3b8" } },
           axisTick: { show: false },
         },
         {
           type: "value",
           name: "成交额(亿)",
-          nameTextStyle: { color: "#5470c6", fontSize: 12 },
+          nameTextStyle: { color: "#5470c6", fontSize: isCompact ? 10 : 12 },
           gridIndex: 2,
           min: 0,
           max: Math.ceil(maxAmountVisualFlow * 1.08),
           splitNumber: 4,
           position: "left",
-          offset: 42,
+          offset: sideOffset,
           axisLabel: {
+            show: showChrome,
             color: "#5470c6",
-            fontSize: 11,
+            fontSize: isCompact ? 9 : 11,
             formatter: (value: number) => formatAmountAxis(Number(value)),
-            margin: 6,
+            margin: 4,
           },
           axisPointer: {
             label: {
+              show: showChrome,
               formatter: (params: { value: number }) =>
                 `${formatAmountAxis(Number(params.value))}亿`,
             },
           },
           splitLine: { lineStyle: { color: "rgba(217,222,232,0.38)" } },
-          axisLine: { show: true, lineStyle: { color: "#5470c6" } },
+          axisLine: { show: showChrome, lineStyle: { color: "#5470c6" } },
           axisTick: { show: false },
         },
       ],
 
       dataZoom: [
         {
-          show: true,
+          show: showChrome,
           realtime: true,
           xAxisIndex: [0, 1, 2],
           start: effectiveZoomStart,
           end: effectiveZoomEnd,
-          height: 24,
-          bottom: 4,
+          height: isCompact ? 18 : 24,
+          bottom: isCompact ? 0 : 4,
           borderColor: "#dbe3f3",
           backgroundColor: "#f5f7fc",
           fillerColor: "rgba(151, 171, 232, 0.35)",
           handleStyle: { color: "#aab8df" },
           moveHandleStyle: { color: "#aab8df" },
-          textStyle: { color: fgLight, fontSize: 10 },
+          textStyle: { color: fgLight, fontSize: isCompact ? 9 : 10 },
           filterMode: "none",
         },
         {
@@ -1269,7 +1289,7 @@ export function SentimentOverlay({
           z: 3,
         },
       ],
-    }
+    } as unknown as EChartsOption
   }, [
     data,
     shOverlay,

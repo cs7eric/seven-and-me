@@ -92,8 +92,8 @@ export function SectorBreadthCard({ date }: { date: string | null }) {
           <SubCardSkeleton />
         ) : (
           <>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className={`text-3xl font-semibold tabular-nums max-sm:text-2xl ${tone}`}>
                 {advPct == null ? "—" : `${advPct.toFixed(1)}%`}
               </span>
               {data && (

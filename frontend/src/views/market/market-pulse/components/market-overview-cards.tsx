@@ -50,12 +50,12 @@ export function MarketOverviewCards({
 }: MarketOverviewCardsProps) {
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-xl font-semibold tracking-tight text-foreground">
             大盘成交额 / 主力净流入
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm leading-6 text-muted-foreground">
             全 A 实时成交 + 东方财富主力资金口径
             {/* 交易日 + (缓存) 标记: 上游 akshare 失败, latest.json 走归档 fallback
                 (source === "archived") 时显示, 提示数据不是当日新拉.
@@ -81,7 +81,7 @@ export function MarketOverviewCards({
               : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {onOpenManualDialog && (
             <Button
               variant={manualFundFlow ? "secondary" : "outline"}
@@ -240,8 +240,8 @@ export function MarketOverviewCards({
             )}
 
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-              <div className="grid gap-px bg-slate-200 lg:grid-cols-[1.15fr_1.15fr_0.7fr_0.7fr_0.7fr_0.7fr]">
-                <div className="bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3">
+              <div className="grid grid-cols-2 gap-px bg-slate-200 md:grid-cols-4 lg:grid-cols-[1.15fr_1.15fr_0.7fr_0.7fr_0.7fr_0.7fr]">
+                <div className="col-span-2 bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3 md:col-span-2 lg:col-span-1">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
                       <Waves className="size-3.5" />
@@ -275,7 +275,7 @@ export function MarketOverviewCards({
                   </div>
                 </div>
 
-                <div className="bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3">
+                <div className="col-span-2 bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3 md:col-span-2 lg:col-span-1">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
                       <Wallet className="size-3.5" />
@@ -371,7 +371,7 @@ export function MarketOverviewCards({
                   </div>
                 </div>
               </div>
-              <div className="grid gap-px border-t border-slate-200 bg-slate-200 md:grid-cols-4">
+              <div className="grid grid-cols-2 gap-px border-t border-slate-200 bg-slate-200 sm:grid-cols-4">
                 {[
                   { label: "超大单", value: display.superLargeNetInflow, diff: superLargeDiff },
                   { label: "大单", value: display.largeNetInflow, diff: largeDiff },

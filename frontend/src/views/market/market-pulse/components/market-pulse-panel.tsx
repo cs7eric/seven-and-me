@@ -121,8 +121,8 @@ export function MarketPulsePanel({
   return (
     <div>
       {/* 头部 */}
-      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-        <div>
+      <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <div className="text-base font-semibold text-slate-900">市场脉搏</div>
           <div className="mt-0.5 text-xs text-slate-500">
             成交额 · 涨跌温度 · 资金潮汐 · 资金结构
@@ -131,14 +131,14 @@ export function MarketPulsePanel({
         </div>
 
         {/* range tabs */}
-        <div className="flex items-center gap-1 rounded-full bg-slate-50 p-1">
+        <div className="flex w-full items-center gap-1 overflow-x-auto rounded-full bg-slate-50 p-1 sm:w-auto">
           {RANGE_TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setRange(tab.key)}
               className={[
-                "rounded-full px-3 py-1 text-xs transition",
+                "shrink-0 rounded-full px-3 py-1 text-xs transition",
                 range === tab.key
                   ? "bg-white font-semibold text-slate-900 shadow-sm"
                   : "text-slate-500 hover:text-slate-900",
@@ -151,15 +151,15 @@ export function MarketPulsePanel({
       </div>
 
       {/* view tabs + 刷新 */}
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-2">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex w-full gap-2 overflow-x-auto pb-1 sm:w-auto sm:flex-wrap sm:overflow-visible sm:pb-0">
           {VIEW_TABS.map((tab) => (
             <button
               key={tab.key}
               type="button"
               onClick={() => setView(tab.key)}
               className={[
-                "rounded-full px-3 py-1.5 text-xs font-medium transition",
+                "shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition",
                 view === tab.key
                   ? "bg-slate-900 text-white shadow-sm"
                   : "bg-slate-50 text-slate-500 hover:bg-slate-100 hover:text-slate-900",
@@ -191,7 +191,7 @@ export function MarketPulsePanel({
       )}
 
       {/* chart 容器: 固定 h-[360px] 让 ECharts 有稳定高度 */}
-      <div className="h-[360px] rounded-2xl border border-slate-100 bg-white">
+      <div className="h-[300px] rounded-2xl border border-slate-100 bg-white sm:h-[340px] lg:h-[360px]">
         {loading && !hasData ? (
           <div className="flex h-full w-full animate-pulse items-center justify-center text-xs text-slate-400">
             加载历史数据…

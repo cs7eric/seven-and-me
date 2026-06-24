@@ -29,8 +29,8 @@ export function ChartHeader({
   const title = target ? `${target.name} · ${target.symbol}` : selectedLabel || "请选择左侧目标"
   return (
     <Card className="rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-      <CardHeader className="px-3 pb-3 pt-4 sm:px-6">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      <CardHeader className="px-3 pb-3 pt-4 sm:px-4 2xl:px-6">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-start gap-3 sm:items-center">
             <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm">
               <Sparkles className="size-4" />
@@ -78,7 +78,7 @@ export function ChartHeader({
               ) : null}
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center xl:justify-end">
+          <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center lg:justify-end">
             <Select value={adjust} onValueChange={(value) => onAdjustChange(value as StockAdjust)}>
               <SelectTrigger className="h-8 w-full rounded-lg text-xs sm:w-28"><SelectValue /></SelectTrigger>
               <SelectContent>

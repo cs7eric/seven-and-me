@@ -693,10 +693,10 @@ export default function ApplicationAnalysisPage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis" fullBleed>
-      <div className="min-h-[calc(100svh-4rem)] w-full max-w-[100vw] overflow-x-hidden rounded-none border-0 bg-[#f6f7f9] p-2 sm:p-6 xl:h-[calc(100svh-4rem)] xl:overflow-hidden">
-        <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-4 xl:h-full xl:min-h-0 xl:grid-cols-[minmax(0,486px)_minmax(0,1fr)]">
+      <div className="min-h-[calc(100svh-4rem)] w-full max-w-[100vw] overflow-x-hidden rounded-none border-0 bg-[#f6f7f9] p-2 sm:p-4 2xl:p-6 lg:h-[calc(100svh-4rem)] lg:overflow-hidden">
+        <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,440px)_minmax(0,1fr)] 2xl:gap-4">
           {/* 左侧：信息辅助区 */}
-          <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-visible xl:h-full xl:overflow-y-auto">
+          <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-visible lg:h-full lg:overflow-y-auto 2xl:gap-4">
             <TargetCard
               targets={targets}
               searchKeyword={searchKeyword}
@@ -747,9 +747,9 @@ export default function ApplicationAnalysisPage() {
           <Tabs
             value={activeMainTab}
             onValueChange={(value) => setActiveMainTab(value as MainTab)}
-            className="flex min-w-0 flex-col gap-4 xl:h-full xl:min-h-0"
+            className="flex min-w-0 flex-col gap-3 lg:h-full lg:min-h-0 2xl:gap-4"
           >
-            <header className="flex min-h-0 shrink-0 flex-col gap-3">
+            <header className="flex min-h-0 shrink-0 flex-col gap-2 lg:gap-3">
               {/* 预览态 banner：从自选跳过来、还没加入 targets 时浮在最上方 */}
               {previewTarget ? (
                 <div className="flex flex-col gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-amber-800 sm:flex-row sm:items-center sm:px-4">
@@ -803,7 +803,7 @@ export default function ApplicationAnalysisPage() {
               />
 
               {/* Tab 栏 */}
-              <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] md:flex-row md:items-center md:justify-between md:gap-3">
                 <div className="min-w-0 overflow-x-auto">
                 <TabsList className="min-w-max">
                   <TabsTrigger value="chart">图表</TabsTrigger>
@@ -825,10 +825,10 @@ export default function ApplicationAnalysisPage() {
             </header>
 
             {/* 主内容区：填充剩余高度 */}
-            <main className="min-w-0 xl:min-h-0 xl:flex-1 xl:overflow-hidden">
+            <main className="min-w-0 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
               <TabsContent
                 value="chart"
-                className="m-0 min-w-0 xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:overflow-hidden"
+                className="m-0 min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
               >
                 {displayedTarget ? (
                   <ChartCard
@@ -848,7 +848,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="ai-direction"
-                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
+                className="m-0 min-w-0 lg:h-full lg:min-h-0 lg:overflow-auto"
               >
                 {previewTarget ? (
                   <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-500">
@@ -869,7 +869,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="analysis"
-                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
+                className="m-0 min-w-0 lg:h-full lg:min-h-0 lg:overflow-auto"
               >
                 {previewTarget ? (
                   <div className="flex h-full items-center justify-center p-8 text-center text-sm text-slate-500">
@@ -882,7 +882,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="auction"
-                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
+                className="m-0 min-w-0 lg:h-full lg:min-h-0 lg:overflow-auto"
               >
                 {displayedTarget ? (
                   <AuctionTab
@@ -896,7 +896,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="ma-support"
-                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
+                className="m-0 min-w-0 lg:h-full lg:min-h-0 lg:overflow-auto"
               >
                 {displayedTarget ? (
                   <TechnicalIndicatorTab
@@ -911,7 +911,7 @@ export default function ApplicationAnalysisPage() {
 
               <TabsContent
                 value="fund-flow"
-                className="m-0 min-w-0 xl:h-full xl:min-h-0 xl:overflow-auto"
+                className="m-0 min-w-0 lg:h-full lg:min-h-0 lg:overflow-auto"
               >
                 {displayedTarget ? (
                   <FundFlowTab

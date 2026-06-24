@@ -47,7 +47,7 @@ export default function MarketSentimentPage() {
         </div>
 
         {/* 右侧 1/6: 9 张子卡竖列 (滚动) */}
-        <div className="grid gap-3 grid-cols-1 min-w-0 min-h-0 overflow-y-auto pr-1">
+        <div className="grid grid-cols-1 gap-3 min-w-0 min-h-0 overflow-visible pr-0 md:overflow-y-auto md:pr-1">
           <RiskAppetiteCard date={date} />
           <MarketBreadthCard date={date} />
           <NewHigh252dCard date={date} />

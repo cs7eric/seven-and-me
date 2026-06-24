@@ -71,8 +71,8 @@ export function LimitEmotionCard({ date }: { date: string | null }) {
           <SubCardSkeleton />
         ) : (
           <>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-3xl font-semibold tabular-nums ${meta.tone}`}>
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className={`text-3xl font-semibold tabular-nums max-sm:text-2xl ${meta.tone}`}>
                 {composite == null ? "—" : composite.toFixed(1)}
               </span>
               <span className="text-xs text-muted-foreground">综合分</span>
@@ -87,7 +87,7 @@ export function LimitEmotionCard({ date }: { date: string | null }) {
             </div>
 
             {data && (
-              <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <SubMetric
                   title="涨跌停比"
                   value={`${data.limitUpCount}/${Math.max(data.limitDownCount, 1)}`}

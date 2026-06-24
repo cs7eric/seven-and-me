@@ -79,8 +79,8 @@ export function NewHigh252dCard({ date }: { date: string | null }) {
           <div className="py-3 text-sm text-muted-foreground">暂无数据</div>
         ) : (
           <>
-            <div className="flex items-baseline gap-2">
-              <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className={`text-3xl font-semibold tabular-nums max-sm:text-2xl ${tone}`}>
                 {score.toFixed(1)}
               </span>
               <span className="text-xs text-muted-foreground">/ 100 · 历史分位</span>

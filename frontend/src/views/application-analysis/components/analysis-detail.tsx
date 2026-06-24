@@ -20,7 +20,7 @@ export function AnalysisDetail({
   return (
     <div className="min-w-0 space-y-4">
       {trendEntries.length ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {trendEntries.map(([key, value]) => (
             <TrendBlock key={key} title={`段 ${key.replace("segment_", "")} 趋势`} data={asRecord(value)} />
           ))}
@@ -32,7 +32,7 @@ export function AnalysisDetail({
           <CardTitle>结构摘要</CardTitle>
           <CardDescription>仅展示 AI JSON 中的摘要字段，不额外编造结论。</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-2">
+        <CardContent className="grid gap-3 md:grid-cols-2">
           <SummaryList title="主要支撑" tone="success" items={textList(summary.main_support)} />
           <SummaryList title="主要压力" tone="danger" items={textList(summary.main_resistance)} />
           <SummaryList title="主要风险" tone="danger" items={textList(summary.main_risks)} />

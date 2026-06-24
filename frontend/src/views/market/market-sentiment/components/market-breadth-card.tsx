@@ -101,8 +101,8 @@ export function MarketBreadthCard({ date }: { date: string | null }) {
         ) : (
           <div className="space-y-3">
             {/* 综合得分 */}
-            <div className="flex items-baseline gap-3">
-              <span className={`text-3xl font-semibold tabular-nums ${tone}`}>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className={`text-3xl font-semibold tabular-nums max-sm:text-2xl ${tone}`}>
                 {composite.toFixed(1)}
               </span>
               <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium ${levelBadge}`}>
@@ -113,18 +113,18 @@ export function MarketBreadthCard({ date }: { date: string | null }) {
             {/* 子项 */}
             <div className="space-y-1.5">
               {rows.map((r) => (
-                <div key={r.label} className="flex items-center gap-2 text-xs">
-                  <span className="w-16 text-muted-foreground">{r.label}</span>
+                <div key={r.label} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                  <span className="w-16 shrink-0 text-muted-foreground">{r.label}</span>
                   <div className="flex-1 h-2 rounded-full bg-muted/30 overflow-hidden">
                     <div
                       className="h-full rounded-full bg-foreground/20 transition-all"
                       style={{ width: `${Math.min(r.pct, 100)}%` }}
                     />
                   </div>
-                  <span className="w-12 text-right tabular-nums text-foreground/80">
+                  <span className="w-12 shrink-0 text-right tabular-nums text-foreground/80">
                     {r.pct.toFixed(1)}%
                   </span>
-                  <span className="w-8 text-right text-muted-foreground">{r.weight}%</span>
+                  <span className="w-8 shrink-0 text-right text-muted-foreground">{r.weight}%</span>
                 </div>
               ))}
             </div>
@@ -140,7 +140,7 @@ export function MarketBreadthCard({ date }: { date: string | null }) {
             </div>
 
             {/* 等级说明 */}
-            <div className="flex gap-3 text-[10px] text-muted-foreground">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
               <span className="text-red-600/70">≥70 强势</span>
               <span className="text-amber-600/70">40-70 中性</span>
               <span className="text-emerald-600/70">＜40 弱势</span>
