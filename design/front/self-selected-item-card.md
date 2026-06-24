@@ -2,6 +2,20 @@
 
 本文档是 `Self-Selected` 股票卡片的前端维护入口。后续如果修改卡片样式、信息层级、交互反馈或跳转行为，先读本文，再改代码；改完后同步更新本文。
 
+## 数据源 / API
+
+- groups / items
+  - `/api/self-selected/groups`
+  - `/api/self-selected/items`
+- target 联动
+  - `/api/stock-chart/application-analysis/targets`
+- 板块归属
+  - `/api/stock-chart/f10/stock-sectors`
+
+## 后端联动设计
+
+- `design/backend/application-analysis-target-sync.md`
+
 ## 目标
 
 当前 `Self-Selected` 页面会承载大量股票条目，卡片设计的重点不是做重，而是让用户在高密度列表里更快完成四件事：

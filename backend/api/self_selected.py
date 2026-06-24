@@ -5,6 +5,10 @@
 - item: 分类下的具体股票
 - 全部数据落盘到 Postgres, 走 :mod:`backend.repositories.stock.self_selected_db_repo`
 
+维护前请先看:
+- `F:\dev-repo\mp4-to-word-new\design\backend\self-selected-postgres-migration.md`
+- `F:\dev-repo\mp4-to-word-new\design\backend\application-analysis-target-sync.md`
+
 接口路径 / method / 响应字段全部跟旧 JSON 版对齐, 前端不用改.
 
 约定:

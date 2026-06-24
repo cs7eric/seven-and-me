@@ -4,6 +4,10 @@
 展示每个 job 的实时调度器状态、配置 + 上次运行情况，并提供 enable / disable / trigger /
 start / stop 五个动作。
 
+维护前请先看:
+- `F:\dev-repo\mp4-to-word-new\design\backend\index.md`
+- `F:\dev-repo\mp4-to-word-new\design\backend\scheduler-registry-runtime.md`
+
 约定：
 - ``app.scheduler_jobs`` 是 job 注册表，所有 job 元数据 + 配置 (extra JSONB) 都在这里
 - enable / disable 通过改写对应 job 的 ``extra`` JSONB 中的 ``enabled`` 字段 + ``is_enabled`` 列实现

@@ -1,4 +1,10 @@
 /**
+ * Design entry:
+ * - Data/API: industry-application targets/target-codes/kline/results/refresh + market heatmap
+ * - Front design: design/front/industry-application.md
+ * - Change rule: review design before edits; sync design if page responsibility, API usage, or target flow changes.
+ */
+/**
  * 行业 / 概念 应用面分析
  *
  * 布局与 application-analysis 1:1 对齐：左侧 target 列表，右侧顶部 ChartHeader + 6 个 Tab。

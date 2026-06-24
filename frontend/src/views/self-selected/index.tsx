@@ -1,3 +1,10 @@
+/**
+ * Design entry:
+ * - Data/API: self-selected groups/items + application-analysis targets + stock sectors
+ * - Front design: design/front/self-selected-item-card.md
+ * - Backend design: design/backend/application-analysis-target-sync.md
+ * - Change rule: review design before edits; sync design if target sync, card hierarchy, or API flow changes.
+ */
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Star, Trash2 } from "lucide-react"
 import { notification } from "@/components/ui/notification"

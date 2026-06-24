@@ -1,3 +1,10 @@
+/**
+ * Design entry:
+ * - Data/API: mp4-history list/detail/ask-history
+ * - Front design: design/front/mp4-to-word.md
+ * - Backend design: design/backend/mp4-history-reference-flow.md
+ * - Change rule: review design before edits; sync design if history storage, detail fields, or ask flow changes.
+ */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft, FileText, Search } from "lucide-react";

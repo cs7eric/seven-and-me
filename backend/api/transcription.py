@@ -1,3 +1,12 @@
+"""Transcription / remote parse / SSE API.
+
+维护前请先看:
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\index.md`
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\transcription-runtime-flow.md`
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\mp4-history-reference-flow.md`
+
+这里负责实时任务入口、任务态查询、SSE 推送和 markdown 导出。
+"""
 import json
 import time
 import uuid

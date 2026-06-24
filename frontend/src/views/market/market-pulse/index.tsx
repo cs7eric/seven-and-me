@@ -1,4 +1,11 @@
 /**
+ * Design entry:
+ * - Data/API: market overview akshare/eltdx, pulse history, style sectors, heatmap, limit emotion, manual fund flow
+ * - Front design: design/front/infra/market-pulse.detail.md
+ * - Index doc: design/front/index.md
+ * - Change rule: review design before edits; sync design if source priority, API usage, or module split changes.
+ */
+/**
  * Market Pulse 主页面 (当前启用页面).
  *
  * 数据源说明:

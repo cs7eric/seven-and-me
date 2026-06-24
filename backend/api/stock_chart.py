@@ -1,3 +1,16 @@
+"""Stock Chart aggregation API.
+
+维护前请先看:
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\index.md`
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\stock-chart-api-aggregation.md`
+
+这里是前端多个业务页共用的聚合入口：
+- stock-chart 基础图表 / workspace / annotation
+- application-analysis
+- market overview / market pulse / heatmap / limit emotion
+
+如果要继续新增能力，优先确认是否应该拆到独立 blueprint，而不是继续把逻辑堆进本文件。
+"""
 from datetime import datetime, timedelta
 from typing import Any
 

@@ -2,6 +2,7 @@
 
 维护前请先看:
 `F:\dev-repo\mp4-to-word-new\design\backend\self-selected-postgres-migration.md`
+`F:\dev-repo\mp4-to-word-new\design\backend\application-analysis-target-sync.md`
 """
 from __future__ import annotations
 

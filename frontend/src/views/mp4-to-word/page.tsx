@@ -1,3 +1,10 @@
+/**
+ * Design entry:
+ * - Data/API: transcribe, parse-video, task snapshot, SSE stream, mp4-history
+ * - Front design: design/front/mp4-to-word.md
+ * - Backend design: design/backend/mp4-history-reference-flow.md
+ * - Change rule: review design before edits; sync design if remote intake, SSE, or history flow changes.
+ */
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import type { Phase, PostMetadata, SSEEvent, TransferProgress } from "../../lib/types";

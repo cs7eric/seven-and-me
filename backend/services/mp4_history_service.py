@@ -1,3 +1,10 @@
+"""MP4 history reference service.
+
+维护前请先看:
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\mp4-history-reference-flow.md`
+
+这里负责把 runtime task snapshot 导出到 reference 历史索引，并维护 Ask AI 附加记录。
+"""
 import time
 from datetime import datetime
 

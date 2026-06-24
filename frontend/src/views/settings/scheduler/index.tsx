@@ -1,4 +1,11 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react"
+﻿/**
+ * Design entry:
+ * - Data/API: scheduler jobs/categories/daily-stats/history + enable/disable/start/stop/trigger/delete actions
+ * - Front design: design/front/settings-scheduler.md
+ * - Backend design: design/backend/scheduler-registry-runtime.md
+ * - Change rule: review design before edits; sync design if registry/live status/action contract changes.
+ */
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { cn } from "@/lib/utils"
 import {
   Activity,

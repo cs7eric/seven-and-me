@@ -2,6 +2,7 @@ r"""Application Analysis target sync service.
 
 维护前请先看:
 `F:\dev-repo\mp4-to-word-new\design\backend\application-analysis-target-postgres-migration.md`
+`F:\dev-repo\mp4-to-word-new\design\backend\application-analysis-target-sync.md`
 
 这里负责:
 - application-analysis targets 的 Postgres 读写

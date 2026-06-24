@@ -1,4 +1,11 @@
 /**
+ * Design entry:
+ * - Data/API: market-sentiment-index + nine factor cards with snapshot/history endpoints
+ * - Front design: design/front/market-sentiment.md
+ * - Backend design: design/backend/market-sentiment-pipeline.md
+ * - Change rule: review design before edits; sync design if factor set, date linkage, or API composition changes.
+ */
+/**
  * Market Sentiment 页面入口
  *
  * 顶部 1 张 composite 大卡 + 9 张子卡:

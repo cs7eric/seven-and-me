@@ -1,3 +1,11 @@
+"""Transcription runtime service.
+
+维护前请先看:
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\transcription-runtime-flow.md`
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\mp4-history-reference-flow.md`
+
+这里负责本地/远程文件进入 runtime_store 后的下载、转音频、转写、polish、summary。
+"""
 import subprocess
 import time
 from pathlib import Path

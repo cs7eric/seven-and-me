@@ -1,3 +1,10 @@
+/**
+ * Design entry:
+ * - Data/API: stock-chart search/klines/workspace/annotations/auction/stock-meta/market-breadth
+ * - Front design: design/front/stock-chart.md
+ * - Detail design: design/front/intraday-bs-marker.md
+ * - Change rule: review design before edits; sync design if annotation/workspace/BS-point flow changes.
+ */
 import { useEffect, useMemo, useState } from "react"
 
 import { Eye, EyeOff, Plus, X, Trash2 } from "lucide-react"

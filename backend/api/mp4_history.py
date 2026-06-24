@@ -1,3 +1,11 @@
+"""MP4 history / reference API.
+
+维护前请先看:
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\index.md`
+- `F:\\dev-repo\\mp4-to-word-new\\design\\backend\\mp4-history-reference-flow.md`
+
+这里负责把实时任务导出到 reference 历史索引，并提供列表、详情、删除、Ask AI。
+"""
 from flask import Blueprint, jsonify, request
 
 from backend.services.mp4_history_service import (

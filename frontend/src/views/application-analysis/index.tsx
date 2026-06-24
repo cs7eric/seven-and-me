@@ -1,3 +1,10 @@
+/**
+ * Design entry:
+ * - Data/API: application-analysis targets, results, scheduler, stock-chart klines/intraday/annotations/auction
+ * - Front design: design/front/application-analysis.md
+ * - Backend design: design/backend/application-analysis-target-sync.md
+ * - Change rule: modify code only after reviewing design; sync design if data flow/API/module responsibility changes.
+ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { Eye, Plus } from "lucide-react"

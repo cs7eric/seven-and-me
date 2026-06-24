@@ -1,4 +1,11 @@
-﻿import { useState } from "react"
+﻿/**
+ * Design entry:
+ * - Data/API: downloader parse endpoint + remote handoff to mp4-to-word
+ * - Front design: design/front/downloader.md
+ * - Related design: design/front/mp4-to-word.md
+ * - Change rule: review design before edits; sync design if parse result fields or handoff flow changes.
+ */
+import { useState } from "react"
 import { Loader2, Send, Video } from "lucide-react"
 import { useNavigate } from "react-router-dom"
 

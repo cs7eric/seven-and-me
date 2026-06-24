@@ -1,3 +1,9 @@
+/**
+ * Design entry:
+ * - Data/API: market-overview composite response
+ * - Front design: design/front/stock-overview.md
+ * - Change rule: review design before edits; sync design if response structure or panel responsibilities change.
+ */
 import { useEffect, useMemo, useState } from "react"
 import { Activity, AlertTriangle, BarChart3, CheckCircle2, LineChart, RefreshCw, ShieldAlert, Target, TrendingUp, Zap } from "lucide-react"
 
