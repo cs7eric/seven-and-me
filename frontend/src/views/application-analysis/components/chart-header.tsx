@@ -1,10 +1,11 @@
-import { Clock, RefreshCw, Sparkles } from "lucide-react"
+import { Clock, RefreshCw, Sparkles, TrendingUp } from "lucide-react"
 
 import type { ApplicationAnalysisTarget } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useIsMobile } from "@/hooks/use-mobile"
 import type { StockAdjust } from "../../stock-chart/lib/types"
 
 export function ChartHeader({
@@ -26,21 +27,25 @@ export function ChartHeader({
   onTrigger: () => void
   onManualRun: () => void
 }) {
+  const isMobile = useIsMobile()
   const title = target ? `${target.name} · ${target.symbol}` : selectedLabel || "请选择左侧目标"
   return (
-    <Card className="rounded-none border-x-0 border-t-0 border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04)] sm:rounded-2xl sm:border-x sm:border-t sm:shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-      <CardHeader className="px-3 pb-2.5 pt-3 sm:px-4 sm:pb-3 sm:pt-4 2xl:px-6">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-2.5 sm:items-center sm:gap-3">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm sm:size-9">
-              <Sparkles className="size-3.5 sm:size-4" />
-            </div>
-            <div className="min-w-0 space-y-1">
-              <CardTitle className="break-words text-base font-semibold text-slate-950 sm:truncate sm:text-lg">
-                {title}
+    <Card className="rounded-none border-x-0 border-t-0 border-slate-200/80 bg-white py-2 shadow-[0_1px_0_rgba(15,23,42,0.04)] sm:rounded-2xl sm:border-x sm:border-t sm:py-6 sm:shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
+      <CardHeader className="px-3 pt-1.5 pb-2 sm:px-4 sm:pt-0 sm:pb-3 2xl:px-6">
+        <div className="flex flex-row items-center gap-2 lg:justify-between">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {!isMobile ? (
+              <div className="flex size-7 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm sm:size-9">
+                <Sparkles className="size-3 sm:size-4" />
+              </div>
+            ) : null}
+            <div className="min-w-0 space-y-0.5">
+              <CardTitle className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold text-slate-950 sm:text-lg">
+                <TrendingUp className="size-3.5 shrink-0 text-slate-500 sm:size-4" />
+                <span className="truncate">{title}</span>
               </CardTitle>
               {target ? (
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
+                <div className="hidden items-center gap-x-1.5 gap-y-1 text-[10px] text-slate-500 sm:flex sm:text-[11px]">
                   <span className="inline-flex items-center gap-1">
                     <Clock className="size-3" />
                     <span>每 {target.interval_minutes} 分钟</span>
@@ -78,31 +83,35 @@ export function ChartHeader({
               ) : null}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center lg:justify-end">
+          <div className="grid shrink-0 grid-cols-2 items-stretch gap-1.5 sm:grid-cols-3 lg:justify-end">
             <Select value={adjust} onValueChange={(value) => onAdjustChange(value as StockAdjust)}>
-              <SelectTrigger className="h-9 w-full rounded-xl text-xs sm:h-8 sm:w-28 sm:rounded-lg"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="hidden h-7 w-full justify-center rounded-xl px-1.5 text-center text-[10px] leading-none text-slate-900 [&>svg:last-child]:hidden sm:flex sm:w-28 sm:rounded-lg sm:px-3 sm:text-xs sm:[&>svg:last-child]:inline-flex">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
-                <SelectItem value="qfq">前复权</SelectItem>
-                <SelectItem value="none">不复权</SelectItem>
-                <SelectItem value="hfq">后复权</SelectItem>
+                <SelectItem value="qfq">Forward</SelectItem>
+                <SelectItem value="none">Raw</SelectItem>
+                <SelectItem value="hfq">Backward</SelectItem>
               </SelectContent>
             </Select>
             <Button
-              className="h-9 w-full rounded-xl bg-slate-950 px-3 text-xs text-white hover:bg-slate-800 sm:h-8 sm:w-auto sm:rounded-lg"
+              className="h-6 w-full justify-center rounded-xl bg-secondary px-1 text-[9px] leading-none text-center text-secondary-foreground hover:bg-secondary/90 [&>svg]:hidden sm:h-7 sm:w-auto sm:rounded-lg sm:px-3 sm:text-xs sm:[&>svg]:inline-flex"
               onClick={onTrigger}
               disabled={!canRun || running}
+              variant="secondary"
             >
-              <RefreshCw className={`mr-1.5 size-3.5 ${running ? "animate-spin" : ""}`} />
-              <span className="sm:hidden">刷新</span>
-              <span className="hidden sm:inline">120 日 / 4 段刷新</span>
+              <RefreshCw className={`mr-1 size-3 ${running ? "animate-spin" : ""}`} />
+              <span className="max-lg:hidden">120D / 4S Refresh</span>
+              <span className="lg:hidden">Refresh</span>
             </Button>
             <Button
-              className="h-9 w-full rounded-xl px-3 text-xs sm:h-8 sm:w-auto sm:rounded-lg"
+              className="h-6 w-full justify-center rounded-xl px-1 text-[9px] leading-none text-center sm:h-7 sm:w-auto sm:rounded-lg sm:px-3 sm:text-xs"
               variant="outline"
               onClick={onManualRun}
               disabled={!canRun || running}
             >
-              手动单次
+              <span className="max-lg:hidden">Manual Run</span>
+              <span className="lg:hidden">Once</span>
             </Button>
           </div>
         </div>

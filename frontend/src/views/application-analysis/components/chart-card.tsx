@@ -16,6 +16,7 @@ export function ChartCard({
   onSelectionChange,
   onAnalyzeSelection,
   loadingBars,
+  mobileCompact = false,
 }: {
   collapsed: boolean
   onToggle: () => void
@@ -27,6 +28,7 @@ export function ChartCard({
   onSelectionChange: (items: ChartPanelSelectionItem[]) => void
   onAnalyzeSelection: (item: ChartPanelSelectionItem) => void
   loadingBars: boolean
+  mobileCompact?: boolean
 }) {
   const [showMobileHint, setShowMobileHint] = useState(true)
 
@@ -45,11 +47,11 @@ export function ChartCard({
       collapsed={collapsed}
       onToggle={onToggle}
     >
-      <div className="relative -mx-1 h-[58svh] max-h-[520px] min-h-[360px] max-w-full overflow-hidden sm:h-[460px] lg:h-full lg:max-h-none lg:min-h-0 lg:flex-1">
+      <div className={`relative -mx-1 max-w-full overflow-hidden ${mobileCompact ? "h-[50svh] min-h-[300px]" : "h-[54svh] min-h-[340px]"} max-h-[520px] sm:h-[440px] lg:h-full lg:max-h-none lg:min-h-0 lg:flex-1`}>
         {showMobileHint ? (
           <button
             type="button"
-            className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur sm:hidden"
+            className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur lg:hidden"
             onClick={() => setShowMobileHint(false)}
           >
             可横向拖动 / 点选 K 柱
@@ -71,6 +73,7 @@ export function ChartCard({
           selectedBarTimestamps={selectedBarTimestamps}
           onSelectionChange={onSelectionChange}
           onAnalyzeSelection={onAnalyzeSelection}
+          mobileCompact={mobileCompact}
         />
       </div>
     </CollapsibleCard>

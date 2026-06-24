@@ -18,7 +18,7 @@ export function NotApplicableCard({
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 p-6 text-sm text-slate-500">
+        <div className="rounded-none border border-dashed border-slate-300 bg-slate-50/70 p-6 text-sm text-slate-500 sm:rounded-2xl">
           {description}
         </div>
       </CardContent>

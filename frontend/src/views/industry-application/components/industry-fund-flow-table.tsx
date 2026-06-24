@@ -63,16 +63,18 @@ const COLUMNS: Array<{
   label: string
   align?: "left" | "right" | "center"
   width?: string
+  colWidth?: string
   sortable?: SortKey
   format?: (row: IndustryFundFlowRow) => React.ReactNode
 }> = [
-  { key: "序号", label: "#", align: "center", width: "w-12" },
-  { key: "行业", label: "行业", align: "left", width: "min-w-[120px]" },
+  { key: "序号", label: "#", align: "center", width: "w-12", colWidth: "48px" },
+  { key: "行业", label: "行业", align: "left", width: "min-w-[120px]", colWidth: "150px" },
   {
     key: "sortable",
     label: "行业指数涨跌幅",
     align: "right",
     width: "w-32",
+    colWidth: "150px",
     sortable: "行业指数涨跌幅",
     format: (r) => formatPercent(r["行业指数涨跌幅"]),
   },
@@ -81,6 +83,7 @@ const COLUMNS: Array<{
     label: "流入资金(亿)",
     align: "right",
     width: "w-28",
+    colWidth: "128px",
     sortable: "流入资金(亿)",
     format: (r) => formatYi(r["流入资金(亿)"]),
   },
@@ -89,6 +92,7 @@ const COLUMNS: Array<{
     label: "流出资金(亿)",
     align: "right",
     width: "w-28",
+    colWidth: "128px",
     sortable: "流出资金(亿)",
     format: (r) => formatYi(r["流出资金(亿)"]),
   },
@@ -97,6 +101,7 @@ const COLUMNS: Array<{
     label: "净额(亿)",
     align: "right",
     width: "w-28",
+    colWidth: "120px",
     sortable: "净额(亿)",
     format: (r) => formatNet(r["净额(亿)"]),
   },
@@ -105,14 +110,16 @@ const COLUMNS: Array<{
     label: "公司家数",
     align: "right",
     width: "w-20",
+    colWidth: "96px",
     format: (r) => formatInt(r["公司家数"]),
   },
-  { key: "领涨股", label: "领涨股", align: "left", width: "min-w-[100px]" },
+  { key: "领涨股", label: "领涨股", align: "left", width: "min-w-[100px]", colWidth: "130px" },
   {
     key: "sortable",
     label: "领涨股涨跌幅",
     align: "right",
     width: "w-28",
+    colWidth: "140px",
     sortable: "领涨股涨跌幅",
     format: (r) => formatPercent(r["领涨股涨跌幅"]),
   },
@@ -121,6 +128,7 @@ const COLUMNS: Array<{
     label: "当前价(元)",
     align: "right",
     width: "w-24",
+    colWidth: "108px",
     format: (r) => formatPrice(r["当前价(元)"]),
   },
 ]
@@ -276,35 +284,36 @@ export function IndustryFundFlowTable() {
   }
 
   return (
-    <Card className="flex h-full min-h-0 flex-col rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-      <CardHeader className="shrink-0 border-b border-slate-100">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+    <Card className="flex h-full min-h-0 flex-col rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
+      <CardHeader className="shrink-0 border-b border-slate-100 px-3 py-3 sm:px-6 sm:py-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Building2 className="size-4 text-slate-600" />
-              同花顺全行业主力资金
+            <CardTitle className="flex min-w-0 items-center gap-2 text-sm sm:text-base">
+              <Building2 className="size-4 shrink-0 text-slate-600" />
+              <span className="min-w-0 truncate">同花顺全行业主力资金</span>
               {data?.stale ? (
-                <Badge variant="outline" className="ml-1 border-amber-300 bg-amber-50 text-amber-700">
+                <Badge variant="outline" className="ml-1 shrink-0 border-amber-300 bg-amber-50 text-amber-700">
                   快照回退
                 </Badge>
               ) : null}
             </CardTitle>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-              <span>
-                数据源: <code className="rounded bg-slate-100 px-1">data.10jqka.com.cn/funds/hyzjl/cate/3</code>
+            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-5 text-slate-500 sm:flex sm:flex-wrap sm:items-center sm:text-xs">
+              <span className="col-span-2 min-w-0 sm:col-span-1">
+                <span>数据源: </span>
+                <code className="rounded bg-slate-100 px-1 text-[10px] sm:text-xs">data.10jqka.com.cn/funds/hyzjl/cate/3</code>
               </span>
-              <span>·</span>
-              <span>
+              <span className="hidden sm:inline">·</span>
+              <span className="min-w-0">
                 交易日: <span className="text-slate-700">{data?.tradeDate || "—"}</span>
               </span>
-              <span>·</span>
-              <span>
+              <span className="hidden sm:inline">·</span>
+              <span className="min-w-0">
                 抓取时间: <span className="text-slate-700">{formatFetchedAt(data?.fetchedAt)}</span>
               </span>
               {data?.totalPages ? (
                 <>
-                  <span>·</span>
-                  <span>
+                  <span className="hidden sm:inline">·</span>
+                  <span className="col-span-2 sm:col-span-1">
                     共 {data.totalPages} 页 · {data.rowCount ?? data.rows.length} 个行业
                   </span>
                 </>
@@ -317,14 +326,14 @@ export function IndustryFundFlowTable() {
             ) : null}
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 text-xs">
+          <div className="flex w-full items-center gap-2 sm:w-auto sm:flex-wrap">
+            <div className="grid min-w-0 flex-1 grid-cols-4 rounded-xl border border-slate-200 bg-white p-0.5 text-xs sm:flex sm:flex-none sm:items-center">
               {TOP_OPTIONS.map((opt) => (
                 <button
                   key={String(opt.value)}
                   onClick={() => setTop(opt.value)}
                   className={cn(
-                    "rounded-lg px-2.5 py-1 transition",
+                    "rounded-lg px-2 py-1 text-center transition sm:px-2.5",
                     top === opt.value
                       ? "bg-slate-950 text-white"
                       : "text-slate-600 hover:bg-slate-100",
@@ -337,7 +346,7 @@ export function IndustryFundFlowTable() {
             <Button
               size="sm"
               variant="outline"
-              className="h-8 gap-1.5"
+              className="h-8 shrink-0 gap-1.5"
               onClick={() => void load(true)}
               disabled={refreshing || loading}
             >
@@ -357,7 +366,12 @@ export function IndustryFundFlowTable() {
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full text-sm">
+            <table className="min-w-[1198px] table-fixed text-sm">
+              <colgroup>
+                {COLUMNS.map((col) => (
+                  <col key={col.label} style={{ width: col.colWidth }} />
+                ))}
+              </colgroup>
               <thead className="sticky top-0 z-10 bg-slate-50 text-xs uppercase text-slate-500 shadow-[0_1px_0_rgba(15,23,42,0.06)]">
                 <tr>
                   {COLUMNS.map((col) => {
@@ -372,6 +386,7 @@ export function IndustryFundFlowTable() {
                           col.align === "center" && "text-center",
                           col.align === "left" && "text-left",
                           isSort && "cursor-pointer select-none hover:text-slate-700",
+                          col.width,
                         )}
                         onClick={isSort ? () => onHeaderClick(col.sortable as SortKey) : undefined}
                       >
@@ -427,6 +442,7 @@ export function IndustryFundFlowTable() {
                                 col.align === "right" && "text-right",
                                 col.align === "center" && "text-center",
                                 col.align === "left" && "text-left",
+                                col.width,
                               )}
                             >
                               {col.format(row)}

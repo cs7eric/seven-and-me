@@ -210,32 +210,32 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   }, [dialogOpen, job.id, pending])
 
   return (
-    <Card className="mb-4 max-w-full break-inside-avoid border-0 bg-muted/60 shadow-none">
+    <Card className="mb-4 max-w-full overflow-hidden break-inside-avoid border-0 bg-muted/60 shadow-none">
       {/* 列表项: 点击打开 dialog 查看详情 */}
       <CardHeader
-        className="cursor-pointer select-none py-0 transition-colors hover:bg-muted/30"
+        className="cursor-pointer select-none px-3 py-0 transition-colors hover:bg-muted/30 sm:px-6"
         onClick={() => setDialogOpen(true)}
       >
-        <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
+        <div className="flex min-w-0 flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Settings2 className="size-4 shrink-0 text-muted-foreground" />
-            <CardTitle className="truncate text-base font-medium">{job.name}</CardTitle>
+            <CardTitle className="min-w-0 truncate text-base font-medium">{job.name}</CardTitle>
           </div>
           <div
-            className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center"
+            className="flex min-w-0 flex-nowrap items-center gap-1.5 sm:flex-wrap sm:gap-2"
             onClick={(e) => e.stopPropagation()}
           >
             {/* 启用状态 */}
             {job.supports_enable ? (
-              <Badge variant={job.config_enabled ? "outline" : "destructive"}>
+              <Badge className="max-w-[4rem] shrink px-1 text-[10px] sm:max-w-full sm:shrink-0 sm:px-2 sm:text-xs" variant={job.config_enabled ? "outline" : "destructive"}>
                 {job.config_enabled ? "已启用" : "已禁用"}
               </Badge>
             ) : null}
             {/* 运行状态 */}
             {isRunning ? (
-              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30">运行中</Badge>
+              <Badge variant="secondary" className="max-w-[4rem] shrink border-emerald-500/30 bg-emerald-500/10 px-1 text-[10px] text-emerald-600 sm:max-w-full sm:shrink-0 sm:px-2 sm:text-xs">运行中</Badge>
             ) : (
-              <Badge variant="secondary">已停止</Badge>
+              <Badge variant="secondary" className="max-w-[4rem] shrink px-1 text-[10px] sm:max-w-full sm:shrink-0 sm:px-2 sm:text-xs">已停止</Badge>
             )}
             {/* 启用/停用按钮 */}
             {job.supports_enable ? (
@@ -243,7 +243,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <Button
                   size="sm"
                   variant="outline"
-                  className="w-full rounded-xl sm:w-auto"
+                  className="h-7 shrink-0 rounded-xl px-1.5 text-[11px] sm:h-8 sm:w-auto sm:px-2.5 sm:text-sm"
                   disabled={isActionPending("disable")}
                   onClick={() => onAction(job.id, "disable")}
                 >
@@ -254,7 +254,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
                 <Button
                   size="sm"
                   variant="default"
-                  className="w-full rounded-xl sm:w-auto"
+                  className="h-7 shrink-0 rounded-xl px-1.5 text-[11px] sm:h-8 sm:w-auto sm:px-2.5 sm:text-sm"
                   disabled={isActionPending("enable")}
                   onClick={() => onAction(job.id, "enable")}
                 >
@@ -267,7 +267,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
             <Button
               size="sm"
               variant="secondary"
-              className="w-full rounded-xl sm:w-auto"
+              className="h-7 shrink-0 rounded-xl px-1.5 text-[11px] sm:h-8 sm:w-auto sm:px-2.5 sm:text-sm"
               disabled={isActionPending("trigger")}
               onClick={() => onAction(job.id, "trigger")}
             >
@@ -996,7 +996,7 @@ export default function SchedulerSettingsPage() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-3 gap-2 sm:gap-3">
         <SummaryCard
           icon={<ListChecks className="size-4" />}
           label="注册任务"
@@ -1181,7 +1181,7 @@ function JobsGrid({
 }) {
   if (jobs.length === 0) return <>{emptyState}</>
   return (
-    <div className="max-w-full columns-1 gap-4 md:columns-2 2xl:columns-3">
+    <div className="max-h-[52vh] max-w-full overflow-y-auto pr-1 md:max-h-none md:columns-2 md:gap-4 md:overflow-visible md:pr-0 2xl:columns-3">
       {jobs.map((job) => (
         <JobCard
           key={job.id}
@@ -1250,7 +1250,7 @@ function DailyStatsChart({ items }: { items: SchedulerDailyStatItem[] }) {
                   </div>
                 </div>
               </div>
-              <div className="rounded-xl border border-border/20 bg-muted/20 px-2 py-1 text-[10px] leading-4 text-muted-foreground">
+              <div className="hidden rounded-xl border border-border/20 bg-muted/20 px-2 py-1 text-[10px] leading-4 text-muted-foreground sm:block">
                 <div className="flex items-center justify-between gap-2">
                   <span className="inline-flex items-center gap-1">
                     <CalendarDays className="size-2.5" />
@@ -1271,7 +1271,7 @@ function DailyStatsChart({ items }: { items: SchedulerDailyStatItem[] }) {
           )
         })}
       </div>
-      <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+      <div className="hidden flex-wrap items-center gap-4 text-xs text-muted-foreground sm:flex">
         <span className="inline-flex items-center gap-1">
           <span className="inline-block size-2 rounded-full bg-emerald-500/85" />
           成功
@@ -1302,15 +1302,15 @@ function SummaryCard({
 }) {
   return (
     <Card className="border-0 bg-muted/60 shadow-none py-0">
-      <CardContent className="flex items-center gap-3 px-4 py-4">
-        <div className="flex size-9 items-center justify-center rounded-xl bg-muted text-foreground">
+      <CardContent className="flex flex-col items-center gap-1 px-2 py-3 text-center sm:flex-row sm:gap-3 sm:px-4 sm:py-4 sm:text-left">
+        <div className="flex size-7 items-center justify-center rounded-xl bg-muted text-foreground sm:size-9">
           {icon}
         </div>
         <div className="min-w-0">
-          <div className="text-2xl font-semibold leading-none text-foreground">{value}</div>
-          <div className="mt-1 text-xs text-muted-foreground">{label}</div>
+          <div className="text-lg font-semibold leading-none text-foreground sm:text-2xl">{value}</div>
+          <div className="mt-1 whitespace-nowrap text-[10px] text-muted-foreground sm:text-xs">{label}</div>
         </div>
-        <div className="ml-auto max-w-[48%] text-right text-xs text-muted-foreground sm:max-w-none">{hint}</div>
+        <div className="ml-auto hidden max-w-[48%] text-right text-xs text-muted-foreground sm:block sm:max-w-none">{hint}</div>
       </CardContent>
     </Card>
   )

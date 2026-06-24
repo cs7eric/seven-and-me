@@ -99,7 +99,7 @@ export function SelectionPanel(props: {
                             type="button"
                             size="xs"
                             variant="outline"
-                            className="mt-0.5 h-7 w-full gap-1.5 rounded-md border-slate-200 px-2.5 text-[11px] sm:w-auto"
+                            className="mt-0.5 h-7 w-full gap-1.5 rounded-md border-slate-200 px-2.5 text-[11px] sm:w-auto sm:min-w-[6.5rem]"
                             onClick={() => onAnalyzeBar(item)}
                           >
                             <Activity className="h-3.5 w-3.5" />

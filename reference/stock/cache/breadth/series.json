@@ -151,5 +151,22 @@
     "source": "cfi",
     "cachedAt": 1781263802.83518,
     "date": "2026-06-12"
+  },
+  {
+    "upCount": 1382,
+    "downCount": 3768,
+    "limitUpCount": 158,
+    "limitDownCount": 19,
+    "totalCount": 5534,
+    "breakRate": null,
+    "maxLianBan": null,
+    "yesterdayLimitUpReturn": null,
+    "totalTurnover": null,
+    "downOver5Count": 19,
+    "new20HighCount": null,
+    "new20LowCount": null,
+    "source": "eastmoney",
+    "cachedAt": 1782314278.514394,
+    "date": "2026-06-24"
   }
 ]

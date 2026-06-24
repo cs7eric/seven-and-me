@@ -711,6 +711,7 @@ export function ChartPanel({
   onSelectionChange,
   onAnalyzeSelection,
   yAxisPosition = "right",
+  mobileCompact = false,
 }: {
   bars: StockKlineBar[]
   annotations: StockAnnotation[]
@@ -729,6 +730,7 @@ export function ChartPanel({
   onAnalyzeSelection?: (item: ChartPanelSelectionItem) => void
   /** 价格轴位置, 默认右边 */
   yAxisPosition?: "left" | "right"
+  mobileCompact?: boolean
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<Chart | null>(null)
@@ -1172,12 +1174,35 @@ export function ChartPanel({
 
     if (!chart) return
     chartRef.current = chart
-    chart.setBarSpace(10)
-    chart.setLeftMinVisibleBarCount(24)
-    chart.setRightMinVisibleBarCount(8)
-    chart.setOffsetRightDistance(12)
+    chart.setBarSpace(mobileCompact ? 7 : 10)
+    chart.setLeftMinVisibleBarCount(mobileCompact ? 18 : 24)
+    chart.setRightMinVisibleBarCount(mobileCompact ? 4 : 8)
+    chart.setOffsetRightDistance(mobileCompact ? 2 : 12)
     chart.setMaxOffsetLeftDistance(80)
     chart.setMaxOffsetRightDistance(80)
+    if (mobileCompact) {
+      chart.setStyles({
+        yAxis: {
+          show: true,
+          size: 26,
+          axisLine: { color: "#e2e8f0", size: 1 },
+          tickLine: { show: true, color: "#e2e8f0", size: 1, length: 3 },
+          tickText: {
+            show: true,
+            color: "#64748b",
+            family: "inherit",
+            size: 9,
+            weight: 400,
+            marginStart: 2,
+            marginEnd: 2,
+          },
+        },
+      })
+      chart.overrideYAxis({
+        name: MAIN_PANE_ID,
+        gap: { top: 6, bottom: 6, left: 0, right: 0 },
+      })
+    }
 
     const resizeObserver = new ResizeObserver(() => {
       chart.resize()
@@ -1190,7 +1215,7 @@ export function ChartPanel({
       dispose(chart)
       chartRef.current = null
     }
-  }, [yAxisPosition])
+  }, [mobileCompact, yAxisPosition])
 
   useEffect(() => {
     const chart = chartRef.current

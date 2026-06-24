@@ -36,6 +36,7 @@ export function TargetCard({
   onSave,
   onToggleScheduler,
   onRefreshAll,
+  compactMobile = false,
 }: {
   targets: ApplicationAnalysisTarget[]
   searchKeyword: string
@@ -57,6 +58,7 @@ export function TargetCard({
   onSave: () => void
   onToggleScheduler: () => void
   onRefreshAll: () => void
+  compactMobile?: boolean
 }) {
   const [stockSearchResults, setStockSearchResults] = useState<StockSearchItem[]>([])
 
@@ -108,7 +110,7 @@ export function TargetCard({
 
   return (
     <Card className="w-full min-w-0 max-w-full overflow-hidden rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
-      <CardHeader className="px-3 pt-4 sm:px-4 2xl:px-6">
+      <CardHeader className={`px-3 pt-4 sm:px-4 2xl:px-6 ${compactMobile ? "pb-3" : ""}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -184,15 +186,15 @@ export function TargetCard({
                           </div>
                         </div>
                       </div>
-                      <Badge className="w-fit rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{target.target_type}</Badge>
+                      <Badge className={`w-fit rounded-full border-slate-200 bg-white text-slate-700 ${compactMobile ? "max-lg:hidden" : ""}`} variant="outline">{target.target_type}</Badge>
                     </div>
                     {isExpanded ? (
                       <div className="space-y-3 border-t border-slate-100 bg-slate-50/60 px-3 py-3" onClick={(event) => event.stopPropagation()}>
-                        <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-                          <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                        <div className={`${compactMobile ? "grid grid-cols-4 gap-2 text-[10px]" : "grid grid-cols-1 gap-2 text-xs md:grid-cols-2"}`}>
+                          <label className={`flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${compactMobile ? "items-stretch gap-1 px-1 py-1" : "sm:flex-row sm:items-center sm:justify-between sm:gap-2"}`}>
                             调整
                             <Select value={target.adjust} onValueChange={(value) => onUpdateTarget(target.id, { adjust: value })}>
-                              <SelectTrigger className="h-7 w-full sm:w-20"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className={`h-7 shrink-0 ${compactMobile ? "w-full px-1 text-[10px]" : "w-[7.25rem] sm:w-24"}`}><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="qfq">前复权</SelectItem>
                                 <SelectItem value="none">不复权</SelectItem>
@@ -200,13 +202,13 @@ export function TargetCard({
                               </SelectContent>
                             </Select>
                           </label>
-                          <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+                          <label className={`flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${compactMobile ? "items-stretch gap-1 px-1 py-1" : "sm:flex-row sm:items-center sm:justify-between sm:gap-2"}`}>
                             周期
                             <Select
                               value={target.interval_minutes.toString()}
                               onValueChange={(value) => onUpdateTarget(target.id, { interval_minutes: Number(value) })}
                             >
-                              <SelectTrigger className="h-7 w-full sm:w-24"><SelectValue /></SelectTrigger>
+                              <SelectTrigger className={`h-7 shrink-0 ${compactMobile ? "w-full px-1 text-[10px]" : "w-[7.25rem] sm:w-24"}`}><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="15">15 分钟</SelectItem>
                                 <SelectItem value="30">30 分钟</SelectItem>
@@ -218,15 +220,34 @@ export function TargetCard({
                             </Select>
                           </label>
                         </div>
-                        <div className="grid grid-cols-1 gap-2 text-xs sm:flex sm:flex-wrap sm:items-center">
-                          <Button size="sm" variant="outline" className="w-full rounded-xl sm:w-auto" onClick={() => onUpdateTarget(target.id, { enabled: !target.enabled })}>
+                        <div className={compactMobile ? "grid grid-cols-3 gap-2 text-xs" : "flex w-full flex-nowrap items-stretch gap-2 overflow-x-auto pb-0.5 text-xs [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"}>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className={compactMobile ? "h-8 w-full rounded-xl px-2 text-[11px]" : "h-8 min-w-[4.8rem] flex-[0.8] rounded-xl px-2 text-[11px] sm:w-auto sm:flex-none sm:px-3"}
+                            onClick={() => onUpdateTarget(target.id, { enabled: !target.enabled })}
+                          >
                             {target.enabled ? "停用" : "启用"}
                           </Button>
-                          <Button size="sm" variant="outline" className="w-full rounded-xl sm:w-auto" onClick={() => onTriggerTarget(target.id)}>
-                            <RefreshCw className="mr-1 size-3.5" />立即刷新
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className={compactMobile ? "h-8 w-full rounded-xl px-2 text-[11px]" : "h-8 min-w-[5.8rem] flex-[1.25] rounded-xl px-2 text-[11px] sm:w-auto sm:flex-none sm:px-3"}
+                            onClick={() => onTriggerTarget(target.id)}
+                          >
+                            <RefreshCw className="mr-1 size-3.5 shrink-0" />
+                            <span className={compactMobile ? "text-[11px]" : "sm:hidden"}>刷新</span>
+                            <span className={`${compactMobile ? "hidden" : "hidden sm:inline"}`}>立即刷新</span>
                           </Button>
-                          <Button size="sm" variant="ghost" className="w-full rounded-xl text-slate-500 sm:w-auto" onClick={() => onRemove(target.id)}>
-                            <Trash2 className="mr-1 size-3.5" />删除
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className={compactMobile ? "h-8 w-full rounded-xl px-2 text-[11px] text-slate-500" : "h-8 min-w-[4.8rem] flex-[0.8] rounded-xl px-2 text-[11px] text-slate-500 sm:w-auto sm:flex-none sm:px-3"}
+                            onClick={() => onRemove(target.id)}
+                          >
+                            <Trash2 className="mr-1 size-3.5 shrink-0" />
+                            <span className={compactMobile ? "text-[11px]" : "sm:hidden"}>删</span>
+                            <span className={`${compactMobile ? "hidden" : "hidden sm:inline"}`}>删除</span>
                           </Button>
                         </div>
                       </div>
@@ -257,7 +278,7 @@ export function TargetCard({
                       </div>
                     </div>
                     <div className="flex items-center justify-between gap-2 sm:justify-end">
-                      <Badge className="rounded-full border-slate-200 bg-white text-slate-700" variant="outline">{searchItem.target_type}</Badge>
+                      <Badge className={`rounded-full border-slate-200 bg-white text-slate-700 ${compactMobile ? "max-lg:hidden" : ""}`} variant="outline">{searchItem.target_type}</Badge>
                       <button
                         type="button"
                         aria-label="添加到目标"
@@ -287,45 +308,45 @@ export function TargetCard({
         {!collapsed ? (
           <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
             <div className="text-xs font-semibold text-slate-600">数据范围（horizon）</div>
-            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
-              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+            <div className={compactMobile ? "grid grid-cols-4 gap-1 text-[10px]" : "grid grid-cols-1 gap-2 text-xs sm:grid-cols-2"}>
+              <label className={`flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${compactMobile ? "items-stretch gap-1 px-1 py-1" : "sm:flex-row sm:items-center sm:justify-between sm:gap-2"}`}>
                 天数<input
                   type="number"
                   min={30}
                   value={horizon.days}
                   onChange={(event) => onHorizonChange({ days: Number(event.target.value) || 120 })}
-                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
+                  className={`w-full rounded-md border border-slate-200 px-2 text-left ${compactMobile ? "h-7 px-1 text-[10px]" : "sm:w-16 sm:text-right"}`}
                 />
               </label>
-              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+              <label className={`flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${compactMobile ? "items-stretch gap-1 px-1 py-1" : "sm:flex-row sm:items-center sm:justify-between sm:gap-2"}`}>
                 段数<input
                   type="number"
                   min={1}
                   value={horizon.segments}
                   onChange={(event) => onHorizonChange({ segments: Number(event.target.value) || 4 })}
-                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
+                  className={`w-full rounded-md border border-slate-200 px-2 text-left ${compactMobile ? "h-7 px-1 text-[10px]" : "sm:w-16 sm:text-right"}`}
                 />
               </label>
-              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+              <label className={`flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${compactMobile ? "items-stretch gap-1 px-1 py-1" : "sm:flex-row sm:items-center sm:justify-between sm:gap-2"}`}>
                 月 K<input
                   type="number"
                   min={1}
                   value={horizon.monthly_keep}
                   onChange={(event) => onHorizonChange({ monthly_keep: Number(event.target.value) || 6 })}
-                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
+                  className={`w-full rounded-md border border-slate-200 px-2 text-left ${compactMobile ? "h-7 px-1 text-[10px]" : "sm:w-16 sm:text-right"}`}
                 />
               </label>
-              <label className="flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+              <label className={`flex flex-col gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-1 ${compactMobile ? "items-stretch gap-1 px-1 py-1" : "sm:flex-row sm:items-center sm:justify-between sm:gap-2"}`}>
                 周 K<input
                   type="number"
                   min={1}
                   value={horizon.weekly_keep}
                   onChange={(event) => onHorizonChange({ weekly_keep: Number(event.target.value) || 12 })}
-                  className="w-full rounded-md border border-slate-200 px-2 text-left sm:w-16 sm:text-right"
+                  className={`w-full rounded-md border border-slate-200 px-2 text-left ${compactMobile ? "h-7 px-1 text-[10px]" : "sm:w-16 sm:text-right"}`}
                 />
               </label>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center">
+            <div className={compactMobile ? "grid grid-cols-3 gap-2" : "grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center"}>
               <Button className="w-full rounded-xl sm:w-auto" size="sm" disabled={saving} onClick={onSave}>
                 <Save className="mr-1 size-3.5" />{saving ? "保存中" : "保存配置"}
               </Button>

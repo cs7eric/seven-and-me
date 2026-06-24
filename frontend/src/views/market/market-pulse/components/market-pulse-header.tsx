@@ -15,10 +15,10 @@ export function MarketPulseHeader() {
         Mock Workspace
       </div>
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-4xl">
+        <h1 className="hidden text-2xl font-semibold tracking-tight text-foreground sm:block sm:text-4xl">
           Market Pulse
         </h1>
-        <p className="max-w-3xl text-sm leading-7 text-muted-foreground sm:text-base">
+        <p className="hidden max-w-3xl text-sm leading-7 text-muted-foreground sm:block sm:text-base">
           市场脉搏的预留页面,后续接入指数快照、板块热力、涨跌停统计、北向资金等实时指标。
         </p>
       </div>

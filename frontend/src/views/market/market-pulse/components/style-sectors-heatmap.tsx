@@ -93,7 +93,13 @@ function bandForPct(pct: number | null | undefined): Band {
   return "flat"
 }
 
-function buildTreemapData(items: StyleSectorItem[]): EChartsTreemapNode[] {
+function buildTreemapData(items: StyleSectorItem[], compact = false): EChartsTreemapNode[] {
+  const nameFontSize = compact ? 8 : 12
+  const pctFontSize = compact ? 8 : 11
+  const nameFontWeight = compact ? 500 : 700
+  const pctFontWeight = compact ? 400 : 600
+  const nameLineHeight = compact ? 11 : 16
+  const pctLineHeight = compact ? 10 : 14
   return items.map((it) => {
     const band = bandForPct(it.change_pct)
     const c = SECTOR_PALETTE[band]
@@ -117,14 +123,14 @@ function buildTreemapData(items: StyleSectorItem[]): EChartsTreemapNode[] {
       label: {
         show: true,
         color: c.fg,
-        fontSize: 12,
-        fontWeight: 600,
-        lineHeight: 16,
+        fontSize: nameFontSize,
+        fontWeight: compact ? 400 : 600,
+        lineHeight: nameLineHeight,
         // cell 太小自动只显示 name (ECharts labelLayout 兜底)
         formatter: () => `{n|${it.name}}\n{p|${cpStr}}`,
         rich: {
-          n: { color: c.fg, fontSize: 12, fontWeight: 700, lineHeight: 16 },
-          p: { color: c.fg, fontSize: 11, fontWeight: 600, lineHeight: 14 },
+          n: { color: c.fg, fontSize: nameFontSize, fontWeight: nameFontWeight, lineHeight: nameLineHeight },
+          p: { color: c.fg, fontSize: pctFontSize, fontWeight: pctFontWeight, lineHeight: pctLineHeight },
         },
       },
     }
@@ -197,7 +203,8 @@ export function StyleSectorsHeatmap({ items, loading = false, onCellClick }: Pro
       chart.on("click", clickHandler)
     }
 
-    const data = buildTreemapData(items)
+    const compact = typeof window !== "undefined" ? window.matchMedia("(max-width: 640px)").matches : false
+    const data = buildTreemapData(items, compact)
     // **完全照搬 industry-application/sector-heatmap.tsx 同款 setOption 结构**:
     // - 不传 series.width / series.height (默认 100% 行为一致, 但不传更稳)
     // - 不传 series.levels (单层 treemap, 用 cell-level itemStyle/label)

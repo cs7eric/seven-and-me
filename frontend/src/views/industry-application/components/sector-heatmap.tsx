@@ -841,7 +841,7 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
   const limitUpTotal = useMemo(() => filtered.reduce((sum, sector) => sum + sector.limitUpCount, 0), [filtered])
 
   return (
-    <Card className="flex h-full min-h-0 flex-col rounded-xl border-slate-200/60 bg-white text-slate-800">
+    <Card className="flex h-full min-h-0 flex-col rounded-none border-slate-200/60 bg-white text-slate-800 sm:rounded-xl">
       <CardContent className="flex min-h-0 flex-1 flex-col gap-1.5 p-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-slate-500 mr-1">板块</span>

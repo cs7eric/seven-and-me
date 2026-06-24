@@ -228,7 +228,7 @@ export function IndustryTechnicalIndicatorPanel({
 }: IndustryTechnicalIndicatorPanelProps) {
   if (!indicators) {
     return (
-      <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <Card className="rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
         <CardContent className="p-6 text-center text-sm text-slate-400">
           暂无技术指标数据, 请先点击「立即刷新」拉取 K 线。
         </CardContent>
@@ -243,7 +243,7 @@ export function IndustryTechnicalIndicatorPanel({
   return (
     <div className="grid gap-3 lg:grid-cols-2">
       {/* ========== 1) 实时数据 ========== */}
-      <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <Card className="rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
         <CardHeader>
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -308,7 +308,7 @@ export function IndustryTechnicalIndicatorPanel({
       </Card>
 
       {/* ========== 2) 累计收益 ========== */}
-      <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <Card className="rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Clock className="size-4 text-slate-600" />
@@ -366,7 +366,7 @@ export function IndustryTechnicalIndicatorPanel({
       </Card>
 
       {/* ========== 3) 均线状态 ========== */}
-      <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <Card className="rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Activity className="size-4 text-slate-600" />
@@ -383,7 +383,7 @@ export function IndustryTechnicalIndicatorPanel({
       </Card>
 
       {/* ========== 4) 20 日区间位置 ========== */}
-      <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+      <Card className="rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Crosshair className="size-4 text-slate-600" />
@@ -423,7 +423,7 @@ export function IndustryTechnicalIndicatorPanel({
       </Card>
 
       {/* ========== 5) 综合说明 ========== */}
-      <Card className="rounded-3xl border-slate-200 bg-slate-50 shadow-[0_16px_46px_rgba(15,23,42,0.06)] lg:col-span-2">
+      <Card className="rounded-none border-slate-200 bg-slate-50 shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl lg:col-span-2">
         <CardContent className="p-4 text-xs leading-relaxed text-slate-600">
           <div className="mb-1 font-semibold text-slate-700">说明</div>
           <ul className="ml-4 list-disc space-y-0.5">

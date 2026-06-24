@@ -177,7 +177,7 @@ export function SummaryStrip({ data }: { data: MarketPulse }) {
   ]
 
   return (
-    <div className="grid grid-cols-4 gap-2 sm:gap-3 xl:gap-4">
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3 xl:gap-4">
       {items.map((item) => {
         const Icon = item.icon
         const color =
@@ -189,7 +189,7 @@ export function SummaryStrip({ data }: { data: MarketPulse }) {
               <div className="truncate text-[10px] text-slate-500 sm:text-xs">{item.label}</div>
               <Icon className={`size-3.5 shrink-0 ${ink}`} />
             </div>
-            <div className="mt-2 truncate text-[12px] font-semibold leading-tight text-slate-950 sm:text-xl">{item.name}</div>
+            <div className="mt-2 line-clamp-2 text-[12px] font-semibold leading-tight text-slate-950 sm:truncate sm:text-xl">{item.name}</div>
             <div className={`mt-1 text-[11px] font-medium tabular-nums sm:text-sm ${ink}`}>
               {"net" in item ? <span>{fmtYi(item.net)}</span> : <span>{fmtPct(item.pct)}</span>}
             </div>

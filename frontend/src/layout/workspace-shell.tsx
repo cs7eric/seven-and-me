@@ -28,6 +28,7 @@ import {
 interface WorkspaceShellProps {
   sectionLabel?: string
   pageTitle?: string
+  mobilePageTitle?: string
   sectionUrl?: string
   /**
    * 默认 false，子 view 会被套 `p-6` 外 padding + `gap-6` 子元素间距。
@@ -94,6 +95,7 @@ function getRouteBreadcrumb(pathname: string) {
 export function WorkspaceShell({
   sectionLabel: sectionLabelProp,
   pageTitle: pageTitleProp,
+  mobilePageTitle,
   sectionUrl: sectionUrlProp,
   fullBleed = false,
   children,
@@ -137,7 +139,14 @@ export function WorkspaceShell({
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
                   <BreadcrumbPage className="rounded-md bg-muted/40 px-2 py-1 font-medium">
-                    {pageTitle}
+                    {mobilePageTitle ? (
+                      <>
+                        <span className="md:hidden">{mobilePageTitle}</span>
+                        <span className="hidden md:inline">{pageTitle}</span>
+                      </>
+                    ) : (
+                      pageTitle
+                    )}
                   </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
@@ -152,7 +161,7 @@ export function WorkspaceShell({
           <div
             className={cn(
               "flex min-h-full flex-col gap-6",
-              fullBleed ? "p-0" : "p-6"
+              fullBleed ? "p-0" : "p-0 md:p-6"
             )}
           >
             {children}

@@ -19,7 +19,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { Building2, ChevronDown, ChevronRight, Eye, Plus, RefreshCw, Search, Sparkles, Target, Trash2 } from "lucide-react"
+import { Building2, ChevronDown, ChevronRight, Eye, List, Plus, RefreshCw, Search, Sparkles, Target, Trash2, X } from "lucide-react"
 
 import AnimatedList from "@/components/AnimatedList"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -29,6 +29,7 @@ import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { notification } from "@/components/ui/notification"
+import { cn } from "@/lib/utils"
 import {
   fetchIndustryApplicationKline,
   fetchIndustryApplicationResult,
@@ -155,6 +156,7 @@ export default function IndustryApplicationPage() {
   const [searchKeyword, setSearchKeyword] = useState("")
   const [targetCardCollapsed, setTargetCardCollapsed] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [mobileTabMenuOpen, setMobileTabMenuOpen] = useState(false)
 
   // Overview Tab state
   const [heatmapData, setHeatmapData] = useState<MarketHeatmapResponse | null>(null)
@@ -489,12 +491,12 @@ export default function IndustryApplicationPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Industry / Concept Application" fullBleed>
-      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-1 sm:p-1.5">
+    <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Industry / Concept Application" mobilePageTitle="industry" fullBleed>
+      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-0 md:p-1.5">
       <Tabs
         value={activeMainTab}
         onValueChange={(value) => setActiveMainTab(value as MainTab)}
-        className="flex h-full min-h-0 flex-col gap-4"
+        className="flex h-full min-h-0 flex-col gap-0 md:gap-4"
       >
           <header className="flex min-h-0 shrink-0 flex-col gap-2">
             {previewTarget ? (
@@ -531,7 +533,7 @@ export default function IndustryApplicationPage() {
               </div>
             ) : null}
 
-            <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
+            <div className="hidden items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] md:flex">
               <TabsList className="bg-transparent p-0">
                 {TABS.map((t) => (
                   <TabsTrigger
@@ -660,6 +662,40 @@ export default function IndustryApplicationPage() {
               </div>
             </div>
             </main>
+            <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2 md:hidden">
+              {mobileTabMenuOpen ? (
+                <div className="flex w-36 flex-col gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_18px_42px_rgba(15,23,42,0.18)]">
+                  {TABS.map((t) => (
+                    <button
+                      type="button"
+                      key={t.value}
+                      onClick={() => {
+                        setActiveMainTab(t.value)
+                        setMobileTabMenuOpen(false)
+                      }}
+                      className={cn(
+                        "flex h-9 items-center justify-start rounded-xl px-3 text-xs transition",
+                        activeMainTab === t.value
+                          ? "bg-slate-950 text-white"
+                          : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <button
+                type="button"
+                className="inline-flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-[0_12px_32px_rgba(15,23,42,0.16)]"
+                onClick={() => setMobileTabMenuOpen((value) => !value)}
+                aria-expanded={mobileTabMenuOpen}
+                aria-label="切换页面 tab"
+              >
+                {mobileTabMenuOpen ? <X className="size-4" /> : <List className="size-4" />}
+                {TABS.find((tab) => tab.value === activeMainTab)?.label ?? "Tabs"}
+              </button>
+            </div>
           </Tabs>
       </div>
     </WorkspaceShell>
@@ -718,7 +754,7 @@ function IndustryTargetCard(props: IndustryTargetCardProps) {
   } = props
 
   return (
-    <Card className="rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+    <Card className="rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
       <CardHeader>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -945,7 +981,7 @@ function IndustryAddCard({ codes, onAdd }: IndustryAddCardProps) {
     [codes, filter],
   )
   return (
-    <Card className="flex max-h-[min(78vh,680px)] flex-col rounded-3xl border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)]">
+    <Card className="flex max-h-[min(78vh,680px)] flex-col rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
       <CardHeader className="shrink-0">
         <CardTitle className="flex items-center gap-2 text-base">
           <Plus className="size-4 text-slate-600" />

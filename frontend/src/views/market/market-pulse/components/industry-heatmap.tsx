@@ -321,8 +321,27 @@ function buildTreemap(
   areaBy: HeatmapAreaBy,
   _colorBy: HeatmapColorBy,
   mode: "sector" | "stock" = "sector",
+  compact = false,
 ): EChartsTreemapNode[] {
   void _colorBy
+
+  const sectorNameFontSize = compact ? 8 : 13
+  const sectorPctFontSize = compact ? 8 : 11
+  const sectorAmountFontSize = compact ? 7 : 10
+  const sectorNameFontWeight = compact ? 500 : 700
+  const sectorPctFontWeight = compact ? 400 : 600
+  const sectorAmountFontWeight = compact ? 400 : 500
+  const sectorLineHeight = compact ? 11 : 18
+  const stockNameFontSize = compact ? 8 : 12
+  const stockPctFontSize = compact ? 8 : 11
+  const stockNameFontWeight = compact ? 500 : 700
+  const stockPctFontWeight = compact ? 400 : 600
+  const stockLineHeight = compact ? 11 : 16
+  const upperLabelFontSize = compact ? 8 : 11
+  const upperLabelPctFontSize = compact ? 8 : 10
+  const upperLabelFontWeight = compact ? 500 : 700
+  const upperLabelPctFontWeight = compact ? 400 : 600
+  const upperLabelHeight = compact ? 14 : 18
 
   const sectorAreaRaw = (s: HeatmapSectorNode): number => {
     if (areaBy === "volume") {
@@ -367,16 +386,16 @@ function buildTreemap(
         label: {
           show: true,
           color: c.fg,
-          fontSize: 13,
-          fontWeight: 700,
-          lineHeight: 18,
+          fontSize: sectorNameFontSize,
+          fontWeight: compact ? 400 : 700,
+          lineHeight: sectorLineHeight,
           formatter: () => {
             return `{name|${sector.name}}\n{pct|${formatPct(sector.changePercent ?? 0)}}\n{amt|${formatAmount(sector.amount)}}`
           },
           rich: {
-            name: { color: c.fg, fontSize: 13, fontWeight: 700, lineHeight: 18 },
-            pct:  { color: c.fg, fontSize: 11, fontWeight: 600, lineHeight: 16 },
-            amt:  { color: c.fg, fontSize: 10, fontWeight: 500, lineHeight: 14 },
+            name: { color: c.fg, fontSize: sectorNameFontSize, fontWeight: sectorNameFontWeight, lineHeight: sectorLineHeight },
+            pct:  { color: c.fg, fontSize: sectorPctFontSize, fontWeight: sectorPctFontWeight, lineHeight: compact ? 10 : 16 },
+            amt:  { color: c.fg, fontSize: sectorAmountFontSize, fontWeight: sectorAmountFontWeight, lineHeight: compact ? 9 : 14 },
           },
         },
       }
@@ -403,18 +422,18 @@ function buildTreemap(
       },
       upperLabel: {
         show: true,
-        height: 18,
+        height: upperLabelHeight,
         color: c.fg,
-        fontSize: 11,
-        fontWeight: 600,
+        fontSize: upperLabelFontSize,
+        fontWeight: compact ? 400 : 600,
         backgroundColor: "rgba(255,255,255,0.92)",
-        padding: [2, 6, 2, 6],
+        padding: compact ? [1, 4, 1, 4] : [2, 6, 2, 6],
         formatter: () => {
           return `{name|${sector.name}} {pct|${formatPct(sector.changePercent ?? 0)}}`
         },
         rich: {
-          name: { color: c.fg, fontSize: 11, fontWeight: 700, lineHeight: 14 },
-          pct:  { color: c.fg, fontSize: 10, fontWeight: 600, lineHeight: 14 },
+          name: { color: c.fg, fontSize: upperLabelFontSize, fontWeight: upperLabelFontWeight, lineHeight: compact ? 10 : 14 },
+          pct:  { color: c.fg, fontSize: upperLabelPctFontSize, fontWeight: upperLabelPctFontWeight, lineHeight: compact ? 10 : 14 },
         },
       },
       label: { show: false },
@@ -439,15 +458,15 @@ function buildTreemap(
           label: {
             show: true,
             color: cs.fg,
-            fontSize: 12,
-            fontWeight: 600,
-            lineHeight: 16,
+            fontSize: stockNameFontSize,
+            fontWeight: compact ? 400 : 600,
+            lineHeight: stockLineHeight,
             formatter: () => {
               return `{name|${stockName(stock)}}\n{pct|${formatPct(stock.changePercent)}}`
             },
             rich: {
-              name: { color: cs.fg, fontSize: 12, fontWeight: 700, lineHeight: 16 },
-              pct:  { color: cs.fg, fontSize: 11, fontWeight: 600, lineHeight: 14 },
+              name: { color: cs.fg, fontSize: stockNameFontSize, fontWeight: stockNameFontWeight, lineHeight: stockLineHeight },
+              pct:  { color: cs.fg, fontSize: stockPctFontSize, fontWeight: stockPctFontWeight, lineHeight: compact ? 10 : 14 },
             },
           },
         }
@@ -561,13 +580,14 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
   const drillDownStocks = drillDownEntry?.stocks ?? null
 
   const treemapData = useMemo(() => {
+    const compact = typeof window !== "undefined" ? window.matchMedia("(max-width: 640px)").matches : false
     if (viewMode === "sector" && activeSector) {
       const wrapped: HeatmapSectorNode = {
         ...activeSector,
         value: activeSector.value || activeSector.amount || 1,
         children: drillDownStocks ?? activeSector.children ?? [],
       }
-      return buildTreemap([wrapped], areaBy, colorBy, "stock")
+      return buildTreemap([wrapped], areaBy, colorBy, "stock", compact)
     }
     // 返回 market 视图: 需要恢复原始 children，避免被 drill-down stocks 污染
     const marketSectors = filtered.map((sector) => {
@@ -577,7 +597,7 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
       }
       return sector
     })
-    return buildTreemap(marketSectors, areaBy, colorBy, "sector")
+    return buildTreemap(marketSectors, areaBy, colorBy, "sector", compact)
   }, [filtered, activeSector, viewMode, areaBy, colorBy, drillDownStocks, drillDownCache])
 
   // 初始化 ECharts 实例
@@ -665,17 +685,18 @@ export function IndustryHeatmap({ data, loading, onRefresh, autoRefresh, onAutoR
           label: {
             show: true,
             color: "#fff",
-            fontSize: 12,
-            lineHeight: 16,
+            fontSize: typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches ? 8 : 12,
+            fontWeight: typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches ? 400 : 600,
+            lineHeight: typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches ? 11 : 16,
           },
           upperLabel: {
             show: true,
-            height: 24,
+            height: typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches ? 14 : 24,
             backgroundColor: "rgba(255,255,255,0.85)",
             color: "#0f172a",
-            fontSize: 13,
-            fontWeight: 700,
-            padding: [4, 6, 4, 6],
+            fontSize: typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches ? 8 : 13,
+            fontWeight: typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches ? 400 : 700,
+            padding: typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches ? [2, 4, 2, 4] : [4, 6, 4, 6],
           },
           data: treemapData,
         },

@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { Eye, Plus } from "lucide-react"
+import { Eye, List, Plus } from "lucide-react"
 
 import {
   Tabs,
@@ -16,6 +16,13 @@ import {
   TabsTrigger,
 } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerDescription,
+} from "@/components/ui/drawer"
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import {
   controlApplicationAnalysisScheduler,
@@ -54,6 +61,7 @@ import { SelectionPanel } from "./components/selection-panel"
 import { TargetCard, type HorizonPatch } from "./components/target-card"
 import { TechnicalIndicatorTab } from "./components/technical-indicator-tab"
 import { notification } from "@/components/ui/notification"
+import { useIsMobile } from "@/hooks/use-mobile"
 import { DEFAULT_HORIZON, SELECTION_COLORS } from "./lib/constants"
 import {
   asOverlayAnnotations,
@@ -73,6 +81,7 @@ function formatTradeDateFromTimestamp(timestamp?: number | null) {
 
 export default function ApplicationAnalysisPage() {
   type MainTab = "chart" | "ai-direction" | "analysis" | "auction" | "ma-support" | "fund-flow"
+  const isMobile = useIsMobile()
   const [searchParams, setSearchParams] = useSearchParams()
   const [activeMainTab, setActiveMainTab] = useState<MainTab>("chart")
   const [targets, setTargets] = useState<ApplicationAnalysisTarget[]>([])
@@ -105,6 +114,7 @@ export default function ApplicationAnalysisPage() {
   const [selectionCardCollapsed, setSelectionCardCollapsed] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 1023px)").matches : false,
   )
+  const [mobileWatchlistOpen, setMobileWatchlistOpen] = useState(false)
   const [dailySnapshotsFull, setDailySnapshotsFull] = useState<ApplicationAnalysisRecent30FullItem[]>([])
   const [dailySnapshotsLoading, setDailySnapshotsLoading] = useState(false)
   const [dailyRefreshing, setDailyRefreshing] = useState(false)
@@ -699,8 +709,7 @@ export default function ApplicationAnalysisPage() {
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis" fullBleed>
       <div className="min-h-[calc(100svh-4rem)] w-full max-w-[100vw] overflow-x-hidden rounded-none border-0 bg-[#f6f7f9] p-0 sm:p-4 2xl:p-6 lg:h-[calc(100svh-4rem)] lg:overflow-hidden">
         <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,440px)_minmax(0,1fr)] 2xl:gap-4">
-          {/* 左侧：信息辅助区。手机端放到工作区下方，避免打开页面先看到一整屏配置。 */}
-          <div className={`${displayedTarget ? "order-2" : "order-1"} flex min-h-0 min-w-0 flex-col gap-3 overflow-visible lg:order-1 lg:h-full lg:overflow-y-auto 2xl:gap-4`}>
+          <div className="hidden min-h-0 min-w-0 flex-col gap-3 overflow-visible lg:flex lg:h-full lg:overflow-y-auto 2xl:gap-4">
             <TargetCard
               targets={targets}
               searchKeyword={searchKeyword}
@@ -739,15 +748,16 @@ export default function ApplicationAnalysisPage() {
               onAnalyzeBar={handleOpenIntradayDialog}
             />
 
-            <Alerts
-              error={error}
-              info={info}
-              warnings={warnings}
-              errors={errors}
-            />
+            {!isMobile ? (
+              <Alerts
+                error={error}
+                info={info}
+                warnings={warnings}
+                errors={errors}
+              />
+            ) : null}
           </div>
 
-          {/* 右侧：顶部区（标题栏 + Tab 栏） + 主内容区 */}
           <Tabs
             value={activeMainTab}
             onValueChange={(value) => setActiveMainTab(value as MainTab)}
@@ -790,7 +800,7 @@ export default function ApplicationAnalysisPage() {
               ) : null}
 
               {/* 标题栏：当前目标 + 操作按钮 */}
-              <ChartHeader
+            <ChartHeader
                 target={displayedTarget}
                 selectedLabel={
                   displayedTarget
@@ -808,17 +818,17 @@ export default function ApplicationAnalysisPage() {
 
               {/* Tab 栏 */}
               <div className="sticky top-0 z-20 flex min-w-0 flex-col gap-2 border-y border-slate-200/80 bg-white px-2 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04)] sm:static sm:rounded-2xl sm:border sm:px-3 sm:shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] lg:flex-row lg:items-center lg:justify-between lg:gap-3">
-                <div className="min-w-0 overflow-x-auto sm:overflow-visible">
-                  <TabsList className="grid h-auto w-full min-w-0 grid-cols-3 gap-1 sm:inline-flex sm:h-9 sm:w-fit sm:min-w-max">
-                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="chart">图表</TabsTrigger>
-                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="ai-direction">AI 方向</TabsTrigger>
-                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="analysis">分析详情</TabsTrigger>
-                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="auction">集合竞价</TabsTrigger>
-                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="ma-support">技术指标</TabsTrigger>
-                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="fund-flow">资金</TabsTrigger>
+                <div className="min-w-0 overflow-x-auto pb-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                  <TabsList className="inline-flex h-auto w-max min-w-max gap-1 rounded-2xl bg-slate-100 p-1">
+                    <TabsTrigger className="h-7 shrink-0 whitespace-nowrap px-3 text-xs sm:text-sm" value="chart">图表</TabsTrigger>
+                    <TabsTrigger className="h-7 shrink-0 whitespace-nowrap px-3 text-xs sm:text-sm" value="ai-direction">AI 方向</TabsTrigger>
+                    <TabsTrigger className="h-7 shrink-0 whitespace-nowrap px-3 text-xs sm:text-sm" value="analysis">分析详情</TabsTrigger>
+                    <TabsTrigger className="h-7 shrink-0 whitespace-nowrap px-3 text-xs sm:text-sm" value="auction">集合竞价</TabsTrigger>
+                    <TabsTrigger className="h-7 shrink-0 whitespace-nowrap px-3 text-xs sm:text-sm" value="ma-support">技术指标</TabsTrigger>
+                    <TabsTrigger className="h-7 shrink-0 whitespace-nowrap px-3 text-xs sm:text-sm" value="fund-flow">资金</TabsTrigger>
                   </TabsList>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-slate-500 sm:px-0">
+                <div className="hidden flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[11px] text-slate-500 sm:flex sm:px-0">
                   <span>K 线 {bars.length}</span>
                   <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
                   <span>{running ? "分析中" : result ? "已完成" : previewTarget ? "预览中" : "待执行"}</span>
@@ -850,19 +860,20 @@ export default function ApplicationAnalysisPage() {
                 className="m-0 min-w-0 lg:flex lg:h-full lg:min-h-0 lg:flex-col lg:overflow-hidden"
               >
                 {displayedTarget ? (
-                  <ChartCard
-                    collapsed={false}
-                    onToggle={() => {}}
-                    selectedSymbol={displayedTarget.symbol}
-                    bars={bars}
+              <ChartCard
+                  collapsed={false}
+                  onToggle={() => {}}
+                  selectedSymbol={displayedTarget.symbol}
+                  bars={bars}
                     overlays={overlays}
                     selectionColors={selectionColorMap}
                     selectedBarTimestamps={selectedBarTimestamps}
-                    onSelectionChange={setSelectedChartItems}
-                    onAnalyzeSelection={handleAnalyzeSelection}
-                    loadingBars={loadingBars}
-                  />
-                ) : null}
+                  onSelectionChange={setSelectedChartItems}
+                  onAnalyzeSelection={handleAnalyzeSelection}
+                  loadingBars={loadingBars}
+                  mobileCompact={isMobile}
+                />
+              ) : null}
               </TabsContent>
 
               <TabsContent
@@ -941,9 +952,53 @@ export default function ApplicationAnalysisPage() {
                 ) : null}
               </TabsContent>
             </main>
+
           </Tabs>
         </div>
       </div>
+      <button
+        type="button"
+        className="fixed bottom-4 right-4 z-40 inline-flex h-11 items-center gap-2 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-800 shadow-[0_12px_32px_rgba(15,23,42,0.12)] lg:hidden"
+        onClick={() => setMobileWatchlistOpen(true)}
+      >
+        <List className="size-4" />
+        Watchlist
+      </button>
+      <Drawer open={mobileWatchlistOpen} onOpenChange={setMobileWatchlistOpen}>
+        <DrawerContent
+          className="h-[75dvh] max-h-[75dvh] rounded-t-3xl border-t border-slate-200 bg-white"
+        >
+          <DrawerHeader className="border-b border-slate-200 px-4 pb-3 pt-4">
+            <DrawerTitle>Watchlist</DrawerTitle>
+            <DrawerDescription>应用分析目标与自选同步列表</DrawerDescription>
+          </DrawerHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-3">
+            <TargetCard
+              targets={targets}
+              searchKeyword={searchKeyword}
+              setSearchKeyword={setSearchKeyword}
+              selectedId={selectedId}
+              setSelectedId={setSelectedId}
+              expandedId={expandedId}
+              setExpandedId={setExpandedId}
+              collapsed={targetCardCollapsed}
+              setCollapsed={setTargetCardCollapsed}
+              horizon={horizon}
+              onHorizonChange={handleHorizonChange}
+              scheduler={scheduler}
+              saving={saving}
+              onAddFromSearch={handleAddFromSearch}
+              onRemove={handleRemove}
+              onUpdateTarget={handleUpdateTarget}
+              onTriggerTarget={handleTriggerTarget}
+              onSave={() => void handleSave()}
+              onToggleScheduler={() => void handleToggleScheduler()}
+              onRefreshAll={handleRefreshAll}
+              compactMobile
+            />
+          </div>
+        </DrawerContent>
+      </Drawer>
       {displayedTarget && intradayBar ? (
         <IntradayAnalysisDialog
           open={intradayDialogOpen}

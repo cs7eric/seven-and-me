@@ -240,24 +240,25 @@ export function MarketOverviewCards({
             )}
 
             <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-              <div className="grid grid-cols-2 gap-px bg-slate-200 md:grid-cols-4 lg:grid-cols-[1.15fr_1.15fr_0.7fr_0.7fr_0.7fr_0.7fr]">
-                <div className="col-span-2 bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3 md:col-span-2 lg:col-span-1">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
-                      <Waves className="size-3.5" />
-                      <span>大盘成交额</span>
+              <div className="grid grid-cols-4 gap-px bg-slate-200 md:grid-cols-4 lg:grid-cols-[1.15fr_1.15fr_0.7fr_0.7fr_0.7fr_0.7fr]">
+                <div className="col-span-2 bg-gradient-to-br from-slate-50 via-white to-slate-50 px-3 py-3 sm:px-4 md:col-span-2 lg:col-span-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-slate-500">
+                      <Waves className="size-3.5 shrink-0" />
+                      <span className="truncate">大盘成交额</span>
                     </div>
-                    <div className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums ${diffBadgeTone(amountDiff)}`}>
-                      <span>较昨日</span>
+                    <div className={`inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none tabular-nums sm:gap-1 sm:px-2 sm:py-1 sm:text-[11px] ${diffBadgeTone(amountDiff)}`}>
+                      <span className="hidden sm:inline">较昨日</span>
+                      <span className="sm:hidden">较昨</span>
                       {amountDiff != null && amountDiff > 0 ? (
-                        <ArrowUpRight className="size-3.5" />
+                        <ArrowUpRight className="size-3 sm:size-3.5" />
                       ) : amountDiff != null && amountDiff < 0 ? (
-                        <ArrowDownRight className="size-3.5" />
+                        <ArrowDownRight className="size-3 sm:size-3.5" />
                       ) : null}
-                      <span>{amountDiff == null ? "—" : formatYi(amountDiff)}</span>
+                      <span className="whitespace-nowrap">{amountDiff == null ? "—" : formatYi(amountDiff)}</span>
                     </div>
                   </div>
-                  <div className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-slate-900">
+                  <div className="mt-2 whitespace-nowrap text-[22px] font-bold leading-none tracking-tight tabular-nums text-slate-900 sm:text-2xl">
                     {display.totalAmount != null ? (
                       // 不传 key → 组件实例不卸载, spring 从上一次渲染结束的位置 ease 到新 to,
                       // 实现"接着上一次的值 count up". 首次 mount 时 spring 从 0 ease 到初始 to.
@@ -275,23 +276,24 @@ export function MarketOverviewCards({
                   </div>
                 </div>
 
-                <div className="col-span-2 bg-gradient-to-br from-slate-50 via-white to-slate-50 px-4 py-3 md:col-span-2 lg:col-span-1">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-500">
-                      <Wallet className="size-3.5" />
-                      <span>主力净流入</span>
+                <div className="col-span-2 bg-gradient-to-br from-slate-50 via-white to-slate-50 px-3 py-3 sm:px-4 md:col-span-2 lg:col-span-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-slate-500">
+                      <Wallet className="size-3.5 shrink-0" />
+                      <span className="truncate">主力净流入</span>
                     </div>
-                    <div className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold tabular-nums ${diffBadgeTone(mainDiff)}`}>
-                      <span>较昨日</span>
+                    <div className={`inline-flex shrink-0 items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] font-semibold leading-none tabular-nums sm:gap-1 sm:px-2 sm:py-1 sm:text-[11px] ${diffBadgeTone(mainDiff)}`}>
+                      <span className="hidden sm:inline">较昨日</span>
+                      <span className="sm:hidden">较昨</span>
                       {mainDiff != null && mainDiff > 0 ? (
-                        <ArrowUpRight className="size-3.5" />
+                        <ArrowUpRight className="size-3 sm:size-3.5" />
                       ) : mainDiff != null && mainDiff < 0 ? (
-                        <ArrowDownRight className="size-3.5" />
+                        <ArrowDownRight className="size-3 sm:size-3.5" />
                       ) : null}
-                      <span>{mainDiff == null ? "—" : formatYi(mainDiff)}</span>
+                      <span className="whitespace-nowrap">{mainDiff == null ? "—" : formatYi(mainDiff)}</span>
                     </div>
                   </div>
-                  <div className={`mt-1 text-2xl font-bold tracking-tight tabular-nums ${moneyTone(display.mainNetInflow).text}`}>
+                  <div className={`mt-2 whitespace-nowrap text-[22px] font-bold leading-none tracking-tight tabular-nums sm:text-2xl ${moneyTone(display.mainNetInflow).text}`}>
                     {display.mainNetInflow != null ? (
                       <>
                         {display.mainNetInflow > 0 ? "+" : ""}
@@ -308,9 +310,9 @@ export function MarketOverviewCards({
                   </div>
                 </div>
 
-                <div className="bg-white px-4 py-3">
-                  <div className="text-[11px] font-medium text-slate-500">上涨</div>
-                  <div className="mt-1 text-xl font-bold tabular-nums text-red-600">
+                <div className="bg-white px-2 py-3 sm:px-4">
+                  <div className="text-[10px] font-medium text-slate-500 sm:text-[11px]">上涨</div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-red-600 sm:text-xl">
                     {display.risingCount != null ? (
                       <CountUp
                         to={display.risingCount}
@@ -323,9 +325,9 @@ export function MarketOverviewCards({
                   </div>
                 </div>
 
-                <div className="bg-white px-4 py-3">
-                  <div className="text-[11px] font-medium text-slate-500">下跌</div>
-                  <div className="mt-1 text-xl font-bold tabular-nums text-emerald-600">
+                <div className="bg-white px-2 py-3 sm:px-4">
+                  <div className="text-[10px] font-medium text-slate-500 sm:text-[11px]">下跌</div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 sm:text-xl">
                     {display.fallingCount != null ? (
                       <CountUp
                         to={display.fallingCount}
@@ -338,9 +340,9 @@ export function MarketOverviewCards({
                   </div>
                 </div>
 
-                <div className="bg-white px-4 py-3">
-                  <div className="text-[11px] font-medium text-slate-500">涨停</div>
-                  <div className="mt-1 text-xl font-bold tabular-nums text-red-600">
+                <div className="bg-white px-2 py-3 sm:px-4">
+                  <div className="text-[10px] font-medium text-slate-500 sm:text-[11px]">涨停</div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-red-600 sm:text-xl">
                     {display.limitUpCount != null ? (
                       <CountUp
                         to={display.limitUpCount}
@@ -353,9 +355,9 @@ export function MarketOverviewCards({
                   </div>
                 </div>
 
-                <div className="bg-white px-4 py-3">
-                  <div className="text-[11px] font-medium text-slate-500">跌停</div>
-                  <div className="mt-1 text-xl font-bold tabular-nums text-emerald-600">
+                <div className="bg-white px-2 py-3 sm:px-4">
+                  <div className="text-[10px] font-medium text-slate-500 sm:text-[11px]">跌停</div>
+                  <div className="mt-1 text-lg font-bold tabular-nums text-emerald-600 sm:text-xl">
                     {display.limitDownCount != null ? (
                       <CountUp
                         to={display.limitDownCount}
@@ -366,7 +368,7 @@ export function MarketOverviewCards({
                       "—"
                     )}
                   </div>
-                  <div className="mt-1 text-[10px] text-slate-400">
+                  <div className="mt-1 text-[9px] text-slate-400 sm:text-[10px]">
                     平盘 {formatCount(display.flatCount)}
                   </div>
                 </div>

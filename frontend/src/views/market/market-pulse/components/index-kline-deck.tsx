@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { RefreshCw, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { fetchIndexKlineBatch, fetchStockIntraday } from "@/lib/api"
 
 import { IndexKlineCard, type IndexTimeshareItem } from "./index-kline-card"
@@ -139,6 +140,7 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
 
   const replayLabel = tradingDate ? tradingDate : "今日"
   const dateText = tradingDate ?? "今日实时"
+  const mobileDefaultTab = sortedItems[0]?.code ?? INDEX_CODES[0]
 
   return (
     <section className="space-y-3">
@@ -222,8 +224,39 @@ export function IndexKlineDeck({ tradingDate, replay, pinned, onClearPinned, isT
         </div>
       ) : null}
 
-      {/* 3 张分时卡 */}
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {/* 手机端：三大指数分时图用 tab 切换；桌面端保持三列并排 */}
+      <div className="md:hidden">
+        <Tabs defaultValue={mobileDefaultTab} className="w-full">
+          <TabsList className="grid h-9 w-full grid-cols-3 rounded-xl bg-slate-100 p-1">
+            {INDEX_CODES.map((code) => (
+              <TabsTrigger key={code} value={code} className="h-7 text-xs">
+                {INDEX_NAMES[code] ?? code}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {INDEX_CODES.map((code) => {
+            const item = sortedItems.find((candidate) => candidate.code === code)
+            return (
+              <TabsContent key={code} value={code} className="mt-3">
+                {item ? (
+                  <IndexKlineCard item={item} loading={loading} directionTone={directionTone(item)} />
+                ) : loading ? (
+                  <div className="flex h-[300px] w-full items-center justify-center rounded-2xl border border-slate-200 bg-white text-xs text-slate-400">
+                    <Loader2 className="mr-1 size-3.5 animate-spin" />
+                    加载 {INDEX_NAMES[code]} 分时…
+                  </div>
+                ) : (
+                  <div className="flex h-[300px] w-full items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white text-xs text-slate-400">
+                    暂无 {INDEX_NAMES[code]} 分时数据
+                  </div>
+                )}
+              </TabsContent>
+            )
+          })}
+        </Tabs>
+      </div>
+
+      <div className="hidden gap-3 md:grid md:grid-cols-2 xl:grid-cols-3">
         {sortedItems.length > 0 ? (
           sortedItems.map((item) => (
             <IndexKlineCard
