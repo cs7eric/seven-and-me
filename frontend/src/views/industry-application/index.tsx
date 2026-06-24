@@ -492,7 +492,7 @@ export default function IndustryApplicationPage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Industry / Concept Application" mobilePageTitle="industry" fullBleed>
-      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-[#f6f7f9] p-0 md:p-1.5">
+      <div className="h-[calc(100svh-4rem)] overflow-hidden rounded-none border-0 bg-white p-0 md:bg-[#f6f7f9] md:p-1.5">
       <Tabs
         value={activeMainTab}
         onValueChange={(value) => setActiveMainTab(value as MainTab)}
@@ -605,6 +605,7 @@ export default function IndustryApplicationPage() {
                       onSelectionChange={() => undefined}
                       onAnalyzeSelection={() => undefined}
                       loadingBars={loadingBars}
+                      cardClassName="rounded-none sm:rounded-2xl"
                     />
                   ) : (
                     <EmptyHint />
@@ -804,7 +805,7 @@ function IndustryTargetCard(props: IndustryTargetCardProps) {
                 const Icon = target.target_type === "industry" ? Building2 : Sparkles
                 return (
                   <div
-                    className={`rounded-2xl border transition ${
+                    className={`rounded-none border transition sm:rounded-2xl ${
                       isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-400"
                     }`}
                   >
@@ -903,7 +904,7 @@ function IndustryTargetCard(props: IndustryTargetCardProps) {
           )}
         </div>
         {!collapsed ? (
-          <div className="space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+          <div className="space-y-2 rounded-none border border-slate-200 bg-slate-50 p-3 sm:rounded-2xl">
             <div className="text-xs font-semibold text-slate-600">数据范围（horizon）</div>
             <div className="grid grid-cols-2 gap-2 text-xs">
               <label className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1">

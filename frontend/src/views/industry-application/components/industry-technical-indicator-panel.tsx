@@ -241,7 +241,7 @@ export function IndustryTechnicalIndicatorPanel({
   const streak = ind.above_ma20_streak ?? 0
 
   return (
-    <div className="grid gap-3 lg:grid-cols-2">
+    <div className="grid gap-0 sm:gap-3 lg:grid-cols-2">
       {/* ========== 1) 实时数据 ========== */}
       <Card className="rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
         <CardHeader>

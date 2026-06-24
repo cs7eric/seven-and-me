@@ -17,6 +17,7 @@ export function ChartCard({
   onAnalyzeSelection,
   loadingBars,
   mobileCompact = false,
+  cardClassName,
 }: {
   collapsed: boolean
   onToggle: () => void
@@ -29,6 +30,7 @@ export function ChartCard({
   onAnalyzeSelection: (item: ChartPanelSelectionItem) => void
   loadingBars: boolean
   mobileCompact?: boolean
+  cardClassName?: string
 }) {
   const [showMobileHint, setShowMobileHint] = useState(true)
 
@@ -46,6 +48,7 @@ export function ChartCard({
       badge={String(overlays.length)}
       collapsed={collapsed}
       onToggle={onToggle}
+      className={cardClassName}
     >
       <div className={`relative -mx-1 max-w-full overflow-hidden ${mobileCompact ? "h-[50svh] min-h-[300px]" : "h-[54svh] min-h-[340px]"} max-h-[520px] sm:h-[440px] lg:h-full lg:max-h-none lg:min-h-0 lg:flex-1`}>
         {showMobileHint ? (

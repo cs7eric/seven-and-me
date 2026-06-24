@@ -907,7 +907,7 @@ export function SectorHeatmap({ data, loading, onRefresh, autoRefresh, onAutoRef
         </div>
 
         <div className="grid min-h-0 flex-1 gap-1.5">
-          <div className="relative h-full min-h-0 overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <div className="relative h-full min-h-0 overflow-hidden rounded-none border border-slate-200 bg-white sm:rounded-lg">
             <div ref={chartRef} className="h-full w-full bg-white" />
             {treemapData.length === 0 ? (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-slate-400">

@@ -157,11 +157,11 @@ export function WorkspaceShell({
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-background md:bg-transparent">
           <div
             className={cn(
               "flex min-h-full flex-col gap-6",
-              fullBleed ? "p-0" : "p-0 md:p-6"
+              fullBleed ? "p-0" : "p-3 md:p-6"
             )}
           >
             {children}

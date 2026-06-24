@@ -67,14 +67,14 @@ const COLUMNS: Array<{
   sortable?: SortKey
   format?: (row: IndustryFundFlowRow) => React.ReactNode
 }> = [
-  { key: "序号", label: "#", align: "center", width: "w-12", colWidth: "48px" },
-  { key: "行业", label: "行业", align: "left", width: "min-w-[120px]", colWidth: "150px" },
+  { key: "序号", label: "#", align: "center", width: "w-10", colWidth: "40px" },
+  { key: "行业", label: "行业", align: "left", width: "min-w-[96px]", colWidth: "116px" },
   {
     key: "sortable",
     label: "行业指数涨跌幅",
     align: "right",
-    width: "w-32",
-    colWidth: "150px",
+    width: "w-28",
+    colWidth: "118px",
     sortable: "行业指数涨跌幅",
     format: (r) => formatPercent(r["行业指数涨跌幅"]),
   },
@@ -82,8 +82,8 @@ const COLUMNS: Array<{
     key: "sortable",
     label: "流入资金(亿)",
     align: "right",
-    width: "w-28",
-    colWidth: "128px",
+    width: "w-24",
+    colWidth: "104px",
     sortable: "流入资金(亿)",
     format: (r) => formatYi(r["流入资金(亿)"]),
   },
@@ -91,8 +91,8 @@ const COLUMNS: Array<{
     key: "sortable",
     label: "流出资金(亿)",
     align: "right",
-    width: "w-28",
-    colWidth: "128px",
+    width: "w-24",
+    colWidth: "104px",
     sortable: "流出资金(亿)",
     format: (r) => formatYi(r["流出资金(亿)"]),
   },
@@ -100,8 +100,8 @@ const COLUMNS: Array<{
     key: "sortable",
     label: "净额(亿)",
     align: "right",
-    width: "w-28",
-    colWidth: "120px",
+    width: "w-24",
+    colWidth: "96px",
     sortable: "净额(亿)",
     format: (r) => formatNet(r["净额(亿)"]),
   },
@@ -109,17 +109,17 @@ const COLUMNS: Array<{
     key: "公司家数",
     label: "公司家数",
     align: "right",
-    width: "w-20",
-    colWidth: "96px",
+    width: "w-16",
+    colWidth: "76px",
     format: (r) => formatInt(r["公司家数"]),
   },
-  { key: "领涨股", label: "领涨股", align: "left", width: "min-w-[100px]", colWidth: "130px" },
+  { key: "领涨股", label: "领涨股", align: "left", width: "min-w-[88px]", colWidth: "104px" },
   {
     key: "sortable",
     label: "领涨股涨跌幅",
     align: "right",
-    width: "w-28",
-    colWidth: "140px",
+    width: "w-24",
+    colWidth: "112px",
     sortable: "领涨股涨跌幅",
     format: (r) => formatPercent(r["领涨股涨跌幅"]),
   },
@@ -127,8 +127,8 @@ const COLUMNS: Array<{
     key: "当前价(元)",
     label: "当前价(元)",
     align: "right",
-    width: "w-24",
-    colWidth: "108px",
+    width: "w-20",
+    colWidth: "88px",
     format: (r) => formatPrice(r["当前价(元)"]),
   },
 ]
@@ -284,8 +284,8 @@ export function IndustryFundFlowTable() {
   }
 
   return (
-    <Card className="flex h-full min-h-0 flex-col rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl">
-      <CardHeader className="shrink-0 border-b border-slate-100 px-3 py-3 sm:px-6 sm:py-6">
+    <Card className="flex h-full min-h-0 flex-col rounded-none border-slate-200 bg-white shadow-[0_16px_46px_rgba(15,23,42,0.06)] sm:rounded-3xl gap-0">
+      <CardHeader className="shrink-0 border-b border-slate-100 px-3 py-1 sm:px-6 sm:py-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
             <CardTitle className="flex min-w-0 items-center gap-2 text-sm sm:text-base">
@@ -366,7 +366,7 @@ export function IndustryFundFlowTable() {
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-auto">
-            <table className="min-w-[1198px] table-fixed text-sm">
+            <table className="min-w-[858px] table-fixed text-sm">
               <colgroup>
                 {COLUMNS.map((col) => (
                   <col key={col.label} style={{ width: col.colWidth }} />

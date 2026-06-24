@@ -10,7 +10,7 @@ export function NotApplicableCard({
   description: string
 }) {
   return (
-    <Card className="border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
+    <Card className="rounded-none border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] sm:rounded-2xl">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <Lock className="size-4 text-slate-400" />

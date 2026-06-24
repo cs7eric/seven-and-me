@@ -31,7 +31,7 @@ function formatDate(value?: string) {
 
 function DetailPanel({ html, text }: { html: string; text: string }) {
   return (
-    <div className="max-w-full overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
+    <div className="max-w-full overflow-hidden rounded-none border-y border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)] sm:rounded-3xl sm:border">
       <div className="result-body">{text ? <div dangerouslySetInnerHTML={{ __html: html }} /> : <div className="text-muted-foreground">暂无内容</div>}</div>
     </div>
   );
@@ -86,20 +86,20 @@ function MobileHistoryList({
 
   return (
     <div className="space-y-3 pb-3 sm:hidden">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <div className="relative px-3">
+        <Search className="pointer-events-none absolute left-6 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="Search history"
-          className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-4 text-[16px] text-slate-900 shadow-sm outline-none transition placeholder:text-muted-foreground focus:border-sky-400"
+          className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-10 pr-4 text-[16px] text-slate-900 shadow-sm outline-none transition placeholder:text-muted-foreground focus:border-sky-400"
         />
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         {filteredItems.length ? filteredItems.map((item) => (
-          <Card key={item.id} className="overflow-hidden border-white/70 bg-white/80 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          <Card key={item.id} className="overflow-hidden rounded-none border-x-0 border-white/70 bg-white/80 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
             <CardContent className="space-y-3 p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1 space-y-2">
@@ -116,7 +116,7 @@ function MobileHistoryList({
                 </div>
               </div>
 
-              <div className="space-y-2 rounded-2xl bg-slate-50/80 p-3 text-sm text-slate-700">
+              <div className="space-y-2 rounded-xl bg-slate-50/80 p-3 text-sm text-slate-700">
                 <div className="space-y-0.5">
                   <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">File</div>
                   <div className="break-words text-sm text-slate-900">{item.file_name || "--"}</div>
@@ -142,7 +142,7 @@ function MobileHistoryList({
             </CardContent>
           </Card>
         )) : (
-          <Card className="border-dashed border-slate-200 bg-white/75">
+          <Card className="rounded-none border-x-0 border-dashed border-slate-200 bg-white/75">
             <CardContent className="flex flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
               <Search className="size-8" />
               <div>{query ? "No matching history records." : "暂无历史记录，请在 MP4 解析完成后点击导出历史记录。"}</div>
@@ -231,7 +231,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
       );
     }
     return (
-      <div className="max-w-full overflow-hidden rounded-3xl border border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
+      <div className="max-w-full overflow-hidden rounded-none border-y border-white/70 bg-white/85 shadow-[0_24px_70px_rgba(15,23,42,0.08)] sm:rounded-3xl sm:border">
         <div className="summary-stage">
           <div className="summary-workspace" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
         </div>
@@ -240,8 +240,8 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
   }, [activeView, collapsedAsk, collapsedQaItems, handleFollowupAsk, handleToggleQaItem, polishedHtml, qaItems, summaryHtml, task.polished, task.transcript, transcriptHtml]);
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
+    <div className="space-y-4 sm:space-y-5">
+      <div className="flex items-center justify-between gap-3 px-3 sm:px-0">
         <Button asChild variant="ghost" size="sm">
           <Link to="/mp4-to-word/history" className="inline-flex items-center gap-2">
             <ArrowLeft className="size-4" />
@@ -250,7 +250,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
         </Button>
       </div>
 
-      <Card className="overflow-hidden border-white/70 bg-gradient-to-br from-white via-slate-50 to-slate-100/80 shadow-[0_24px_70px_rgba(15,23,42,0.08)]">
+      <Card className="overflow-hidden rounded-none border-x-0 border-white/70 bg-gradient-to-br from-white via-slate-50 to-slate-100/80 shadow-[0_24px_70px_rgba(15,23,42,0.08)] sm:rounded-xl sm:border">
         <CardContent className="space-y-5 p-4 sm:p-6">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -258,34 +258,34 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
               <Badge variant="outline">{task.status || "done"}</Badge>
             </div>
             <div>
-              <h1 className="break-words text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">{record.title}</h1>
+              <h1 className="break-words text-xl font-semibold tracking-tight text-slate-950 sm:text-3xl">{record.title}</h1>
               <p className="mt-2 text-sm text-muted-foreground">{formatDate(record.created_at)}</p>
             </div>
           </div>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-2xl bg-white/80 p-4 shadow-sm">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-xl bg-white/80 p-3 shadow-sm sm:rounded-2xl sm:p-4">
               <div className="text-xs text-muted-foreground">Task ID</div>
               <div className="mt-1 truncate font-mono text-sm text-slate-900">{task.task_id}</div>
             </div>
-            <div className="rounded-2xl bg-white/80 p-4 shadow-sm">
+            <div className="rounded-xl bg-white/80 p-3 shadow-sm sm:rounded-2xl sm:p-4">
               <div className="text-xs text-muted-foreground">File</div>
               <div className="mt-1 truncate text-sm text-slate-900">{task.file_name || "--"}</div>
             </div>
-            <div className="rounded-2xl bg-white/80 p-4 shadow-sm">
+            <div className="rounded-xl bg-white/80 p-3 shadow-sm sm:rounded-2xl sm:p-4">
               <div className="text-xs text-muted-foreground">Platform</div>
               <div className="mt-1 truncate text-sm text-slate-900">{String(metadata.platform || "--")}</div>
             </div>
-            <div className="rounded-2xl bg-white/80 p-4 shadow-sm">
+            <div className="rounded-xl bg-white/80 p-3 shadow-sm sm:rounded-2xl sm:p-4">
               <div className="text-xs text-muted-foreground">Duration</div>
               <div className="mt-1 truncate text-sm text-slate-900">{metadata.duration ? `${metadata.duration}s` : "--"}</div>
             </div>
           </div>
           <div className="grid gap-3 xl:grid-cols-[1.2fr_0.8fr]">
-            <div className="rounded-2xl bg-white/80 p-4 shadow-sm">
+            <div className="rounded-xl bg-white/80 p-3 shadow-sm sm:rounded-2xl sm:p-4">
               <div className="text-xs text-muted-foreground">Source</div>
               <div className="mt-1 break-all text-sm text-slate-900">{String(metadata.source_url || metadata.download_url || "--")}</div>
             </div>
-            <div className="rounded-2xl bg-white/80 p-4 shadow-sm">
+            <div className="rounded-xl bg-white/80 p-3 shadow-sm sm:rounded-2xl sm:p-4">
               <div className="text-xs text-muted-foreground">Tags</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {(metadata.tags as string[] | undefined)?.length ? (metadata.tags as string[]).map((tag) => <Badge key={tag} variant="outline">{tag}</Badge>) : <span className="text-sm text-muted-foreground">--</span>}
@@ -300,7 +300,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
       </Card>
 
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/70 bg-white/75 p-2 shadow-sm sm:flex sm:flex-wrap sm:items-center">
+        <div className="grid grid-cols-4 gap-1 rounded-none border-y border-white/70 bg-white/75 p-1.5 shadow-sm sm:flex sm:flex-wrap sm:items-center sm:gap-2 sm:rounded-2xl sm:border sm:p-2">
           {[
             { key: "summary", label: "Summary" },
             { key: "polished", label: "Polished" },
@@ -310,7 +310,7 @@ function HistoryContent({ record }: { record: MP4HistoryRecord }) {
             <Button
               key={item.key}
               variant={activeView === item.key ? "default" : "ghost"}
-              className="w-full rounded-xl sm:w-auto"
+              className="h-9 w-full rounded-lg px-2 text-xs sm:h-10 sm:w-auto sm:rounded-xl sm:px-4 sm:text-sm"
               onClick={() => setActiveView(item.key as "summary" | "polished" | "transcript" | "ask")}
             >
               {item.label}
@@ -384,11 +384,11 @@ export default function Mp4HistoryPage() {
   }, [load]);
 
   return (
-    <WorkspaceShell sectionLabel="MP4 to Word" pageTitle="History">
-      <div className="container max-w-full space-y-5 px-3 sm:px-6">
+    <WorkspaceShell sectionLabel="MP4 to Word" pageTitle="History" mobilePageTitle="history">
+      <div className="container max-w-full space-y-4 px-0 sm:space-y-5 sm:px-6">
         <style>{QA_STYLE_FIX}</style>
         {id ? null : (
-          <Card className="border-white/70 bg-white/80 shadow-[0_20px_70px_rgba(15,23,42,0.08)]">
+          <Card className="hidden border-white/70 bg-white/80 shadow-[0_20px_70px_rgba(15,23,42,0.08)] sm:block">
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
