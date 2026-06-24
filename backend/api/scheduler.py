@@ -930,7 +930,7 @@ def get_job_history(job_id: str):
                     "start_at": "2026-06-20T17:00:12",
                     "end_at": "2026-06-20T17:01:30",
                     "trigger_type": "auto" | "manual",
-                    "status": "success" | "failed" | "skipped" | "running",
+                    "status": "success" | "failed" | "skipped" | "running" | "processing",
                     "error": "..." | null,
                     "duration_seconds": 78.4,
                     // application_analysis 还会带:

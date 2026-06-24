@@ -16,7 +16,7 @@ import type {
   IndustryFundFlowIndustryListResponse,
 } from "@/views/stock-overview/market-pulse/lib/types";
 
-const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "http://localhost:5000";
+const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
 
 // ---------------------------------------------------------------------------
@@ -4024,12 +4024,13 @@ export interface SchedulerJobActionResponse {
 
 /** 单条 job run history (来自 /api/scheduler/jobs/<id>/history). */
 export interface SchedulerJobHistoryItem {
+  id?: string
   start_at: string
   end_at: string
   /** 触发方式: "auto" = cron 自动 / "manual" = 手动点"立即触发" */
   trigger_type: "auto" | "manual" | string
-  /** 运行结果: success / failed / skipped / running */
-  status: "success" | "failed" | "skipped" | "running" | string
+  /** 运行结果: success / failed / skipped / running / processing */
+  status: "success" | "failed" | "skipped" | "running" | "processing" | string
   /** 失败时的错误信息 (成功时为 null) */
   error: string | null
   /** 成功时的详情信息 (如 "ok, parsed 12236 files → daily_raw"), 失败时为 null */

@@ -129,6 +129,7 @@ function statusBadgeVariant(status: string | null | undefined): "default" | "sec
       return "destructive"
     case "running":
     case "in_progress":
+    case "processing":
       return "secondary"
     default:
       return "outline"
@@ -189,7 +190,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
     let cancelled = false
     const load = () => {
       setHistoryLoading(true)
-      fetchSchedulerJobHistory(job.id, 20)
+      fetchSchedulerJobHistory(job.id, 80)
         .then((res) => {
           if (!cancelled) setHistory(res.items || [])
         })
@@ -279,7 +280,7 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
 
       {/* Dialog 详情 */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+        <DialogContent className="max-h-[85vh] w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-[1120px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings2 className="size-4" />
@@ -484,6 +485,17 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
               </span>
             ) : null}
 
+            <Button
+              size="sm"
+              variant="secondary"
+              className="rounded-xl"
+              disabled={isActionPending("trigger")}
+              onClick={() => onAction(job.id, "trigger")}
+            >
+              <Zap className="size-3.5" />
+              {isActionPending("trigger") ? "触发中…" : "手动触发"}
+            </Button>
+
             <DeleteJobButton
               jobId={job.id}
               jobName={job.name}
@@ -508,16 +520,32 @@ function JobHistorySection({
   items: SchedulerJobHistoryItem[]
   loading: boolean
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const visibleItems = expanded ? items : items.slice(0, 3)
+
   return (
     <div className="space-y-1.5 text-sm">
-      <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        <HistoryIcon className="size-3.5" />
-        <span>历史记录</span>
-        <span className="text-[10px] text-muted-foreground/60">
-          (默认显示 3 条, 每 5s 自动刷新)
-        </span>
-        {loading ? (
-          <RefreshCw className="size-3 animate-spin text-muted-foreground/60" />
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <HistoryIcon className="size-3.5" />
+          <span>历史记录</span>
+          <span className="text-[10px] text-muted-foreground/60">
+            (每 5s 自动刷新)
+          </span>
+          {loading ? (
+            <RefreshCw className="size-3 animate-spin text-muted-foreground/60" />
+          ) : null}
+        </div>
+        {items.length > 3 ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-6 px-2 text-[11px]"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "收起" : `展开 ${items.length} 条`}
+          </Button>
         ) : null}
       </div>
 
@@ -533,13 +561,20 @@ function JobHistorySection({
             <span>状态</span>
             <span>耗时</span>
           </div>
-          <div className="divide-y divide-border/30">
-            {items.slice(0, 3).map((it, idx) => (
-              <HistoryRow key={`${it.start_at}-${idx}`} item={it} />
+          <div className={cn("divide-y divide-border/30", expanded && "max-h-[360px] overflow-y-auto")}>
+            {visibleItems.map((it, idx) => (
+              <HistoryRow key={it.id || `${it.start_at}-${idx}`} item={it} />
             ))}
-            {items.length > 3 ? (
-              <div className="flex items-center justify-center bg-muted/20 px-2 py-2 text-[11px] text-muted-foreground">
-                …… 还有 {items.length - 3} 条历史记录未展开显示
+            {!expanded && items.length > 3 ? (
+              <div className="flex items-center justify-center gap-2 bg-muted/20 px-2 py-2 text-[11px] text-muted-foreground">
+                <span>还有 {items.length - 3} 条历史记录</span>
+                <button
+                  type="button"
+                  className="font-medium text-foreground/80 hover:text-foreground"
+                  onClick={() => setExpanded(true)}
+                >
+                  展开
+                </button>
               </div>
             ) : null}
           </div>
@@ -554,6 +589,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
   const isFailed = item.status === "failed"
   const isSkipped = item.status === "skipped"
   const isSuccess = item.status === "success"
+  const isProcessing = item.status === "processing" || item.status === "running" || item.status === "in_progress"
   const isManual = item.trigger_type === "manual"
   const hasDetail = (isFailed || isSkipped) ? !!item.error : (isSuccess && !!item.message)
 
@@ -563,6 +599,7 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
         "grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-2 py-1.5 text-xs",
         isFailed && "bg-red-50/50 dark:bg-red-950/10",
         isSkipped && "bg-amber-50/50 dark:bg-amber-950/10",
+        isProcessing && "bg-sky-50/50 dark:bg-sky-950/10",
         isSuccess && (item.error || item.message) && "bg-emerald-50/50 dark:bg-emerald-950/10",
       )}
     >
@@ -602,7 +639,14 @@ function HistoryRow({ item }: { item: SchedulerJobHistoryItem }) {
         )}
       </Badge>
       <Badge variant={statusBadgeVariant(item.status)} className={cn(statusBadgeClass(item.status), "px-1.5 py-0 text-[10px]")}>
-        {item.status}
+        {isProcessing ? (
+          <>
+            <RefreshCw className="mr-0.5 size-2.5 animate-spin" />
+            processing
+          </>
+        ) : (
+          item.status
+        )}
       </Badge>
       <span className="font-mono tabular-nums text-muted-foreground">
         {formatSeconds(item.duration_seconds)}

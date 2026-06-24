@@ -205,7 +205,7 @@ CREATE TABLE IF NOT EXISTS app.scheduler_job_run_history (
         trigger_type IN ('auto', 'manual')
     ),
     CONSTRAINT ck_scheduler_job_run_history_status CHECK (
-        status IN ('success', 'failed', 'skipped', 'running')
+        status IN ('success', 'failed', 'skipped', 'running', 'processing')
     ),
     CONSTRAINT ck_scheduler_job_run_history_time_range CHECK (
         ended_at >= started_at

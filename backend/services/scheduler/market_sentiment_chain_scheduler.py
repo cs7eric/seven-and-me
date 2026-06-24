@@ -6,13 +6,20 @@ import threading
 import time
 import traceback
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Callable
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from backend.services.scheduler.config_store import register_job
-from backend.services.scheduler.job_history import record_run, trigger_type
+from backend.services.scheduler.job_history import (
+    begin_run,
+    mark_processing_interrupted,
+    record_run,
+    trigger_type,
+    update_run,
+)
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.stock.trading_calendar import is_trading_day
@@ -81,10 +88,58 @@ _JOB_ID = "market_sentiment_chain_refresh"
 
 _scheduler: BackgroundScheduler | None = None
 _scheduler_lock = threading.Lock()
+_run_lock = threading.Lock()
+_CHAIN_LOCK_PATH = Path(__file__).resolve().parents[3] / "runtime" / "market_sentiment_chain_refresh.lock"
 
 
 StepRunner = Callable[[], Any]
 StepStatusGetter = Callable[[], dict[str, Any]]
+
+
+class _ChainProcessLock:
+    def __init__(self) -> None:
+        self._fh = None
+
+    def acquire(self) -> bool:
+        _CHAIN_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(_CHAIN_LOCK_PATH, "a+b")
+        fh.seek(0, os.SEEK_END)
+        if fh.tell() == 0:
+            fh.write(b"0")
+            fh.flush()
+        fh.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            fh.close()
+            return False
+        self._fh = fh
+        return True
+
+    def release(self) -> None:
+        fh = self._fh
+        self._fh = None
+        if fh is None:
+            return
+        try:
+            fh.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
 
 
 _CHAIN_STEPS: list[tuple[str, StepRunner, StepStatusGetter]] = [
@@ -163,25 +218,89 @@ def _is_step_success(status: dict[str, Any]) -> bool:
     if not isinstance(status, dict):
         return False
     last_status = str(status.get("lastStatus") or status.get("last_status") or "").strip().lower()
+    last_run_ok = bool(status.get("lastRunOk") if "lastRunOk" in status else status.get("last_run_ok"))
     if last_status:
-        return last_status == "success"
-    return bool(status.get("lastRunOk") if "lastRunOk" in status else status.get("last_run_ok"))
+        if last_status == "success":
+            return True
+        if last_status.startswith("skipped"):
+            return last_run_ok
+        return False
+    return last_run_ok
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    return value
 
 
 def _build_step_summary(step_code: str, step_status: dict[str, Any]) -> dict[str, Any]:
-    return {
+    return _json_safe({
         "jobId": step_code,
         "ok": _is_step_success(step_status),
         "lastRunAt": step_status.get("lastRunAt") or step_status.get("last_run_at"),
         "lastStatus": step_status.get("lastStatus") or step_status.get("last_status"),
         "lastRunError": step_status.get("lastRunError") or step_status.get("last_error"),
         "lastMessage": step_status.get("lastMessage") or step_status.get("last_message"),
-    }
+    })
 
 
-def _job_run_chain() -> None:
+def _record_already_running() -> None:
     now = _beijing_now()
     start_at_iso = now.isoformat(timespec="seconds")
+    cst_time = cst_now_str()
+    status = _load_job_status()
+    status["lastRunAt"] = start_at_iso
+    status["lastRunOk"] = True
+    status["lastStatus"] = "skipped"
+    status["lastRunError"] = f"{cst_time} market_sentiment_chain 已有执行中, 本次触发跳过"
+    status["lastDurationSeconds"] = 0.0
+    status["lastMessage"] = status["lastRunError"]
+    _save_job_status(status)
+    logger.warning("market_sentiment_chain trigger skipped: already running")
+
+
+def _job_run_chain_unlocked() -> None:
+    now = _beijing_now()
+    start_at_iso = now.isoformat(timespec="seconds")
+    history_id = begin_run(
+        _JOB_ID,
+        start_at=start_at_iso,
+        message="market_sentiment_chain processing",
+    )
+
+    def _finish_history(
+        *,
+        final_status: str,
+        duration_seconds: float | None,
+        error: str | None = None,
+        message: str | None = None,
+    ) -> None:
+        updated = update_run(
+            history_id,
+            status=final_status,  # type: ignore[arg-type]
+            duration_seconds=duration_seconds,
+            end_at=_beijing_now().isoformat(timespec="seconds"),
+            error=error,
+            message=message,
+        )
+        if updated is None:
+            record_run(
+                _JOB_ID,
+                status=final_status,  # type: ignore[arg-type]
+                duration_seconds=duration_seconds,
+                start_at=start_at_iso,
+                end_at=_beijing_now().isoformat(timespec="seconds"),
+                error=error,
+                message=message,
+            )
+
     status = _load_job_status()
     status["lastRunAt"] = start_at_iso
     status["lastStep"] = None
@@ -198,12 +317,9 @@ def _job_run_chain() -> None:
         status["lastRunError"] = f"{cst_time} 非交易日, 跳过串行 MSI 链路"
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
-        record_run(
-            _JOB_ID,
-            status="skipped",
+        _finish_history(
+            final_status="skipped",
             duration_seconds=status.get("lastDurationSeconds"),
-            start_at=start_at_iso,
-            end_at=datetime.now().isoformat(timespec="seconds"),
             error=status.get("lastRunError"),
         )
         return
@@ -230,12 +346,9 @@ def _job_run_chain() -> None:
                 step_code,
                 traceback.format_exc(),
             )
-            record_run(
-                _JOB_ID,
-                status="failed",
+            _finish_history(
+                final_status="failed",
                 duration_seconds=status.get("lastDurationSeconds"),
-                start_at=start_at_iso,
-                end_at=datetime.now().isoformat(timespec="seconds"),
                 error=status.get("lastRunError"),
             )
             return
@@ -261,12 +374,9 @@ def _job_run_chain() -> None:
                 step_code,
                 status["lastRunError"],
             )
-            record_run(
-                _JOB_ID,
-                status="failed",
+            _finish_history(
+                final_status="failed",
                 duration_seconds=status.get("lastDurationSeconds"),
-                start_at=start_at_iso,
-                end_at=datetime.now().isoformat(timespec="seconds"),
                 error=str(status.get("lastRunError") or "")[:500],
                 message=f"stopped_at={step_code}",
             )
@@ -289,14 +399,44 @@ def _job_run_chain() -> None:
     status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
     _save_job_status(status)
     logger.info("market_sentiment_chain ok in %.1fs: steps=%d", status["lastDurationSeconds"], len(completed_steps))
-    record_run(
-        _JOB_ID,
-        status="success",
+    _finish_history(
+        final_status="success",
         duration_seconds=status.get("lastDurationSeconds"),
-        start_at=start_at_iso,
-        end_at=datetime.now().isoformat(timespec="seconds"),
         message=status.get("lastMessage"),
     )
+
+
+def _job_run_chain() -> None:
+    if not _run_lock.acquire(blocking=False):
+        _record_already_running()
+        return
+    process_lock = _ChainProcessLock()
+    if not process_lock.acquire():
+        _run_lock.release()
+        _record_already_running()
+        return
+    try:
+        _job_run_chain_unlocked()
+    finally:
+        process_lock.release()
+        _run_lock.release()
+
+
+def _cleanup_interrupted_processing_runs() -> None:
+    process_lock = _ChainProcessLock()
+    if not process_lock.acquire():
+        return
+    try:
+        message = f"{cst_now_str()} 服务重启/热重载导致上次执行中断"
+        count = mark_processing_interrupted(
+            _JOB_ID,
+            end_at=_beijing_now().isoformat(timespec="seconds"),
+            message=message,
+        )
+        if count:
+            logger.warning("market_sentiment_chain marked %d interrupted processing history rows", count)
+    finally:
+        process_lock.release()
 
 
 def start_market_sentiment_chain_scheduler() -> None:
@@ -310,6 +450,8 @@ def start_market_sentiment_chain_scheduler() -> None:
         if not status.get("enabled", True):
             logger.info("[MarketSentimentChainScheduler] disabled by config, not started")
             return
+
+        _cleanup_interrupted_processing_runs()
 
         sched = BackgroundScheduler(timezone="Asia/Shanghai")
         sched.add_job(

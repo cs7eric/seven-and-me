@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Any, Iterator, Literal
 
-from sqlalchemy import desc, select, func
+from sqlalchemy import desc, select
 
 from backend.models.scheduler import SchedulerJob, SchedulerJobRunHistory
 
@@ -31,7 +31,7 @@ _trigger_type_var: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 TriggerType = Literal["auto", "manual"]
-HistoryStatus = Literal["success", "failed", "skipped", "running"]
+HistoryStatus = Literal["success", "failed", "skipped", "running", "processing"]
 
 
 def set_trigger_type(t: TriggerType) -> None:
@@ -69,6 +69,129 @@ def _resolve_job_uuid(db, code: str):
         )
     ).scalar_one_or_none()
     return row
+
+
+def _parse_time(value: str, *, assume_tz: timezone) -> datetime:
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=assume_tz)
+    return dt
+
+
+def begin_run(
+    job_id: str,
+    *,
+    start_at: str,
+    message: str | None = None,
+    trigger_type: TriggerType | None = None,
+) -> str | None:
+    """Insert a visible in-progress history row and return its UUID."""
+    try:
+        with _session()() as db:
+            job_uuid = _resolve_job_uuid(db, job_id)
+            if job_uuid is None:
+                logger.warning(
+                    "job_history: job code '%s' not found in app.scheduler_jobs (deleted?), skip begin_run",
+                    job_id,
+                )
+                return None
+
+            start_dt = _parse_time(start_at, assume_tz=_CST)
+            record = SchedulerJobRunHistory(
+                job_id=job_uuid,
+                started_at=start_dt,
+                ended_at=start_dt,
+                trigger_type=trigger_type or get_trigger_type(),
+                status="processing",
+                error_message=None,
+                remark=message,
+                duration_seconds=0.0,
+            )
+            db.add(record)
+            db.flush()
+            return str(record.id)
+    except Exception as exc:
+        logger.warning("job_history.begin_run %s failed: %s", job_id, exc)
+        return None
+
+
+def update_run(
+    history_id: str | None,
+    *,
+    status: HistoryStatus,
+    duration_seconds: float | None,
+    end_at: str,
+    error: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any] | None:
+    """Update a previously inserted processing row with the final outcome."""
+    if not history_id:
+        return None
+    try:
+        with _session()() as db:
+            record = db.get(SchedulerJobRunHistory, history_id)
+            if record is None:
+                logger.warning("job_history.update_run history_id=%s not found", history_id)
+                return None
+
+            end_dt = _parse_time(end_at, assume_tz=_CST)
+            if end_dt < record.started_at:
+                end_dt = record.started_at
+            record.ended_at = end_dt
+            record.status = status
+            record.error_message = error
+            record.remark = message
+            record.duration_seconds = round(duration_seconds, 2) if duration_seconds is not None else None
+            db.flush()
+            return {
+                "id": history_id,
+                "start_at": record.started_at.isoformat() if record.started_at else None,
+                "end_at": record.ended_at.isoformat() if record.ended_at else None,
+                "trigger_type": record.trigger_type,
+                "status": record.status,
+                "error": record.error_message,
+                "message": record.remark,
+                "duration_seconds": float(record.duration_seconds) if record.duration_seconds else None,
+            }
+    except Exception as exc:
+        logger.warning("job_history.update_run %s failed: %s", history_id, exc)
+        return None
+
+
+def mark_processing_interrupted(
+    job_id: str,
+    *,
+    end_at: str,
+    message: str,
+) -> int:
+    """Mark leftover processing rows as failed after a scheduler restart."""
+    try:
+        with _session()() as db:
+            job_uuid = _resolve_job_uuid(db, job_id)
+            if job_uuid is None:
+                return 0
+
+            end_dt = _parse_time(end_at, assume_tz=_CST)
+            rows = db.execute(
+                select(SchedulerJobRunHistory).where(
+                    SchedulerJobRunHistory.job_id == job_uuid,
+                    SchedulerJobRunHistory.status == "processing",
+                )
+            ).scalars().all()
+
+            for record in rows:
+                record.ended_at = end_dt
+                record.status = "failed"
+                record.error_message = message
+                record.remark = message
+                if record.started_at:
+                    duration = max((end_dt - record.started_at).total_seconds(), 0.0)
+                    record.duration_seconds = round(duration, 2)
+
+            return len(rows)
+    except Exception as exc:
+        logger.warning("job_history.mark_processing_interrupted %s failed: %s", job_id, exc)
+        return 0
 
 
 def record_run(
@@ -154,6 +277,7 @@ def get_history(job_id: str, limit: int = 50) -> list[dict[str, Any]]:
 
             return [
                 {
+                    "id": str(r.id),
                     "start_at": r.started_at.isoformat() if r.started_at else None,
                     "end_at": r.ended_at.isoformat() if r.ended_at else None,
                     "trigger_type": r.trigger_type,
@@ -173,6 +297,9 @@ __all__ = [
     "set_trigger_type",
     "get_trigger_type",
     "trigger_type",
+    "begin_run",
+    "update_run",
+    "mark_processing_interrupted",
     "record_run",
     "get_history",
     "MAX_HISTORY_PER_JOB",

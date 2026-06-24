@@ -61,11 +61,14 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _DB_PATH = _REPO_ROOT / "reference" / "stock" / "duckdb" / "market_data.duckdb"
 _SCHEMA_PATH = _REPO_ROOT / "reference" / "stock" / "duckdb" / "schema.sql"
+_LOCK_PATH = _DB_PATH.with_suffix(_DB_PATH.suffix + ".lock")
 
 # 锁冲突重试配置: 跟 process-wide 单例时一样, 解决**短时**锁冲突
 # (e.g. scheduler tick 1-2s 写完). 永久锁靠协作 (短连接) 解决, 不靠重试.
 _MAX_LOCK_CONFLICT_RETRIES = 6
 _LOCK_BACKOFFS = (0.5, 1.0, 2.0, 4.0, 4.0, 4.0)  # 累计 ≈ 15.5s
+_PROCESS_LOCK = threading.RLock()
+_TLS = threading.local()
 
 
 def get_db_path() -> Path:
@@ -74,6 +77,93 @@ def get_db_path() -> Path:
 
 def get_schema_path() -> Path:
     return _SCHEMA_PATH
+
+
+class _InterProcessDuckDBLock:
+    """A small cross-process file lock held for the whole DuckDB connection lifetime."""
+
+    def __init__(self) -> None:
+        self._fh = None
+
+    def acquire(self) -> None:
+        _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(_LOCK_PATH, "a+b")
+        fh.seek(0, os.SEEK_END)
+        if fh.tell() == 0:
+            fh.write(b"0")
+            fh.flush()
+        fh.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            while True:
+                try:
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.2)
+        else:
+            import fcntl
+
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        self._fh = fh
+
+    def release(self) -> None:
+        fh = self._fh
+        self._fh = None
+        if fh is None:
+            return
+        try:
+            fh.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        finally:
+            fh.close()
+
+
+def _active_connection() -> duckdb.DuckDBPyConnection | None:
+    return getattr(_TLS, "connection", None)
+
+
+def _set_active_connection(con: duckdb.DuckDBPyConnection | None) -> None:
+    if con is None:
+        if hasattr(_TLS, "connection"):
+            delattr(_TLS, "connection")
+        return
+    _TLS.connection = con
+
+
+def _open_locked_connection(read_only: bool) -> tuple[duckdb.DuckDBPyConnection, _InterProcessDuckDBLock]:
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _PROCESS_LOCK.acquire()
+    file_lock = _InterProcessDuckDBLock()
+    try:
+        file_lock.acquire()
+        con = _connect_with_lock_retry(read_only=read_only)
+        _set_active_connection(con)
+        return con, file_lock
+    except Exception:
+        file_lock.release()
+        _PROCESS_LOCK.release()
+        raise
+
+
+def _close_locked_connection(con: duckdb.DuckDBPyConnection, file_lock: _InterProcessDuckDBLock) -> None:
+    try:
+        try:
+            con.close()
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        _set_active_connection(None)
+        file_lock.release()
+        _PROCESS_LOCK.release()
 
 
 # ---------------------------------------------------------------------------
@@ -133,15 +223,16 @@ def conn(read_only: bool = False) -> Iterator[duckdb.DuckDBPyConnection]:
     DuckDB 不允许同进程同一文件开多个 read_write 连接, 但允许只读连接多个并存.
     跨进程 read_write 互斥 (DuckDB 嵌入式本质, 见文件顶部 docstring).
     """
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = _connect_with_lock_retry(read_only=read_only)
+    active = _active_connection()
+    if active is not None:
+        yield active
+        return
+
+    con, file_lock = _open_locked_connection(read_only=read_only)
     try:
         yield con
     finally:
-        try:
-            con.close()
-        except Exception:  # noqa: BLE001
-            pass
+        _close_locked_connection(con, file_lock)
 
 
 class _AutoCloseConn:
@@ -159,11 +250,19 @@ class _AutoCloseConn:
         的 _latest_trade_date) 用了链式, 已改成显式 try/finally close.
     """
 
-    __slots__ = ("_con", "_closed")
+    __slots__ = ("_con", "_closed", "_file_lock", "_borrowed")
 
-    def __init__(self, con: duckdb.DuckDBPyConnection):
+    def __init__(
+        self,
+        con: duckdb.DuckDBPyConnection,
+        file_lock: _InterProcessDuckDBLock | None = None,
+        *,
+        borrowed: bool = False,
+    ):
         self._con = con
         self._closed = False
+        self._file_lock = file_lock
+        self._borrowed = borrowed
 
     def __enter__(self) -> duckdb.DuckDBPyConnection:
         if self._closed:
@@ -177,14 +276,19 @@ class _AutoCloseConn:
         if self._closed:
             return
         self._closed = True
-        try:
-            self._con.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if self._borrowed:
+            return
+        if self._file_lock is None:
+            try:
+                self._con.close()
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        _close_locked_connection(self._con, self._file_lock)
 
     def __getattr__(self, name: str) -> Any:
         # 大部分方法 (execute / executemany / fetchone / fetchall / commit) 走这里
-        if name in ("_con", "_closed", "close", "__enter__", "__exit__"):
+        if name in ("_con", "_closed", "_file_lock", "_borrowed", "close", "__enter__", "__exit__"):
             raise AttributeError(name)
         return getattr(self._con, name)
 
@@ -199,9 +303,12 @@ def get_conn(read_only: bool = False) -> _AutoCloseConn:
     返回的连接在 GC 时 (CPython 上 = 函数返回时) 自动 close, 释放文件锁.
     新代码推荐用 ``with conn(read_only=...) as con:`` 更显式.
     """
-    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = _connect_with_lock_retry(read_only=read_only)
-    return _AutoCloseConn(con)
+    active = _active_connection()
+    if active is not None:
+        return _AutoCloseConn(active, borrowed=True)
+
+    con, file_lock = _open_locked_connection(read_only=read_only)
+    return _AutoCloseConn(con, file_lock=file_lock)
 
 
 # ---------------------------------------------------------------------------
