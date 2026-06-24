@@ -50,7 +50,7 @@ from backend.services.stock.trading_day_resolver import resolve_target_trading_d
 
 logger = logging.getLogger(__name__)
 
-MARKET_SENTIMENT_INDEX_CRON = "20 17 * * mon-fri"  # 工作日 17:20 (北京时间, 等全部 9 factor + upstream 完成后)
+MARKET_SENTIMENT_INDEX_CRON = "15 19 * * mon-fri"  # 工作日 19:15 (北京时间, 等 9 factor 全部错峰完成后合成)
 _JOB_ID = "market_sentiment_index_refresh"
 _SCRIPT_PATH_KEY = "market_sentiment_index_script"  # 状态文件可覆盖脚本路径 (测试用)
 _JOB_TIMEOUT_SECONDS = 5 * 60  # composite 算 9 张卡, 给 5 min 上限

@@ -76,6 +76,12 @@ from backend.services.scheduler.market_sentiment_index_scheduler import (
     start_market_sentiment_index_scheduler,
     stop_market_sentiment_index_scheduler,
 )
+from backend.services.scheduler.market_sentiment_chain_scheduler import (
+    get_market_sentiment_chain_scheduler_status,
+    run_market_sentiment_chain_now,
+    start_market_sentiment_chain_scheduler,
+    stop_market_sentiment_chain_scheduler,
+)
 from backend.services.scheduler.risk_appetite_scheduler import (
     get_risk_appetite_scheduler_status,
     run_risk_appetite_now,
@@ -171,6 +177,23 @@ LEGACY_JOB_ID_ALIASES: dict[str, str] = {
     "volatility_sentiment": "volatility_sentiment_refresh",
 }
 
+MARKET_SENTIMENT_COMPONENT_JOB_IDS = {
+    'tdx_hsjday_download',
+    'initial_backfill_refresh',
+    'qfq_reconciliation_refresh',
+    'limit_emotion_refresh',
+    'risk_appetite_refresh',
+    'ma_count_refresh',
+    'volatility_sentiment_refresh',
+    'style_risk_appetite_refresh',
+    'profit_effect_refresh',
+    'market_overview_daily',
+    'turnover_activity_refresh',
+    'ths_industry_fund_flow_daily',
+    'sector_breadth_refresh',
+    'market_sentiment_index_refresh',
+}
+
 
 def _canonical_job_id(job_id: str | None) -> str | None:
     if not job_id:
@@ -254,6 +277,7 @@ JOB_CATEGORY_MAP: dict[str, list[int]] = {
     'initial_backfill_refresh':               [5],
     'qfq_reconciliation_refresh':             [5],
     'turnover_activity_refresh':              [5],
+    'market_sentiment_chain_refresh':         [5],
     'test_scheduler_demo':                    [6],
 }
 
@@ -533,6 +557,8 @@ def _normalize_last_run(job_id: str, status: dict, config: dict) -> dict[str, An
         # 外部脚本 (subprocess 调 python -u scripts/...), 状态文件无 last_run 字段
         # targets 留 None, 前端显示 "—"
         targets = None
+    elif job_id == "market_sentiment_chain_refresh":
+        targets = _first_num(config, status, keys=("lastTargetsProcessed", "last_targets_processed"))
     # test_scheduler_demo 没有 status / config, 全部 None
 
     return {
@@ -560,13 +586,7 @@ def _supports_enable(job_id: str) -> bool:
         'market_overview_inside', 'market_overview_close', 'market_overview_warmup',
         'eltdx_overview_inside', 'eltdx_overview_close', 'eltdx_overview_warmup',
         'daily_eod_incremental',
-        'tdx_hsjday_download',
-        'market_overview_daily',
-        'ths_industry_fund_flow_daily',
-        'style_risk_appetite_refresh', 'profit_effect_refresh', 'market_sentiment_index_refresh',
-        'ma_count_refresh', 'risk_appetite_refresh', 'volatility_sentiment_refresh',
-        'initial_backfill_refresh', 'qfq_reconciliation_refresh', 'turnover_activity_refresh',
-        'limit_emotion_refresh', 'sector_breadth_refresh',
+        'market_sentiment_chain_refresh',
         'test_scheduler_demo',
     }
 
@@ -615,6 +635,8 @@ def _get_live_status(job_id: str) -> dict[str, Any]:
         return get_market_overview_daily_scheduler_status()
     if job_id == 'ths_industry_fund_flow_daily':
         return get_ths_industry_fund_flow_daily_scheduler_status()
+    if job_id == 'market_sentiment_chain_refresh':
+        return get_market_sentiment_chain_scheduler_status()
     if job_id == 'style_risk_appetite_refresh':
         return get_style_risk_appetite_scheduler_status()
     if job_id == 'profit_effect_refresh':
@@ -671,6 +693,8 @@ def _start_scheduler(job_id: str) -> None:
         start_market_overview_daily_scheduler()
     elif job_id == 'ths_industry_fund_flow_daily':
         start_ths_industry_fund_flow_daily_scheduler()
+    elif job_id == 'market_sentiment_chain_refresh':
+        start_market_sentiment_chain_scheduler()
     elif job_id == 'style_risk_appetite_refresh':
         start_style_risk_appetite_scheduler()
     elif job_id == 'profit_effect_refresh':
@@ -725,6 +749,8 @@ def _stop_scheduler(job_id: str) -> None:
         stop_market_overview_daily_scheduler()
     elif job_id == 'ths_industry_fund_flow_daily':
         stop_ths_industry_fund_flow_daily_scheduler()
+    elif job_id == 'market_sentiment_chain_refresh':
+        stop_market_sentiment_chain_scheduler()
     elif job_id == 'style_risk_appetite_refresh':
         stop_style_risk_appetite_scheduler()
     elif job_id == 'profit_effect_refresh':
@@ -851,6 +877,8 @@ def _trigger_scheduler_inner(job_id: str) -> dict[str, Any]:
         return run_market_overview_daily_now()
     if job_id == 'ths_industry_fund_flow_daily':
         return run_ths_industry_fund_flow_daily_now()
+    if job_id == 'market_sentiment_chain_refresh':
+        return run_market_sentiment_chain_now()
     if job_id == 'style_risk_appetite_refresh':
         return run_style_risk_appetite_now()
     if job_id == 'profit_effect_refresh':
@@ -1093,7 +1121,7 @@ def list_jobs():
 
         items.append({
             **entry_for_response,
-            'supports_enable': _supports_enable(job_id),
+            'supports_enable': _supports_enable(job_id) and job_id not in MARKET_SENTIMENT_COMPONENT_JOB_IDS,
             'categories': categories_value,
             'categorySortOrders': category_sort_orders,
             'enabled': enabled_in_registry,
@@ -1140,7 +1168,7 @@ def get_job(job_id: str):
         'ok': True,
         'item': {
             **entry_for_response,
-            'supports_enable': _supports_enable(canonical_job_id),
+            'supports_enable': _supports_enable(canonical_job_id) and canonical_job_id not in MARKET_SENTIMENT_COMPONENT_JOB_IDS,
             'categories': categories_value,
             'categorySortOrders': category_sort_orders,
             'enabled': bool(entry.get('enabled', True)),
@@ -1227,6 +1255,9 @@ def _flip_enabled(job_id: str, enabled: bool) -> dict[str, Any]:
 def enable_job(job_id: str):
     if not _supports_enable(job_id):
         return jsonify({'ok': False, 'error': f'job {job_id} does not support enable/disable toggle'}), 400
+    canonical_job_id = _canonical_job_id(job_id) or job_id
+    if canonical_job_id in MARKET_SENTIMENT_COMPONENT_JOB_IDS:
+        return jsonify({'ok': False, 'error': f'job {canonical_job_id} is manual-only; enable market_sentiment_chain_refresh instead'}), 400
     try:
         _flip_enabled(job_id, True)
         _start_scheduler(job_id)
@@ -1240,6 +1271,9 @@ def enable_job(job_id: str):
 def disable_job(job_id: str):
     if not _supports_enable(job_id):
         return jsonify({'ok': False, 'error': f'job {job_id} does not support enable/disable toggle'}), 400
+    canonical_job_id = _canonical_job_id(job_id) or job_id
+    if canonical_job_id in MARKET_SENTIMENT_COMPONENT_JOB_IDS:
+        return jsonify({'ok': False, 'error': f'job {canonical_job_id} is manual-only; disable market_sentiment_chain_refresh instead'}), 400
     try:
         _stop_scheduler(job_id)
         _flip_enabled(job_id, False)
@@ -1280,6 +1314,9 @@ def trigger_job(job_id: str):
 def start_job(job_id: str):
     if not _job_exists(job_id):
         return jsonify({'ok': False, 'error': f'unknown job_id: {job_id}'}), 404
+    canonical_job_id = _canonical_job_id(job_id) or job_id
+    if canonical_job_id in MARKET_SENTIMENT_COMPONENT_JOB_IDS:
+        return jsonify({'ok': False, 'error': f'job {canonical_job_id} is manual-only; use market_sentiment_chain_refresh for automatic scheduling'}), 400
     try:
         _flip_enabled(job_id, True)
         _start_scheduler(job_id)

@@ -44,7 +44,7 @@ from backend.services.scheduler.backfill_validator import (
 
 logger = logging.getLogger(__name__)
 
-RISK_APPETITE_CRON = "5 17 * * mon-fri"  # 工作日 17:05 (北京时间, 跟 17:00 daily_eod 错开 5 min)
+RISK_APPETITE_CRON = "55 17 * * mon-fri"  # 工作日 17:55 (北京时间, 等 17:10/17:30 上游 DuckDB 写入结束后再跑)
 _JOB_ID = "risk_appetite_refresh"
 _SCRIPT_PATH_KEY = "risk_appetite_script"  # 状态文件可覆盖脚本路径 (测试用)
 # 单日 --days=2 计算 < 0.5s, 给 2 min 上限足够
@@ -274,7 +274,7 @@ def _job_run_backfill() -> None:
 def _refresh_coverage(status: dict[str, Any]) -> None:
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as c:
+        with get_conn(read_only=True) as c:
             r = c.execute(
                 "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
                 "FROM risk_appetite_daily"

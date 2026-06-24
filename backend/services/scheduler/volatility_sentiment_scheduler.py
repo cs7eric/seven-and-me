@@ -48,7 +48,7 @@ from backend.services.scheduler.backfill_validator import (
 
 logger = logging.getLogger(__name__)
 
-VOLATILITY_SENTIMENT_CRON = "7 17 * * mon-fri"  # 工作日 17:07 (北京时间, 跟 17:06 ma_count 错开 1 min)
+VOLATILITY_SENTIMENT_CRON = "15 18 * * mon-fri"  # 工作日 18:15 (北京时间, 跟 ma_count 错开 10 min, 避免 DuckDB 写锁重叠)
 _JOB_ID = "volatility_sentiment_refresh"
 _SCRIPT_PATH_KEY = "volatility_sentiment_script"  # 状态文件可覆盖脚本路径 (测试用)
 # 单日 --days=2 计算 < 0.5s; auto-pull 拉一次 ~ 3s; 给 5 min 上限足够
@@ -242,7 +242,7 @@ def _job_run_backfill() -> None:
 def _refresh_coverage(status: dict[str, Any]) -> None:
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as c:
+        with get_conn(read_only=True) as c:
             r = c.execute(
                 "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
                 "FROM volatility_sentiment_daily"

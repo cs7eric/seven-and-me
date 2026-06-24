@@ -42,6 +42,37 @@ _NUMERIC_FIELDS = [
     "small_net_ratio",
 ]
 
+# 字段归属: akshare / manual 负责资金流, eltdx 负责成交额/涨跌家数.
+_FUND_FLOW_FIELDS = {
+    "main_net_inflow",
+    "super_large_net_inflow",
+    "large_net_inflow",
+    "medium_net_inflow",
+    "small_net_inflow",
+    "main_net_inflow_ratio",
+    "super_large_net_ratio",
+    "large_net_ratio",
+    "medium_net_ratio",
+    "small_net_ratio",
+}
+
+_MARKET_OVERVIEW_FIELDS = {
+    "total_amount",
+    "total_volume",
+    "rising_count",
+    "falling_count",
+    "flat_count",
+    "limit_up_count",
+    "limit_down_count",
+    "stock_count",
+}
+
+_SOURCE_OVERWRITE_FIELDS = {
+    "akshare": _FUND_FLOW_FIELDS,
+    "manual": _FUND_FLOW_FIELDS,
+    "eltdx": _MARKET_OVERVIEW_FIELDS,
+}
+
 # 字段类型分组 (用于 COALESCE 时类型转换)
 _NUMERIC_TYPES = {"numeric(18,4)", "numeric(6,2)"}
 _INT_TYPES = {"integer"}
@@ -109,6 +140,8 @@ def _row_to_dict(row: MarketOverviewSnapshot) -> dict[str, Any]:
         "source": row.source,
         "is_manual_override": row.is_manual_override,
         "manual_updated_at": row.manual_updated_at.isoformat() if row.manual_updated_at else None,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
 
 
@@ -132,7 +165,7 @@ class MarketOverviewPgRepository:
         fields: dict[str, Any],
         source_tag: str = "unknown",
     ) -> dict[str, Any]:
-        """COALESCE 风格 upsert: 已有字段不被覆盖, 缺失字段补入.
+        """按字段归属 upsert: 非本源字段补空位, 本源字段同日刷新时覆盖为最新值.
 
         Args:
             trade_date: 交易日
@@ -173,20 +206,25 @@ class MarketOverviewPgRepository:
             logger.info("market_overview_pg: inserted %s (source=%s)", td, source_tag)
             return _row_to_dict(row)
 
-        # UPDATE — COALESCE 字段 (已有值保留, 新值补入)
+        # UPDATE — 本源字段允许同日刷新覆盖, 非本源字段仍只补空位.
         changed = False
+        overwrite_fields = _SOURCE_OVERWRITE_FIELDS.get(source_tag, set())
         for k in _NUMERIC_FIELDS:
             v = fields.get(k)
             if v is None:
                 continue
             current = getattr(existing, k)
-            if current is not None:
-                continue  # 不覆盖已有值
+            allow_source_override = k in overwrite_fields
+            if current is not None and not allow_source_override:
+                continue
             if k in {"rising_count", "falling_count", "flat_count",
                      "limit_up_count", "limit_down_count", "stock_count"}:
-                setattr(existing, k, _parse_int(v))
+                parsed = _parse_int(v)
             else:
-                setattr(existing, k, _parse_decimal(v))
+                parsed = _parse_decimal(v)
+            if current == parsed:
+                continue
+            setattr(existing, k, parsed)
             changed = True
 
         if source_tag == "manual":
@@ -249,6 +287,34 @@ class MarketOverviewPgRepository:
         rows = self.db.scalars(stmt).all()
         rows.reverse()  # ASC
         return [_row_to_dict(r) for r in rows]
+
+    def get_previous(self, trade_date: date | str) -> dict[str, Any] | None:
+        """查询指定交易日前一个有效交易日的数据."""
+        td = _to_date(trade_date)
+        if td is None:
+            return None
+        row = self.db.scalar(
+            _alive()
+            .where(MarketOverviewSnapshot.trade_date < td)
+            .order_by(MarketOverviewSnapshot.trade_date.desc())
+            .limit(1)
+        )
+        return _row_to_dict(row) if row else None
+
+    def get_manual(self, trade_date: date | str) -> dict[str, Any] | None:
+        """查询指定交易日的 manual override 行, 无 manual 标记则返回 None."""
+        td = _to_date(trade_date)
+        if td is None:
+            return None
+        row = self.db.scalar(
+            _alive()
+            .where(
+                MarketOverviewSnapshot.trade_date == td,
+                MarketOverviewSnapshot.is_manual_override.is_(True),
+            )
+            .limit(1)
+        )
+        return _row_to_dict(row) if row else None
 
     def coverage(self) -> dict[str, Any]:
         """统计: 首日 / 末日 / 行数."""

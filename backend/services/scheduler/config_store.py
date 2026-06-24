@@ -20,7 +20,11 @@ from typing import Any
 
 from sqlalchemy import func, select, update
 
-from backend.models.scheduler import SchedulerJob
+from backend.models.scheduler import (
+    SchedulerJob,
+    SchedulerJobCategory,
+    SchedulerJobCategoryMapping,
+)
 from backend.services.scheduler.job_description_catalog import (
     get_job_description,
     iter_job_descriptions,
@@ -71,6 +75,53 @@ def save_config(code: str, config: dict[str, Any]) -> bool:
         return False
 
 
+def _sync_job_category_mappings(
+    db,
+    job: SchedulerJob,
+    category_codes: list[str],
+    category_sort_orders: dict[str, int] | None = None,
+) -> None:
+    if not category_codes:
+        return
+
+    cats = db.execute(
+        select(SchedulerJobCategory)
+        .where(
+            SchedulerJobCategory.code.in_(category_codes),
+            SchedulerJobCategory.deleted_at.is_(None),
+        )
+    ).scalars().all()
+    cat_by_code = {c.code: c for c in cats}
+    existing = {
+        row.category_id: row
+        for row in db.execute(
+            select(SchedulerJobCategoryMapping).where(
+                SchedulerJobCategoryMapping.job_id == job.id,
+                SchedulerJobCategoryMapping.deleted_at.is_(None),
+            )
+        ).scalars().all()
+    }
+
+    for index, category_code in enumerate(category_codes, start=1):
+        cat = cat_by_code.get(category_code)
+        if cat is None:
+            continue
+        sort_order = int((category_sort_orders or {}).get(category_code, index * 10))
+        mapping = existing.get(cat.id)
+        if mapping is not None:
+            mapping.sort_order = sort_order
+            mapping.deleted_at = None
+            mapping.updated_at = func.now()
+            continue
+        db.add(
+            SchedulerJobCategoryMapping(
+                job_id=job.id,
+                category_id=cat.id,
+                sort_order=sort_order,
+            )
+        )
+
+
 def register_job(
     code: str,
     name: str,
@@ -79,6 +130,8 @@ def register_job(
     service_class: str,
     config_file: str | None = None,
     default_config: dict[str, Any] | None = None,
+    category_codes: list[str] | None = None,
+    category_sort_orders: dict[str, int] | None = None,
 ) -> bool:
     """向 ``app.scheduler_jobs`` 注册/更新一个 job (幂等).
 
@@ -98,14 +151,15 @@ def register_job(
             extra = default_config or {}
 
             if existing:
-                existing.name = name
-                existing.description = description
-                existing.service_module = service_module
-                existing.service_class = service_class
-                existing.config_file = config_file or ""
-                existing.extra = {**extra, **(existing.extra or {})}
-                existing.updated_at = func.now()
-                existing.deleted_at = None
+                job = existing
+                job.name = name
+                job.description = description
+                job.service_module = service_module
+                job.service_class = service_class
+                job.config_file = config_file or ""
+                job.extra = {**extra, **(job.extra or {})}
+                job.updated_at = func.now()
+                job.deleted_at = None
             else:
                 job = SchedulerJob(
                     code=code,
@@ -119,6 +173,13 @@ def register_job(
                     registered_at=datetime.now(),
                 )
                 db.add(job)
+            db.flush()
+            _sync_job_category_mappings(
+                db,
+                job,
+                category_codes or [],
+                category_sort_orders,
+            )
             db.flush()
             return True
     except Exception as exc:

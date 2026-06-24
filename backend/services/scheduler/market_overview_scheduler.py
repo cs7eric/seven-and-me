@@ -29,15 +29,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
-from backend.services.stock.market_overview_akshare_service import (
-    capture_snapshot,
-    get_latest_snapshot,
-    get_archived_snapshot,
-)
-from backend.services.stock.market_overview_eltdx_service import (
-    capture_overview,
-    get_latest_overview,
-)
+from backend.services.stock.market_overview_akshare_service import capture_snapshot
+from backend.services.stock.market_overview_eltdx_service import capture_overview
 from backend.services.stock.trading_calendar import is_trade_time, is_trading_day
 
 logger = logging.getLogger(__name__)

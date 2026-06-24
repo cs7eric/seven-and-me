@@ -40,7 +40,7 @@ from backend.services.stock.trading_day_resolver import resolve_target_trading_d
 
 logger = logging.getLogger(__name__)
 
-TURNOVER_ACTIVITY_CRON = "12 17 * * mon-fri"
+TURNOVER_ACTIVITY_CRON = "55 18 * * mon-fri"
 _JOB_ID = "turnover_activity_refresh"
 _SCRIPT_PATH_KEY = "turnover_activity_script"
 _JOB_TIMEOUT_SECONDS = 5 * 60
@@ -103,7 +103,7 @@ def _fetch_turnover_activity_debug_snapshot(target_date) -> dict[str, Any]:
     try:
         from backend.adapters.market.duckdb_store import get_conn
 
-        with get_conn() as con:
+        with get_conn(read_only=True) as con:
             source_row = con.execute(
                 """
                 SELECT trade_date,

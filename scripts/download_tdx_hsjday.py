@@ -21,6 +21,7 @@ URL: https://data.tdx.com.cn/vipdoc/hsjday.zip (~538 MB)
 from __future__ import annotations
 
 import argparse
+import atexit
 import json as _json
 import logging
 import os
@@ -58,6 +59,7 @@ CHUNK_SIZE = 1024 * 1024  # 1 MB
 PROGRESS_EVERY_BYTES = 50 * 1024 * 1024  # 50 MB
 STALE_ZIP_RETRY_COUNT = 3
 STALE_ZIP_RETRY_SLEEP_SECONDS = 20
+RUN_LOCK_STALE_SECONDS = 2 * 60 * 60
 
 # data.tdx.com.cn 用 JS challenge 挡非浏览器, urllib 拿到的是 988B 的 <script> 页
 # 用这个 magic 判断下载是不是被挑战页挡了
@@ -271,6 +273,44 @@ def _download_via_playwright_ranges(ctx, url: str, total: int, dst: Path, t0: fl
     ctx.parent.browser.close() if hasattr(ctx, "parent") else None
     # 上面 ctx.close() 由外层调用, 这里只返回字节数
     return written
+
+
+def _acquire_run_lock(date_dir: Path, target_date: date) -> bool:
+    """同一交易日只允许一个下载/解压实例运行，避免互删临时目录."""
+    lock_path = date_dir / "hsjday.lock"
+    if lock_path.exists():
+        age = time.time() - lock_path.stat().st_mtime
+        if age < RUN_LOCK_STALE_SECONDS:
+            log.warning(
+                "[lock] %s 已有 hsjday 任务在运行或刚失败, 跳过本次: %s",
+                target_date.isoformat(), lock_path,
+            )
+            return False
+        log.warning("[lock] 清理 stale lock: %s (age=%.0fs)", lock_path, age)
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        log.warning("[lock] %s 已被其他进程抢先创建, 跳过本次", lock_path)
+        return False
+
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(f"pid={os.getpid()} date={target_date.isoformat()} started={datetime.now().isoformat(timespec='seconds')}\n")
+
+    def _cleanup_lock() -> None:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            log.debug("[lock] cleanup failed: %s", exc)
+
+    atexit.register(_cleanup_lock)
+    return True
 
 
 def _extract(zip_path: Path, out_dir: Path) -> int:
@@ -638,6 +678,8 @@ def main() -> int:
         return 0
 
     date_dir.mkdir(parents=True, exist_ok=True)
+    if not _acquire_run_lock(date_dir, d):
+        return 0
 
     # ═══════════════════════════════════════════════════════════════════
     # 0) 交易日校验 (腾讯 K 线 API)
@@ -761,7 +803,7 @@ def main() -> int:
         log.info("[step 3] dated target 已存在, 清理: %s", dated_target)
         shutil.rmtree(dated_target, ignore_errors=True)
 
-    extract_tmp = date_dir / "hsjday_extract_tmp"
+    extract_tmp = date_dir / f"hsjday_extract_tmp_{os.getpid()}"
     if extract_tmp.exists():
         shutil.rmtree(extract_tmp, ignore_errors=True)
 
@@ -855,7 +897,7 @@ def main() -> int:
     _cleanup_old_zips(DOWNLOAD_BASE, keep_days=2)
 
     # 清理中间目录
-    for tmp_dir in [date_dir / "hsjday_extracted", date_dir / "hsjday_extract_tmp"]:
+    for tmp_dir in [date_dir / "hsjday_extracted", extract_tmp]:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

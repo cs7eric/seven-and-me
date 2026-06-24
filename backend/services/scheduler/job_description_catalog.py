@@ -126,7 +126,7 @@ MSI 上游原始数据下载。
 MSI Factor 2 的上游数据回填。
 
 执行逻辑：
-1. 工作日 17:10 回填当日市场总成交额、资金流和大盘概览等汇总指标。
+1. 工作日 18:45 回填当日市场总成交额、资金流和大盘概览等汇总指标。
 2. 其中 total_amount 会被 turnover_activity 用作“当日全市场成交额”输入。
 3. 结果落到 duckdb.market_overview_daily，属于 MSI 成交活跃度的直接上游。
 """.strip(),
@@ -155,6 +155,14 @@ MSI Factor 7: 赚钱效应，权重 10%。
 2. up_5d_pct 表示近 5 日上涨股票占比；new_low_60d_pct 表示创 60 日新低股票占比。
 3. raw_score 越高，说明上涨面更宽且创新低更少，赚钱效应更好。
 4. 最终通过过去约 3 年滚动窗口分位映射为 0-100，落盘 duckdb.profit_effect_daily。
+""".strip(),
+    "market_sentiment_chain_refresh": """
+MSI 串行总链路调度。
+
+执行逻辑：
+1. 工作日按固定 cron 串行执行 MSI 上游、因子与 composite job。
+2. 顺序执行，前一步完成并写库后才进入下一步，避免 DuckDB / 文件锁重叠。
+3. 失败时在首个失败步骤处停止，保留步骤级状态供调度页排查。
 """.strip(),
     "market_sentiment_index_refresh": """
 MSI Composite 合成指数，9 因子加权汇总。
@@ -219,7 +227,7 @@ MSI Factor 8: 板块扩散，权重 5%。
 MSI 上游：TDX 日线解析入库。
 
 执行逻辑：
-1. 工作日 16:45 解析通达信 .day 二进制文件。
+1. 工作日 17:10 解析通达信 .day 二进制文件。
 2. 把全 A 日线原始行情写入 duckdb.daily_raw，采用 INSERT OR IGNORE / 幂等回填。
 3. 这是 qfq_reconciliation、ma_count、limit_emotion、profit_effect 等多个因子的共同上游。
 """.strip(),
@@ -227,7 +235,7 @@ MSI 上游：TDX 日线解析入库。
 MSI 上游：前复权/后复权对账补齐。
 
 执行逻辑：
-1. 工作日 16:50 对目标交易日进行 qfq/hfq 对账检查。
+1. 工作日 17:30 对目标交易日进行 qfq/hfq 对账检查。
 2. 若发现 daily_qfq / daily_hfq 缺失或异常，则补拉当日复权行情。
 3. 保障后续依赖复权价格的指标计算口径稳定一致。
 """.strip(),

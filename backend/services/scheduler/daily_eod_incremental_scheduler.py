@@ -5,8 +5,8 @@
   - 调 ``scripts/daily_eod_incremental.py`` (所有步骤已拆分到独立 job, 脚本已空)
 
 所有子步骤已拆分为独立 scheduler:
-  - initial_backfill (16:45), qfq_reconciliation (16:50), limit_emotion (17:03),
-    market_overview_daily (17:10), turnover_activity (17:12)
+  - initial_backfill (17:10), qfq_reconciliation (17:30), limit_emotion (17:45),
+    market_overview_daily (18:45), turnover_activity (18:55)
 
 启动: :mod:`backend.bootstrap` 调 :func:`start_daily_eod_incremental_scheduler`.
 关闭: ``MINIMAX_DAILY_EOD_INCREMENTAL_SCHEDULER_ENABLED=0``.
@@ -35,7 +35,7 @@ from backend.services.scheduler.job_history import record_run, trigger_type
 
 logger = logging.getLogger(__name__)
 
-DAILY_EOD_CRON = "0 17 * * mon-fri"  # 工作日 17:00 (北京时间)
+DAILY_EOD_CRON = "25 19 * * mon-fri"  # 工作日 19:25 (北京时间, 已废弃兜底; 避免与 MSI 正常链路抢 DuckDB 锁)
 _JOB_ID = "daily_eod_incremental"
 _STATUS_FILE_NAME = "daily_eod_incremental_job.json"
 _SCRIPT_PATH_KEY = "daily_eod_incremental_script"  # 状态文件里可覆盖脚本路径 (测试用)
@@ -91,9 +91,9 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
         code="daily_eod_incremental",
         name=name,
         description=(
-            "【已废弃】工作日 17:00 触发, 调 scripts/daily_eod_incremental.py, "
-            "所有子步骤已拆分到独立 job: initial_backfill(16:45), qfq_reconciliation(16:50), "
-            "limit_emotion(17:03), market_overview_daily(17:10), turnover_activity(17:12). "
+            "【已废弃】工作日 19:25 触发, 调 scripts/daily_eod_incremental.py, "
+            "所有子步骤已拆分到独立 job: initial_backfill(17:10), qfq_reconciliation(17:30), "
+            "limit_emotion(17:45), market_overview_daily(18:45), turnover_activity(18:55). "
             "保留 cron 仅做兜底."
         ),
         service_module="backend.services.scheduler.daily_eod_incremental_scheduler",
@@ -226,7 +226,7 @@ def _refresh_max_dates(status: dict[str, Any]) -> None:
     """从 duckdb 读 max(daily_raw.trade_date) 和 max(limit_emotion.trade_date) 写进 status."""
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as c:
+        with get_conn(read_only=True) as c:
             r1 = c.execute("SELECT MAX(trade_date) FROM daily_raw").fetchone()
             r2 = c.execute(
                 "SELECT MAX(trade_date) FROM limit_emotion_summary_daily"

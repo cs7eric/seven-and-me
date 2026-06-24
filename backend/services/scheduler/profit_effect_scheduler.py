@@ -43,7 +43,7 @@ from backend.services.scheduler.backfill_validator import (
 
 logger = logging.getLogger(__name__)
 
-PROFIT_EFFECT_CRON = "9 17 * * mon-fri"  # 工作日 17:09 (北京时间, 跟 17:08 style_risk_appetite 错开 1 min)
+PROFIT_EFFECT_CRON = "35 18 * * mon-fri"  # 工作日 18:35 (北京时间, 依赖 ma_count, 错峰避免 DuckDB 写锁重叠)
 _JOB_ID = "profit_effect_refresh"
 _SCRIPT_PATH_KEY = "profit_effect_script"  # 状态文件可覆盖脚本路径 (测试用)
 _JOB_TIMEOUT_SECONDS = 2 * 60

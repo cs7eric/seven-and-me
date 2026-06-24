@@ -1,7 +1,7 @@
 """TDX 日线数据初始回填 (Initial Backfill) scheduler.
 
 单 job:
-  - 工作日 16:45 触发 (cron ``45 16 * * mon-fri``)
+  - 工作日 17:10 触发 (cron ``10 17 * * mon-fri``)
   - 调 ``scripts/initial_backfill.py``
   - 解析 TDX .day 二进制文件 -> duckdb daily_raw (INSERT OR IGNORE 幂等)
   - 依赖: tdx_hsjday_download (16:30) 必须先把 hsjday/ 数据下载/更新好
@@ -37,7 +37,7 @@ from backend.services.stock.trading_day_resolver import resolve_target_trading_d
 
 logger = logging.getLogger(__name__)
 
-INITIAL_BACKFILL_CRON = "45 16 * * mon-fri"
+INITIAL_BACKFILL_CRON = "10 17 * * mon-fri"
 _JOB_ID = "initial_backfill_refresh"
 _SCRIPT_PATH_KEY = "initial_backfill_script"
 _JOB_TIMEOUT_SECONDS = 15 * 60

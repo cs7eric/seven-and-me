@@ -873,16 +873,129 @@ def stock_chart_market_overview():
 
 
 # ============================================================================
-# 大盘成交额 / 主力净流入 (AKShare 双源, 独立于上面 K线技术分析的 market_overview)
+# 大盘成交额 / 主力净流入 (PG-only runtime truth)
 # 路径前缀用 /market-overview-akshare/ 避免跟上面的 /market-overview/ 冲突.
-# 数据由 backend/services/stock/market_overview_akshare_service.py + scheduler 维护.
 # ============================================================================
+def _market_overview_prev_day_flow(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    return {
+        "mainNetInflow": row.get("main_net_inflow"),
+        "superLargeNetInflow": row.get("super_large_net_inflow"),
+        "largeNetInflow": row.get("large_net_inflow"),
+        "mediumNetInflow": row.get("medium_net_inflow"),
+        "smallNetInflow": row.get("small_net_inflow"),
+        "mainNetInflowRatio": row.get("main_net_inflow_ratio"),
+        "superLargeNetInflowRatio": row.get("super_large_net_ratio"),
+        "largeNetInflowRatio": row.get("large_net_ratio"),
+        "mediumNetInflowRatio": row.get("medium_net_ratio"),
+        "smallNetInflowRatio": row.get("small_net_ratio"),
+        "totalAmount": row.get("total_amount"),
+    }
+
+
+
+def _market_overview_row_to_response(
+    row: dict[str, Any],
+    *,
+    is_trade_time_value: bool | None = None,
+    prev_row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "tradingDate": row.get("trade_date"),
+        "fetchedAt": row.get("updated_at"),
+        "source": row.get("source") or "postgres",
+        "isTradeTime": is_trade_time_value,
+        "totalAmount": row.get("total_amount"),
+        "totalVolume": row.get("total_volume"),
+        "stockCount": row.get("stock_count"),
+        "risingCount": row.get("rising_count"),
+        "fallingCount": row.get("falling_count"),
+        "flatCount": row.get("flat_count"),
+        "limitUpCount": row.get("limit_up_count"),
+        "limitDownCount": row.get("limit_down_count"),
+        "mainNetInflow": row.get("main_net_inflow"),
+        "superLargeNetInflow": row.get("super_large_net_inflow"),
+        "largeNetInflow": row.get("large_net_inflow"),
+        "mediumNetInflow": row.get("medium_net_inflow"),
+        "smallNetInflow": row.get("small_net_inflow"),
+        "mainNetInflowRatio": row.get("main_net_inflow_ratio"),
+        "superLargeNetInflowRatio": row.get("super_large_net_ratio"),
+        "largeNetInflowRatio": row.get("large_net_ratio"),
+        "mediumNetInflowRatio": row.get("medium_net_ratio"),
+        "smallNetInflowRatio": row.get("small_net_ratio"),
+        "prevDayFlow": _market_overview_prev_day_flow(prev_row),
+        "prevDayTradingDate": prev_row.get("trade_date") if prev_row else None,
+    }
+
+
 @stock_chart_bp.route('/api/stock-chart/market-overview-akshare')
 def stock_chart_market_overview_akshare():
-    """读 latest akshare snapshot (成交额 / 主力净流入 / 涨跌家数)."""
-    from backend.services.stock.market_overview_akshare_service import get_latest_snapshot
+    """读最新大盘 snapshot (PG-only)."""
     try:
-        return jsonify(get_latest_snapshot())
+        from backend.config.database import session_scope
+        from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
+        from backend.services.stock.trading_calendar import is_trade_time, is_trading_day
+
+        today = _beijing_today()
+        with session_scope() as db:
+            repo = MarketOverviewPgRepository(db)
+            today_row = repo.get(today.isoformat())
+            if today_row:
+                prev_row = repo.get_previous(today.isoformat())
+                return jsonify(_market_overview_row_to_response(
+                    today_row,
+                    is_trade_time_value=is_trade_time(),
+                    prev_row=prev_row,
+                ))
+
+            if is_trading_day(today):
+                return jsonify({
+                    "ok": False,
+                    "error": "no snapshot for today",
+                    "tradingDate": today.isoformat(),
+                    "fetchedAt": None,
+                    "totalAmount": None,
+                    "mainNetInflow": None,
+                    "superLargeNetInflow": None,
+                    "superLargeNetInflowRatio": None,
+                    "largeNetInflow": None,
+                    "largeNetInflowRatio": None,
+                    "mediumNetInflow": None,
+                    "mediumNetInflowRatio": None,
+                    "smallNetInflow": None,
+                    "smallNetInflowRatio": None,
+                    "mainNetInflowRatio": None,
+                    "risingCount": None,
+                    "fallingCount": None,
+                    "flatCount": None,
+                    "limitUpCount": None,
+                    "limitDownCount": None,
+                    "stockCount": None,
+                    "source": "no_data",
+                    "dataStatus": "no_data",
+                    "isTradeTime": is_trade_time(),
+                    "prevDayFlow": None,
+                    "prevDayTradingDate": None,
+                })
+
+            latest_row = repo.get_latest(today.isoformat())
+            if not latest_row:
+                return jsonify({
+                    "ok": False,
+                    "error": "no market overview snapshot found",
+                    "tradingDate": today.isoformat(),
+                    "fetchedAt": None,
+                    "totalAmount": None,
+                    "mainNetInflow": None,
+                    "isTradeTime": is_trade_time(),
+                })
+            prev_row = repo.get_previous(latest_row.get("trade_date"))
+            return jsonify(_market_overview_row_to_response(
+                latest_row,
+                is_trade_time_value=is_trade_time(),
+                prev_row=prev_row,
+            ))
     except Exception as exc:
         return jsonify({"ok": False, "error": str(exc)}), 500
 
@@ -912,15 +1025,13 @@ def stock_chart_market_overview_akshare_scheduler_status():
 
 @stock_chart_bp.route('/api/stock-chart/market-overview-akshare/archive/<string:trading_date>')
 def stock_chart_market_overview_akshare_archive(trading_date: str):
-    """按交易日 (YYYY-MM-DD 或 YYYYMMDD) 读历史 snapshot. PG → JSON 兜底."""
-    # Normalise date format
+    """按交易日从 PostgreSQL 读取历史 snapshot."""
     td = trading_date.replace("-", "")
     if len(td) == 8 and td.isdigit():
         iso_date = f"{td[:4]}-{td[4:6]}-{td[6:8]}"
     else:
         iso_date = trading_date
 
-    # 1) Try PG
     try:
         from backend.config.database import session_scope
         from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
@@ -928,47 +1039,22 @@ def stock_chart_market_overview_akshare_archive(trading_date: str):
         with session_scope() as db:
             repo = MarketOverviewPgRepository(db)
             row = repo.get(iso_date)
-        if row:
-            return jsonify(row)
+            if not row:
+                return jsonify({"ok": False, "error": f"archive {trading_date} not found"}), 404
+            prev_row = repo.get_previous(iso_date)
+        return jsonify(_market_overview_row_to_response(row, prev_row=prev_row))
     except Exception as exc:
-        logger.warning("market overview archive from PG failed, fallback: %s", exc)
-
-    # 2) Fallback: JSON
-    from backend.services.stock.market_overview_akshare_service import get_archived_snapshot
-    snap = get_archived_snapshot(trading_date)
-    if snap is None:
-        return jsonify({"ok": False, "error": f"archive {trading_date} not found"}), 404
-    return jsonify(snap)
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @stock_chart_bp.route('/api/stock-chart/market-overview-akshare/history')
 def stock_chart_market_overview_akshare_history():
-    """最近 N 个交易日的历史序列 (Market Pulse 趋势图用).
-
-    URL: GET /api/stock-chart/market-overview-akshare/history?range=60d
-    range 接受: 20d / 60d / 120d / 1y (默认 60d, 上限 365d)
-
-    数据源优先级: PostgreSQL (主) → JSON archive (兜底)
-
-    返回:
-      {
-        "ok": true,
-        "range": "60d",
-        "source": "postgres | eastmoney",
-        "count": 60,
-        "items": [
-          {"date": "2025-12-11", "totalAmount": null, "risingCount": null,
-           "mainNetInflow": -857.75, "superLargeNetInflow": -510.11, ...},
-          ...
-        ]
-      }
-    """
+    """最近 N 个交易日的历史序列 (PG-only)."""
     range_param = (request.args.get("range") or "60d").strip().lower()
     days_map = {"20d": 20, "60d": 60, "120d": 120, "1y": 260}
     days = days_map.get(range_param, 60)
     days = max(1, min(days, 365))
 
-    # 1) Try PostgreSQL first
     try:
         from backend.config.database import session_scope
         from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
@@ -977,59 +1063,45 @@ def stock_chart_market_overview_akshare_history():
             repo = MarketOverviewPgRepository(db)
             pg_items = repo.get_history(days=days)
 
-        if pg_items:
-            # Convert snake_case → camelCase for frontend compatibility
-            items = []
-            for pt in pg_items:
-                items.append({
-                    "date": pt.get("trade_date"),
-                    "totalAmount": pt.get("total_amount"),
-                    "totalVolume": pt.get("total_volume"),
-                    "risingCount": pt.get("rising_count"),
-                    "fallingCount": pt.get("falling_count"),
-                    "flatCount": pt.get("flat_count"),
-                    "limitUpCount": pt.get("limit_up_count"),
-                    "limitDownCount": pt.get("limit_down_count"),
-                    "stockCount": pt.get("stock_count"),
-                    "mainNetInflow": pt.get("main_net_inflow"),
-                    "superLargeNetInflow": pt.get("super_large_net_inflow"),
-                    "largeNetInflow": pt.get("large_net_inflow"),
-                    "mediumNetInflow": pt.get("medium_net_inflow"),
-                    "smallNetInflow": pt.get("small_net_inflow"),
-                    "mainNetInflowRatio": pt.get("main_net_inflow_ratio"),
-                    "superLargeNetInflowRatio": pt.get("super_large_net_ratio"),
-                    "largeNetInflowRatio": pt.get("large_net_ratio"),
-                    "mediumNetInflowRatio": pt.get("medium_net_ratio"),
-                    "smallNetInflowRatio": pt.get("small_net_ratio"),
-                    "source": pt.get("source"),
-                })
-            return jsonify({
-                "ok": True,
-                "range": range_param,
-                "source": "postgres",
-                "count": len(items),
-                "items": items,
+        items = []
+        for pt in pg_items:
+            items.append({
+                "date": pt.get("trade_date"),
+                "totalAmount": pt.get("total_amount"),
+                "totalVolume": pt.get("total_volume"),
+                "risingCount": pt.get("rising_count"),
+                "fallingCount": pt.get("falling_count"),
+                "flatCount": pt.get("flat_count"),
+                "limitUpCount": pt.get("limit_up_count"),
+                "limitDownCount": pt.get("limit_down_count"),
+                "stockCount": pt.get("stock_count"),
+                "mainNetInflow": pt.get("main_net_inflow"),
+                "superLargeNetInflow": pt.get("super_large_net_inflow"),
+                "largeNetInflow": pt.get("large_net_inflow"),
+                "mediumNetInflow": pt.get("medium_net_inflow"),
+                "smallNetInflow": pt.get("small_net_inflow"),
+                "mainNetInflowRatio": pt.get("main_net_inflow_ratio"),
+                "superLargeNetInflowRatio": pt.get("super_large_net_ratio"),
+                "largeNetInflowRatio": pt.get("large_net_ratio"),
+                "mediumNetInflowRatio": pt.get("medium_net_ratio"),
+                "smallNetInflowRatio": pt.get("small_net_ratio"),
+                "source": pt.get("source"),
             })
+        return jsonify({
+            "ok": True,
+            "range": range_param,
+            "source": "postgres",
+            "count": len(items),
+            "items": items,
+        })
     except Exception as exc:
-        logger.warning("market overview history from PG failed, fallback to JSON: %s", exc)
-
-    # 2) Fallback: JSON archive
-    from backend.services.stock.market_overview_akshare_service import get_history_points
-    items = get_history_points(days=days)
-    return jsonify({
-        "ok": True,
-        "range": range_param,
-        "source": "eastmoney",
-        "count": len(items),
-        "items": items,
-    })
+        return jsonify({"ok": False, "error": str(exc), "items": []}), 500
 
 
 # =============================================================================
 # 市场概况 (eltdx): 全A成交额 / 涨跌家数
 # 路径: /market-overview-eltdx/ (独立于 /market-overview-akshare/ fund-flow)
-# 数据由 backend/services/stock/market_overview_eltdx_service.py 维护.
-# 独立持久化: reference/market-overview/market-overview/latest.json
+# 运行时数据直接读 PostgreSQL.
 # =============================================================================
 @stock_chart_bp.route('/api/stock-chart/market-overview-eltdx')
 def stock_chart_market_overview_eltdx():
@@ -1056,8 +1128,7 @@ def stock_chart_market_overview_eltdx_refresh():
 
 # =============================================================================
 # 手动粘贴的资金流 (东方财富资金流页面 copy-paste 兜底)
-# 持久化: reference/market-overview/fund-flow/manual/YYYYMMDD.json
-# 跟 akshare / eltdx overview 并行 — 前端 manual 存在时优先用 manual 覆盖.
+# 运行时读写直接走 PostgreSQL；manual 仍优先覆盖资金流字段.
 # =============================================================================
 
 @stock_chart_bp.route('/api/stock-chart/market-overview-manual-fund-flow', methods=['GET'])

@@ -49,7 +49,7 @@ from backend.services.stock.trading_day_resolver import resolve_target_trading_d
 
 logger = logging.getLogger(__name__)
 
-MA_COUNT_CRON = "6 17 * * mon-fri"  # 工作日 17:06 (北京时间, 跟 17:05 risk_appetite 错开 1 min)
+MA_COUNT_CRON = "5 18 * * mon-fri"  # 工作日 18:05 (北京时间, 跟 risk_appetite 错开 10 min, 避免 DuckDB 写锁重叠)
 _JOB_ID = "ma_count_refresh"
 _SCRIPT_PATH_KEY = "ma_count_script"  # 状态文件可覆盖脚本路径 (测试用)
 # 全市场 MA 计数 (5500 只 × 60 日窗口) 单日 < 1s; 给 5 min 上限足够
@@ -254,7 +254,7 @@ def _job_run_backfill() -> None:
 def _refresh_coverage(status: dict[str, Any]) -> None:
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as c:
+        with get_conn(read_only=True) as c:
             r = c.execute(
                 "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
                 "FROM ma_count_daily"

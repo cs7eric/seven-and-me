@@ -43,7 +43,7 @@ from backend.services.scheduler.backfill_validator import (
 
 logger = logging.getLogger(__name__)
 
-STYLE_RISK_APPETITE_CRON = "8 17 * * mon-fri"  # 工作日 17:08 (北京时间, 跟 17:06 ma_count 错开 2 min)
+STYLE_RISK_APPETITE_CRON = "25 18 * * mon-fri"  # 工作日 18:25 (北京时间, 依赖 ma_count/index_returns, 错峰避免 DuckDB 写锁重叠)
 _JOB_ID = "style_risk_appetite_refresh"
 _SCRIPT_PATH_KEY = "style_risk_appetite_script"  # 状态文件可覆盖脚本路径 (测试用)
 _JOB_TIMEOUT_SECONDS = 2 * 60

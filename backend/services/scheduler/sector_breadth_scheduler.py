@@ -39,7 +39,7 @@ from backend.services.stock.trading_day_resolver import resolve_target_trading_d
 
 logger = logging.getLogger(__name__)
 
-SECTOR_BREADTH_CRON = "17 17 * * mon-fri"
+SECTOR_BREADTH_CRON = "5 19 * * mon-fri"
 _JOB_ID = "sector_breadth_refresh"
 _SCRIPT_PATH_KEY = "sector_breadth_script"
 _JOB_TIMEOUT_SECONDS = 3 * 60

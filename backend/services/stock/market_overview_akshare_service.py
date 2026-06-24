@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-"""大盘成交额 / 主力净流入 持久化服务 (AKShare 双源).
+r"""大盘成交额 / 主力净流入 持久化服务 (AKShare 双源).
+
+维护前请先看:
+`F:\dev-repo\mp4-to-word-new\design\backend\market-overview-json-to-postgres.md`
 
 **不走系统代理**: akshare requests 默认读取 Windows WinHTTP/IE 系统代理设置,
 如果代理软件没开或端口不对会超时/失败. 本模块在 import 时清空代理环境变量,
 并通过 monkey-patch 让 ``requests.Session`` 默认 ``trust_env=False`` 直连,
 不影响系统其他程序的代理配置.
+
+运行时真源已经收口到 PostgreSQL: capture 只写 PG，latest/history/archive API
+不再依赖 JSON 持久化.
 
 **不修改**既有的 :mod:`backend.services.stock.market_overview_service`
 (那是 K线技术分析模块, 跟本模块职责不同, 不要动).
@@ -72,11 +78,12 @@ _MARKET_OVERVIEW_ARCHIVE_DIR = MARKET_OVERVIEW_FOLDER / "archive"  # shared!
 MARKET_OVERVIEW_FOLDER = _MARKET_OVERVIEW_FOLDER  # noqa: N816
 MARKET_OVERVIEW_LATEST_FILE = _MARKET_OVERVIEW_LATEST_FILE  # noqa: N816
 MARKET_OVERVIEW_ARCHIVE_DIR = _MARKET_OVERVIEW_ARCHIVE_DIR  # noqa: N816
+from backend.config.database import session_scope
+from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
 from backend.services.stock.trading_calendar import (
     is_trade_time,
     is_trading_day,
 )
-from backend.utils.json_io import read_json_file
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +248,6 @@ def _fetch_from_akshare() -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 # 昨日资金数据 (用于与今日差额对比)
 # ---------------------------------------------------------------------------
-# 资金流相关字段 (只存这些, payload 轻量化)
 _FLOW_FIELDS = [
     "mainNetInflow",
     "superLargeNetInflow",
@@ -258,66 +264,31 @@ _FLOW_FIELDS = [
 
 
 def _extract_flow_data(payload: dict[str, Any]) -> dict[str, Any] | None:
-    """从 payload 里只提取资金流相关字段, 供前端算 vs-昨日差额用."""
+    """从 PG row 里只提取资金流相关字段, 供前端算 vs-昨日差额用."""
     if not payload:
         return None
-    return {k: payload.get(k) for k in _FLOW_FIELDS}
+    return {
+        "mainNetInflow": payload.get("main_net_inflow"),
+        "superLargeNetInflow": payload.get("super_large_net_inflow"),
+        "largeNetInflow": payload.get("large_net_inflow"),
+        "mediumNetInflow": payload.get("medium_net_inflow"),
+        "smallNetInflow": payload.get("small_net_inflow"),
+        "mainNetInflowRatio": payload.get("main_net_inflow_ratio"),
+        "superLargeNetInflowRatio": payload.get("super_large_net_ratio"),
+        "largeNetInflowRatio": payload.get("large_net_ratio"),
+        "mediumNetInflowRatio": payload.get("medium_net_ratio"),
+        "smallNetInflowRatio": payload.get("small_net_ratio"),
+        "totalAmount": payload.get("total_amount"),
+    }
 
 
-def _prev_trading_day() -> str | None:
-    """返回上一个交易日的 YYYY-MM-DD (不含今日)."""
-    from datetime import timedelta
-    d = datetime.utcnow() + timedelta(hours=8)
-    for offset in range(1, 15):  # 最多往前找 14 天
-        candidate = (d - timedelta(days=offset)).date()
-        if is_trading_day(candidate):
-            return candidate.strftime("%Y-%m-%d")
-    return None
-
-
-# ---------------------------------------------------------------------------
-# 落盘
-# ---------------------------------------------------------------------------
-def _save_snapshot(payload: dict[str, Any]) -> Path:
-    """把一次 snapshot 落到:
-      - reference/market-overview/archive/<tradingDate>.json (按天归档, 永远落)
-      - reference/market-overview/latest.json (只在本轮有实质数据时才覆盖, 否则保留旧数据)
-
-    实质数据判定: 有 mainNetInflow 或 totalAmount (任一即可, 说明 eastmoney/eltdx 任一数据源通了).
-    archive 永远落盘 (保历史); latest 保守覆盖 (避免空数据把有效旧数据冲掉).
-
-    atomic write: 写 .tmp 再 rename, 避免读到半截文件.
-    """
-    MARKET_OVERVIEW_FOLDER.mkdir(parents=True, exist_ok=True)
-    MARKET_OVERVIEW_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-
-    # 1) archive 按 tradingDate 命名 (永远落盘)
-    trading_date = (payload.get("tradingDate") or _today_str()).replace("-", "")
-    archive_path = MARKET_OVERVIEW_ARCHIVE_DIR / f"{trading_date}.json"
-    tmp_arch = archive_path.with_suffix(".json.tmp")
-    with tmp_arch.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
-    tmp_arch.replace(archive_path)
-
-    # 2) latest.json — fund-flow 独立检查, 只看 mainNetInflow
-    #    (totalAmount 是 eltdx overview 的职责, 不混用 latest)
-    has_main_data = payload.get("mainNetInflow") is not None
-    if has_main_data:
-        tmp_latest = MARKET_OVERVIEW_LATEST_FILE.with_suffix(".json.tmp")
-        with tmp_latest.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        tmp_latest.replace(MARKET_OVERVIEW_LATEST_FILE)
-    else:
-        logger.info(
-            "fund-flow snapshot 无实质数据 (mainNetInflow=None), "
-            "fund-flow/latest.json 保留旧内容"
-        )
-
-    return archive_path
-
-
-def _archive_path_for(trading_date: str) -> Path:
-    return MARKET_OVERVIEW_ARCHIVE_DIR / f"{trading_date.replace('-', '')}.json"
+def _load_prev_day_flow(trading_date: str) -> tuple[dict[str, Any] | None, str | None]:
+    with session_scope() as db:
+        repo = MarketOverviewPgRepository(db)
+        prev_row = repo.get_previous(trading_date)
+    if not prev_row:
+        return None, None
+    return _extract_flow_data(prev_row), prev_row.get("trade_date")
 
 
 # ---------------------------------------------------------------------------
@@ -327,10 +298,7 @@ _write_lock = threading.Lock()
 
 
 def capture_snapshot(*, force: bool = False, source: str = "akshare") -> dict[str, Any] | None:
-    """拉一次数据并落盘. 交易时间内任意时间可调; 盘后只允许 force=True (兜底补落).
-
-    返回写入的 payload (含 source/fetchedAt/tradingDate), 失败返回 None.
-    """
+    """拉一次数据并写入 PostgreSQL."""
     with _write_lock:
         now = _beijing_now()
         if not force and not is_trade_time(now):
@@ -344,7 +312,7 @@ def capture_snapshot(*, force: bool = False, source: str = "akshare") -> dict[st
         if source == "akshare":
             fetched = _fetch_from_akshare()
         if fetched is None:
-            logger.warning("akshare market_overview snapshot 拉取失败, 跳过本次落盘")
+            logger.warning("akshare market_overview snapshot 拉取失败, 跳过本次写 PG")
             return None
 
         trading_date = _today_str()
@@ -356,40 +324,22 @@ def capture_snapshot(*, force: bool = False, source: str = "akshare") -> dict[st
             "isTradeTime": is_trade_time(now),
         }
 
-        # 找上一交易日 archive, 把资金流数据塞进 payload 供前端算 vs-昨日差额
-        prev_date = _prev_trading_day()
-        if prev_date:
-            prev_path = _archive_path_for(prev_date)
-            if prev_path.exists():
-                prev_data = read_json_file(prev_path, None)
-                prev_flow = _extract_flow_data(prev_data)
-                if prev_flow:
-                    payload["prevDayFlow"] = prev_flow
-                    payload["prevDayTradingDate"] = prev_date
+        from backend.services.stock._pg_writer import upsert_overview_to_pg
 
-        archive = _save_snapshot(payload)
+        upsert_overview_to_pg(payload, source_tag="akshare")
+
+        prev_flow, prev_date = _load_prev_day_flow(trading_date)
+        if prev_flow:
+            payload["prevDayFlow"] = prev_flow
+            payload["prevDayTradingDate"] = prev_date
+
         logger.info(
-            "akshare market_overview snapshot saved: %s (amt=%s, main=%.2f亿, prevDay=%s)",
-            archive,
+            "akshare market_overview snapshot saved to pg: tradeDate=%s (amt=%s, main=%.2f亿, prevDay=%s)",
+            trading_date,
             payload.get("totalAmount"),
             payload.get("mainNetInflow") or 0,
             payload.get("prevDayTradingDate") or "none",
         )
-
-        # 顺手落 duckdb (字段级 upsert, 失败不影响主流程, 已有 eltdx 字段不覆盖)
-        try:
-            from backend.repositories.market.market_overview_repo import upsert_overview_akshare
-            upsert_overview_akshare(payload)
-        except Exception as exc:
-            logger.debug("upsert_overview_akshare to duckdb failed (non-fatal): %s", exc)
-
-        # 同步写 PG (非致命)
-        try:
-            from backend.services.stock._pg_writer import upsert_overview_to_pg
-            upsert_overview_to_pg(payload, source_tag="akshare")
-        except Exception as exc:
-            logger.debug("upsert_overview_to_pg failed (non-fatal): %s", exc)
-
         return payload
 
 

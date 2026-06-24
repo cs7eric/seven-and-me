@@ -39,7 +39,7 @@ from backend.services.stock.trading_day_resolver import resolve_target_trading_d
 
 logger = logging.getLogger(__name__)
 
-LIMIT_EMOTION_CRON = "3 17 * * mon-fri"
+LIMIT_EMOTION_CRON = "45 17 * * mon-fri"
 _JOB_ID = "limit_emotion_refresh"
 _SCRIPT_PATH_KEY = "limit_emotion_script"
 _JOB_TIMEOUT_SECONDS = 5 * 60

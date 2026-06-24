@@ -57,32 +57,37 @@ Different sources write different fields to the same row:
 | **eltdx** `capture_overview()` | `total_amount`, `rising_count`, `falling_count`, ... (market overview) |
 | **manual** `save_manual_fund_flow()` | Fund flow fields (overrides akshare fund flow) |
 
-Merge rule: Fields already set by a higher-priority source are NOT overwritten by a lower-priority source.
+Merge rule is field-owner based. Non-owner sources still use COALESCE-style merge (existing non-null values are preserved), but the owning source for a field overwrites that field on the same trade date so intraday refreshes stay current. Specifically: `akshare` overwrites fund-flow / fund-flow-ratio fields, `eltdx` overwrites market-overview fields (`total_amount`, rising/falling counts, etc.), and `manual` overwrites fund-flow / fund-flow-ratio fields only.
 
 Priority: manual > latest live capture > archive
 
 ### 3. Read Path
 
-1. Try PostgreSQL first (primary source).
-2. Fall back to JSON archive (legacy compat, in case PG is empty for a date).
-3. For "today" (current trading day): try PG first, if no data, try JSON `latest.json`, if still no data, try last available archive.
+1. PostgreSQL is the only runtime read source.
+2. JSON archive / latest / manual files are no longer used in live request paths.
+3. For "today" (current trading day): read today's PG row if present; if missing on a trading day, return the existing `no_data` shape instead of falling back to another day.
+4. For non-trading days: return the latest PG row on or before today.
 
 ### 4. Write Paths
 
-Three independent write paths, all writing to both PG and JSON (dual-write during migration):
+Three independent write paths, all writing directly to PostgreSQL:
 
 1. **akshare fund-flow** (`capture_snapshot()` in `market_overview_akshare_service.py`):
    - Writes fund flow fields to PG via `upsert_overview()`
-   - Keeps existing JSON write for backward compat
+   - Same-day refresh overwrites existing fund-flow / fund-flow-ratio fields with the newest akshare snapshot
+   - Does not write runtime JSON / DuckDB snapshots anymore
 
 2. **eltdx overview** (`capture_overview()` in `market_overview_eltdx_service.py`):
    - Writes market overview fields to PG via `upsert_overview()`
-   - Keeps existing JSON write for backward compat
+   - Same-day refresh overwrites existing market-overview fields (`total_amount`, rising/falling counts, etc.) with the newest eltdx snapshot
+   - Does not write runtime JSON / DuckDB snapshots anymore
 
 3. **manual fund-flow** (`save_manual_fund_flow()` in `market_overview_manual_fund_flow_service.py`):
    - Writes manual fund flow fields to PG via `upsert_overview()`
+   - Overwrites existing PG fund-flow / fund-flow-ratio fields for the same trade date
+   - Does not overwrite market-overview fields like `total_amount` or up/down counts
    - Sets `is_manual_override = true`
-   - Keeps existing JSON write for backward compat
+   - Does not write runtime manual JSON / archive files anymore
 
 ### 5. Source Tracking
 
@@ -193,23 +198,24 @@ Methods:
 
 Modifications:
 
-- `capture_snapshot()` → after saving JSON, also upsert to PG via `MarketOverviewPgRepository`
-- `get_latest_snapshot()` → try PG first, fallback to JSON
-- `get_history_points()` → try PG first, fallback to JSON
+- `capture_snapshot()` → writes directly to PG via `MarketOverviewPgRepository`
+- Previous-day flow for API responses is derived from PG, not archive files
+- JSON latest/archive helpers are retired from runtime usage
 
 ### `backend\services\stock\market_overview_eltdx_service.py`
 
 Modifications:
 
-- `save_overview()` → after saving JSON, also upsert to PG via `MarketOverviewPgRepository`
-- `get_latest_overview()` → try PG first, fallback to JSON
+- `save_overview()` → writes directly to PG via `MarketOverviewPgRepository`
+- `get_latest_overview()` → reads from PG and keeps the existing daily-file limit-up/limit-down override
+- Previous-day turnover diff is derived from PG, not archive files
 
 ### `backend\services\stock\market_overview_manual_fund_flow_service.py`
 
 Modifications:
 
-- `save_manual_fund_flow()` → after saving JSON, also upsert to PG with `is_manual_override = true`
-- `load_manual_fund_flow()` → try PG first, fallback to JSON
+- `save_manual_fund_flow()` → writes directly to PG with `is_manual_override = true`
+- `load_manual_fund_flow()` → reads PG manual rows only
 
 ### `backend\api\stock_chart.py`
 
@@ -237,13 +243,13 @@ Endpoints (unchanged paths, data source changed to PG):
 
 | Endpoint | Method | Purpose | Data Source Change |
 |---|---|---|---|
-| `/api/stock-chart/market-overview-akshare` | GET | Today's latest snapshot | PG → JSON fallback |
-| `/api/stock-chart/market-overview-akshare/history` | GET | History points | PG → JSON fallback |
-| `/api/stock-chart/market-overview-eltdx` | GET | Today's eltdx overview | PG → JSON fallback |
-| `/api/stock-chart/market-overview-manual-fund-flow` | GET/POST | Manual fund flow CRUD | PG → JSON fallback |
+| `/api/stock-chart/market-overview-akshare` | GET | Today's latest snapshot | PG only |
+| `/api/stock-chart/market-overview-akshare/history` | GET | History points | PG only |
+| `/api/stock-chart/market-overview-akshare/archive/<date>` | GET | Specific trading-day snapshot | PG only |
+| `/api/stock-chart/market-overview-eltdx` | GET | Today's eltdx overview | PG only |
+| `/api/stock-chart/market-overview-manual-fund-flow` | GET/POST | Manual fund flow CRUD | PG only |
 
-The `history` endpoint now returns `total_amount` instead of `totalAmount` for PG-sourced data.
-Frontend should handle both camelCase (JSON legacy) and snake_case (PG) field names.
+Runtime API responses continue to use the existing frontend-facing camelCase field names.
 
 ---
 
@@ -279,8 +285,8 @@ Check:
 
 ## Current Decisions
 
-- Dual-write during transition: both JSON and PG receive writes.
-- Read path: PG first, JSON fallback.
+- Runtime source of truth: PostgreSQL only.
+- JSON files are retained only for historical backfill / migration reference, not live read/write.
 - No physical foreign keys (follows project convention).
 - No GIN index on `extra` (rarely queried).
 - `source` field uses simple VARCHAR without CHECK (values are dynamic).
@@ -299,12 +305,16 @@ Check:
 
 - **Migration**: `alembic/versions/g8h9j0k1l2m3_create_market_overview_snapshots.py` executed.
 - **ORM**: `backend/models/market_overview.py` — `MarketOverviewSnapshot` model.
-- **Repository**: `backend/repositories/market/market_overview_pg_repo.py` — `MarketOverviewPgRepository` with upsert (COALESCE merge), get, get_latest, get_history, coverage.
+- **Repository**: `backend/repositories/market/market_overview_pg_repo.py` — `MarketOverviewPgRepository` with upsert (COALESCE merge by default; manual can override fund-flow fields), get, get_latest, get_history, coverage.
 - **PG Writer Helper**: `backend/services/stock/_pg_writer.py` — `upsert_overview_to_pg()` shared across 3 services.
 - **Write paths updated**:
-  - `market_overview_akshare_service.py` → capture_snapshot() writes PG
-  - `market_overview_eltdx_service.py` → save_overview() writes PG
-  - `market_overview_manual_fund_flow_service.py` → save_manual_fund_flow() writes PG
-- **Read path updated**: `stock_chart.py` history endpoint reads PG first, falls back to JSON.
+  - `market_overview_akshare_service.py` → `capture_snapshot()` writes PG only
+  - `market_overview_eltdx_service.py` → `save_overview()` writes PG only
+  - `market_overview_manual_fund_flow_service.py` → `save_manual_fund_flow()` writes PG only
+- **Read paths updated**:
+  - `stock_chart.py` market-overview latest / history / archive / manual endpoints read PG only
+  - `market_overview_eltdx_service.py` latest overview read path uses PG only
 - **Backfill**: `backend/scripts/backfill_market_overview_postgres.py` executed — 126 rows imported (2025-12-11 ~ 2026-06-22).
-- **Frontend**: No changes needed (API returns camelCase).
+- **Frontend**: No endpoint path changes; runtime responses remain camelCase.
+- **Manual override semantics**: manual fund-flow writes now overwrite existing PG fund-flow values for the same trade date so `/api/stock-chart/market-overview-akshare/history` reflects manual corrections.
+- **Runtime JSON/DuckDB retirement**: live market-overview writes no longer depend on JSON latest/archive or DuckDB persistence.

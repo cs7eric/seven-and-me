@@ -48,7 +48,7 @@ from backend.services.scheduler.backfill_validator import fetch_scalar_value, va
 
 logger = logging.getLogger(__name__)
 
-OVERVIEW_DAILY_CRON = "10 17 * * mon-fri"  # 工作日 17:10 (北京时间, 在 17:00 daily_eod 之后)
+OVERVIEW_DAILY_CRON = "45 18 * * mon-fri"  # 工作日 18:45 (北京时间, 跟 Market Sentiment 因子错峰, 避免 DuckDB 写锁重叠)
 _JOB_ID = "market_overview_daily"
 _SCRIPT_PATH_KEY = "market_overview_daily_script"  # 状态文件可覆盖脚本路径 (测试用)
 
@@ -278,7 +278,7 @@ def _refresh_coverage(status: dict[str, Any]) -> None:
     """回填成功后, 读 2 张表的覆盖度写到 status (前端展示用)."""
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as c:
+        with get_conn(read_only=True) as c:
             r1 = c.execute(
                 "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
                 "FROM market_overview_daily"

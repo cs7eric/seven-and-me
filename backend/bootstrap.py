@@ -33,65 +33,13 @@ from backend.services.scheduler.daily_eod_incremental_scheduler import (
     is_daily_eod_incremental_scheduler_enabled,
     start_daily_eod_incremental_scheduler,
 )
-from backend.services.scheduler.initial_backfill_scheduler import (
-    is_initial_backfill_scheduler_enabled,
-    start_initial_backfill_scheduler,
-)
-from backend.services.scheduler.qfq_reconciliation_scheduler import (
-    is_qfq_reconciliation_scheduler_enabled,
-    start_qfq_reconciliation_scheduler,
-)
-from backend.services.scheduler.tdx_hsjday_download_scheduler import (
-    is_tdx_hsjday_download_scheduler_enabled,
-    start_tdx_hsjday_download_scheduler,
-)
-from backend.services.scheduler.market_overview_daily_scheduler import (
-    is_market_overview_daily_scheduler_enabled,
-    start_market_overview_daily_scheduler,
-)
-from backend.services.scheduler.ths_industry_fund_flow_daily_scheduler import (
-    is_ths_industry_fund_flow_daily_scheduler_enabled,
-    start_ths_industry_fund_flow_daily_scheduler,
-)
-from backend.services.scheduler.risk_appetite_scheduler import (
-    is_risk_appetite_scheduler_enabled,
-    start_risk_appetite_scheduler,
-)
-from backend.services.scheduler.limit_emotion_scheduler import (
-    is_limit_emotion_scheduler_enabled,
-    start_limit_emotion_scheduler,
-)
-from backend.services.scheduler.ma_count_scheduler import (
-    is_ma_count_scheduler_enabled,
-    start_ma_count_scheduler,
-)
-from backend.services.scheduler.volatility_sentiment_scheduler import (
-    is_volatility_sentiment_scheduler_enabled,
-    start_volatility_sentiment_scheduler,
-)
 from backend.services.scheduler.ths_industry_constituents_scheduler import (
     is_ths_industry_constituents_scheduler_enabled,
     start_ths_industry_constituents_scheduler,
 )
-from backend.services.scheduler.style_risk_appetite_scheduler import (
-    is_style_risk_appetite_scheduler_enabled,
-    start_style_risk_appetite_scheduler,
-)
-from backend.services.scheduler.turnover_activity_scheduler import (
-    is_turnover_activity_scheduler_enabled,
-    start_turnover_activity_scheduler,
-)
-from backend.services.scheduler.sector_breadth_scheduler import (
-    is_sector_breadth_scheduler_enabled,
-    start_sector_breadth_scheduler,
-)
-from backend.services.scheduler.profit_effect_scheduler import (
-    is_profit_effect_scheduler_enabled,
-    start_profit_effect_scheduler,
-)
-from backend.services.scheduler.market_sentiment_index_scheduler import (
-    is_market_sentiment_index_scheduler_enabled,
-    start_market_sentiment_index_scheduler,
+from backend.services.scheduler.market_sentiment_chain_scheduler import (
+    is_market_sentiment_chain_scheduler_enabled,
+    start_market_sentiment_chain_scheduler,
 )
 from backend.services.scheduler.ths_industry_constituents_daily_scheduler import (
     is_ths_industry_constituents_daily_scheduler_enabled,
@@ -168,73 +116,10 @@ def register_blueprints(app: Flask) -> None:
             start_daily_eod_incremental_scheduler()
         except Exception as exc:
             logger.exception('Daily EOD Incremental scheduler start failed: %s', exc)
-    if is_tdx_hsjday_download_scheduler_enabled():
+    # Market Sentiment component jobs stay manual-only; automatic scheduling is centralized
+    # in market_sentiment_chain_scheduler to avoid DuckDB/file lock overlap.
+    if is_market_sentiment_chain_scheduler_enabled():
         try:
-            start_tdx_hsjday_download_scheduler()
+            start_market_sentiment_chain_scheduler()
         except Exception as exc:
-            logger.exception('TDX hsjday download scheduler start failed: %s', exc)
-    if is_initial_backfill_scheduler_enabled():
-        try:
-            start_initial_backfill_scheduler()
-        except Exception as exc:
-            logger.exception('Initial Backfill scheduler start failed: %s', exc)
-    if is_qfq_reconciliation_scheduler_enabled():
-        try:
-            start_qfq_reconciliation_scheduler()
-        except Exception as exc:
-            logger.exception('QFQ Reconciliation scheduler start failed: %s', exc)
-    if is_market_overview_daily_scheduler_enabled():
-        try:
-            start_market_overview_daily_scheduler()
-        except Exception as exc:
-            logger.exception('Market Overview Daily scheduler start failed: %s', exc)
-    if is_ths_industry_fund_flow_daily_scheduler_enabled():
-        try:
-            start_ths_industry_fund_flow_daily_scheduler()
-        except Exception as exc:
-            logger.exception('THS Industry Fund Flow Daily scheduler start failed: %s', exc)
-    if is_turnover_activity_scheduler_enabled():
-        try:
-            start_turnover_activity_scheduler()
-        except Exception as exc:
-            logger.exception('Turnover Activity scheduler start failed: %s', exc)
-    if is_sector_breadth_scheduler_enabled():
-        try:
-            start_sector_breadth_scheduler()
-        except Exception as exc:
-            logger.exception('Sector Breadth scheduler start failed: %s', exc)
-    if is_limit_emotion_scheduler_enabled():
-        try:
-            start_limit_emotion_scheduler()
-        except Exception as exc:
-            logger.exception('Limit Emotion scheduler start failed: %s', exc)
-    if is_risk_appetite_scheduler_enabled():
-        try:
-            start_risk_appetite_scheduler()
-        except Exception as exc:
-            logger.exception('Risk Appetite scheduler start failed: %s', exc)
-    if is_ma_count_scheduler_enabled():
-        try:
-            start_ma_count_scheduler()
-        except Exception as exc:
-            logger.exception('MA Count scheduler start failed: %s', exc)
-    if is_volatility_sentiment_scheduler_enabled():
-        try:
-            start_volatility_sentiment_scheduler()
-        except Exception as exc:
-            logger.exception('Volatility Sentiment scheduler start failed: %s', exc)
-    if is_style_risk_appetite_scheduler_enabled():
-        try:
-            start_style_risk_appetite_scheduler()
-        except Exception as exc:
-            logger.exception('Style Risk Appetite scheduler start failed: %s', exc)
-    if is_profit_effect_scheduler_enabled():
-        try:
-            start_profit_effect_scheduler()
-        except Exception as exc:
-            logger.exception('Profit Effect scheduler start failed: %s', exc)
-    if is_market_sentiment_index_scheduler_enabled():
-        try:
-            start_market_sentiment_index_scheduler()
-        except Exception as exc:
-            logger.exception('Market Sentiment Index scheduler start failed: %s', exc)
+            logger.exception('Market Sentiment Chain scheduler start failed: %s', exc)

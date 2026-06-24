@@ -18,7 +18,7 @@ def resolve_latest_count_date(table: str, target_date: date | str, min_rows: int
     """返回 table 中 <= target_date 且行数 >= min_rows 的最近 trade_date."""
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as con:
+        with get_conn(read_only=True) as con:
             row = con.execute(
                 f"""
                 SELECT trade_date
@@ -44,7 +44,7 @@ def resolve_latest_scalar_date(table: str, column: str, target_date: date | str)
     """返回 table 中 <= target_date 且 column 非 NULL 且 != 0 的最近 trade_date."""
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as con:
+        with get_conn(read_only=True) as con:
             row = con.execute(
                 f"""
                 SELECT trade_date
@@ -82,7 +82,7 @@ def validate_scalar(table: str, column: str, target_date: date | str) -> tuple[b
     """
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as con:
+        with get_conn(read_only=True) as con:
             row = con.execute(
                 f"SELECT {column} FROM {table} WHERE trade_date = ?",
                 [target_date],
@@ -113,7 +113,7 @@ def fetch_scalar_value(table: str, column: str, target_date: date | str) -> floa
     """
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as con:
+        with get_conn(read_only=True) as con:
             row = con.execute(
                 f"SELECT {column} FROM {table} WHERE trade_date = ?",
                 [target_date],
@@ -133,7 +133,7 @@ def validate_count(table: str, target_date: date | str, min_rows: int = 1) -> tu
     """
     try:
         from backend.adapters.market.duckdb_store import get_conn
-        with get_conn() as con:
+        with get_conn(read_only=True) as con:
             row = con.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE trade_date = ?",
                 [target_date],

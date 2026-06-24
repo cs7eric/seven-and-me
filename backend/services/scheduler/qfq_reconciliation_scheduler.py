@@ -1,7 +1,7 @@
 """QFQ/HFQ 复权对账 scheduler.
 
 单 job:
-  - 工作日 16:50 触发 (cron ``50 16 * * mon-fri``)
+  - 工作日 17:30 触发 (cron ``30 17 * * mon-fri``)
   - 调 ``scripts/fetch_one_date_eltdx.py`` 补拉 qfq/hfq 复权数据
 
 校验: subprocess 成功后, 检查 daily_qfq 在目标日至少有 100 行.
@@ -35,7 +35,7 @@ from backend.services.stock.trading_day_resolver import resolve_target_trading_d
 
 logger = logging.getLogger(__name__)
 
-QFQ_RECON_CRON = "50 16 * * mon-fri"
+QFQ_RECON_CRON = "30 17 * * mon-fri"
 _JOB_ID = "qfq_reconciliation_refresh"
 _SCRIPT_PATH_KEY = "qfq_reconciliation_script"
 _JOB_TIMEOUT_SECONDS = 10 * 60
