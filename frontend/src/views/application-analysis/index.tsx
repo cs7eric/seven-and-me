@@ -99,8 +99,12 @@ export default function ApplicationAnalysisPage() {
   const [scheduler, setScheduler] = useState<ApplicationAnalysisSchedulerStatus | null>(null)
   const [searchKeyword, setSearchKeyword] = useState("")
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [targetCardCollapsed, setTargetCardCollapsed] = useState(false)
-  const [selectionCardCollapsed, setSelectionCardCollapsed] = useState(false)
+  const [targetCardCollapsed, setTargetCardCollapsed] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 1023px)").matches : false,
+  )
+  const [selectionCardCollapsed, setSelectionCardCollapsed] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 1023px)").matches : false,
+  )
   const [dailySnapshotsFull, setDailySnapshotsFull] = useState<ApplicationAnalysisRecent30FullItem[]>([])
   const [dailySnapshotsLoading, setDailySnapshotsLoading] = useState(false)
   const [dailyRefreshing, setDailyRefreshing] = useState(false)
@@ -693,10 +697,10 @@ export default function ApplicationAnalysisPage() {
 
   return (
     <WorkspaceShell sectionLabel="Stock Overview" pageTitle="Application Analysis" fullBleed>
-      <div className="min-h-[calc(100svh-4rem)] w-full max-w-[100vw] overflow-x-hidden rounded-none border-0 bg-[#f6f7f9] p-2 sm:p-4 2xl:p-6 lg:h-[calc(100svh-4rem)] lg:overflow-hidden">
-        <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,440px)_minmax(0,1fr)] 2xl:gap-4">
-          {/* 左侧：信息辅助区 */}
-          <div className="flex min-h-0 min-w-0 flex-col gap-3 overflow-visible lg:h-full lg:overflow-y-auto 2xl:gap-4">
+      <div className="min-h-[calc(100svh-4rem)] w-full max-w-[100vw] overflow-x-hidden rounded-none border-0 bg-[#f6f7f9] p-0 sm:p-4 2xl:p-6 lg:h-[calc(100svh-4rem)] lg:overflow-hidden">
+        <div className="grid w-full min-w-0 max-w-full grid-cols-1 gap-2 sm:gap-3 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,440px)_minmax(0,1fr)] 2xl:gap-4">
+          {/* 左侧：信息辅助区。手机端放到工作区下方，避免打开页面先看到一整屏配置。 */}
+          <div className={`${displayedTarget ? "order-2" : "order-1"} flex min-h-0 min-w-0 flex-col gap-3 overflow-visible lg:order-1 lg:h-full lg:overflow-y-auto 2xl:gap-4`}>
             <TargetCard
               targets={targets}
               searchKeyword={searchKeyword}
@@ -747,7 +751,7 @@ export default function ApplicationAnalysisPage() {
           <Tabs
             value={activeMainTab}
             onValueChange={(value) => setActiveMainTab(value as MainTab)}
-            className="flex min-w-0 flex-col gap-3 lg:h-full lg:min-h-0 2xl:gap-4"
+            className="order-1 flex min-w-0 flex-col gap-3 lg:order-2 lg:h-full lg:min-h-0 2xl:gap-4"
           >
             <header className="flex min-h-0 shrink-0 flex-col gap-2 lg:gap-3">
               {/* 预览态 banner：从自选跳过来、还没加入 targets 时浮在最上方 */}
@@ -803,23 +807,38 @@ export default function ApplicationAnalysisPage() {
               />
 
               {/* Tab 栏 */}
-              <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-slate-200/80 bg-white px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] md:flex-row md:items-center md:justify-between md:gap-3">
-                <div className="min-w-0 overflow-x-auto">
-                <TabsList className="min-w-max">
-                  <TabsTrigger value="chart">图表</TabsTrigger>
-                  <TabsTrigger value="ai-direction">AI 方向</TabsTrigger>
-                  <TabsTrigger value="analysis">分析详情</TabsTrigger>
-                  <TabsTrigger value="auction">集合竞价</TabsTrigger>
-                  <TabsTrigger value="ma-support">技术指标</TabsTrigger>
-                  <TabsTrigger value="fund-flow">资金</TabsTrigger>
-                </TabsList>
+              <div className="sticky top-0 z-20 flex min-w-0 flex-col gap-2 border-y border-slate-200/80 bg-white px-2 py-2 shadow-[0_1px_0_rgba(15,23,42,0.04)] sm:static sm:rounded-2xl sm:border sm:px-3 sm:shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)] lg:flex-row lg:items-center lg:justify-between lg:gap-3">
+                <div className="min-w-0 overflow-x-auto sm:overflow-visible">
+                  <TabsList className="grid h-auto w-full min-w-0 grid-cols-3 gap-1 sm:inline-flex sm:h-9 sm:w-fit sm:min-w-max">
+                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="chart">图表</TabsTrigger>
+                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="ai-direction">AI 方向</TabsTrigger>
+                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="analysis">分析详情</TabsTrigger>
+                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="auction">集合竞价</TabsTrigger>
+                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="ma-support">技术指标</TabsTrigger>
+                    <TabsTrigger className="h-8 text-xs sm:h-[calc(100%-1px)] sm:text-sm" value="fund-flow">资金</TabsTrigger>
+                  </TabsList>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px] text-slate-500 sm:px-0">
                   <span>K 线 {bars.length}</span>
                   <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
                   <span>{running ? "分析中" : result ? "已完成" : previewTarget ? "预览中" : "待执行"}</span>
                   <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
                   <span>标注 {overlays.length}</span>
+                  {selectedChartItems.length ? (
+                    <>
+                      <span className="hidden h-3 w-px bg-slate-200 sm:inline-block" />
+                      <button
+                        type="button"
+                        className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-medium text-slate-700"
+                        onClick={() => {
+                          setSelectionCardCollapsed(false)
+                          window.setTimeout(() => selectionPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0)
+                        }}
+                      >
+                        已选 {selectedChartItems.length}
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             </header>

@@ -39,7 +39,7 @@ export function SelectionPanel(props: {
     <div ref={panelRef}>
       <CollapsibleCard
         title="选中分析项"
-        description="图上可多选 K 柱；详情会在这里集中展示"
+        description="已选 K 柱 / 标注集中展示"
         icon={Sparkles}
         badge={String(items.length)}
         collapsed={collapsed}

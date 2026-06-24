@@ -28,12 +28,12 @@ export function ChartHeader({
 }) {
   const title = target ? `${target.name} · ${target.symbol}` : selectedLabel || "请选择左侧目标"
   return (
-    <Card className="rounded-2xl border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
-      <CardHeader className="px-3 pb-3 pt-4 sm:px-4 2xl:px-6">
+    <Card className="rounded-none border-x-0 border-t-0 border-slate-200/80 bg-white shadow-[0_1px_0_rgba(15,23,42,0.04)] sm:rounded-2xl sm:border-x sm:border-t sm:shadow-[0_1px_0_rgba(15,23,42,0.04),0_8px_24px_rgba(15,23,42,0.04)]">
+      <CardHeader className="px-3 pb-2.5 pt-3 sm:px-4 sm:pb-3 sm:pt-4 2xl:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-start gap-3 sm:items-center">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm">
-              <Sparkles className="size-4" />
+          <div className="flex min-w-0 items-start gap-2.5 sm:items-center sm:gap-3">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-slate-950 text-white shadow-sm sm:size-9">
+              <Sparkles className="size-3.5 sm:size-4" />
             </div>
             <div className="min-w-0 space-y-1">
               <CardTitle className="break-words text-base font-semibold text-slate-950 sm:truncate sm:text-lg">
@@ -45,7 +45,7 @@ export function ChartHeader({
                     <Clock className="size-3" />
                     <span>每 {target.interval_minutes} 分钟</span>
                   </span>
-                  <span className="text-slate-300">·</span>
+                  <span className="hidden text-slate-300 sm:inline">·</span>
                   {target.enabled ? (
                     <Badge
                       className="rounded-full border-emerald-200 bg-emerald-50 px-1.5 py-0 text-[10px] text-emerald-700"
@@ -63,11 +63,11 @@ export function ChartHeader({
                   )}
                   {target.last_updated_at ? (
                     <>
-                      <span className="text-slate-300">·</span>
-                      <span>最近 {new Date(target.last_updated_at).toLocaleString()}</span>
+                      <span className="hidden text-slate-300 sm:inline">·</span>
+                      <span className="hidden sm:inline">最近 {new Date(target.last_updated_at).toLocaleString()}</span>
                     </>
                   ) : null}
-                  <span className="text-slate-300">·</span>
+                  <span className="hidden text-slate-300 sm:inline">·</span>
                   <Badge
                     className="rounded-full border-slate-200 bg-slate-50 px-1.5 py-0 text-[10px] text-slate-600"
                     variant="outline"
@@ -78,9 +78,9 @@ export function ChartHeader({
               ) : null}
             </div>
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center lg:justify-end">
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center lg:justify-end">
             <Select value={adjust} onValueChange={(value) => onAdjustChange(value as StockAdjust)}>
-              <SelectTrigger className="h-8 w-full rounded-lg text-xs sm:w-28"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="h-9 w-full rounded-xl text-xs sm:h-8 sm:w-28 sm:rounded-lg"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="qfq">前复权</SelectItem>
                 <SelectItem value="none">不复权</SelectItem>
@@ -88,14 +88,16 @@ export function ChartHeader({
               </SelectContent>
             </Select>
             <Button
-              className="h-8 w-full rounded-lg bg-slate-950 px-3 text-xs text-white hover:bg-slate-800 sm:w-auto"
+              className="h-9 w-full rounded-xl bg-slate-950 px-3 text-xs text-white hover:bg-slate-800 sm:h-8 sm:w-auto sm:rounded-lg"
               onClick={onTrigger}
               disabled={!canRun || running}
             >
-              <RefreshCw className={`mr-1.5 size-3.5 ${running ? "animate-spin" : ""}`} />120 日 / 4 段刷新
+              <RefreshCw className={`mr-1.5 size-3.5 ${running ? "animate-spin" : ""}`} />
+              <span className="sm:hidden">刷新</span>
+              <span className="hidden sm:inline">120 日 / 4 段刷新</span>
             </Button>
             <Button
-              className="h-8 w-full rounded-lg px-3 text-xs sm:w-auto"
+              className="h-9 w-full rounded-xl px-3 text-xs sm:h-8 sm:w-auto sm:rounded-lg"
               variant="outline"
               onClick={onManualRun}
               disabled={!canRun || running}

@@ -69,6 +69,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 
 import { WorkspaceShell } from "@/layout/workspace-shell"
 import { notification } from "@/components/ui/notification"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   fetchMarketPulse,
   fetchIndustryFundFlowIndustryList,
@@ -284,34 +285,79 @@ export default function StockOverviewMarketPulsePage() {
   return (
     <WorkspaceShell sectionLabel="Stock Overview" sectionUrl="/stock-overview" pageTitle="market pulse">
       <div className="h-[calc(100svh-4rem)] max-w-full space-y-4 overflow-y-auto overflow-x-hidden p-2 sm:p-4">
-        <PageHeader
-          onRefresh={load}
-          loading={loading}
-          fetchedAt={data?.strong?.fetchedAt}
-          flowElapsedMs={data?.flow?.elapsedMs}
-          scheduler={scheduler}
-          market={data}
-        />
-        <SchedulerStatusBar status={scheduler} onTrigger={triggerScheduler} />
-        {data ? <SummaryStrip data={data} /> : null}
-        <div className="grid gap-4 xl:grid-cols-2">
-          <StrongSectors data={data?.strong} onPick={setPicked} />
-          <CapitalFlow data={data?.flow} onPick={setPicked} />
+        <div className="hidden md:block">
+          <PageHeader
+            onRefresh={load}
+            loading={loading}
+            fetchedAt={data?.strong?.fetchedAt}
+            flowElapsedMs={data?.flow?.elapsedMs}
+            scheduler={scheduler}
+            market={data}
+          />
+          <SchedulerStatusBar status={scheduler} onTrigger={triggerScheduler} />
+          {data ? <SummaryStrip data={data} /> : null}
+          <div className="grid gap-4 xl:grid-cols-2">
+            <StrongSectors data={data?.strong} onPick={setPicked} />
+            <CapitalFlow data={data?.flow} onPick={setPicked} />
+          </div>
+          <IndustryRotation data={data?.rotation} onRefreshSnapshot={refreshSnapshot} onPick={setPicked} />
+          <RotationTrend data={trend} onPick={setPicked} />
+          <IndustryComparePanel
+            options={compareOptions}
+            selected={effectiveSelectedIndustries}
+            defaultCount={INDUSTRY_COMPARE_DEFAULT_COUNT}
+            loading={industryCompareLoading}
+            data={effectiveSelectedIndustries.length ? effectiveIndustryCompare : null}
+            onAdd={handleAddIndustries}
+            onRemove={handleRemoveIndustry}
+            onResetDefault={handleResetCompareIndustries}
+          />
         </div>
-        <IndustryRotation data={data?.rotation} onRefreshSnapshot={refreshSnapshot} onPick={setPicked} />
-        <RotationTrend data={trend} onPick={setPicked} />
-        <IndustryComparePanel
-          options={compareOptions}
-          selected={effectiveSelectedIndustries}
-          defaultCount={INDUSTRY_COMPARE_DEFAULT_COUNT}
-          loading={industryCompareLoading}
-          data={effectiveSelectedIndustries.length ? effectiveIndustryCompare : null}
-          onAdd={handleAddIndustries}
-          onRemove={handleRemoveIndustry}
-          onResetDefault={handleResetCompareIndustries}
-        />
+
+        <div className="space-y-3 md:hidden">
+          <Tabs defaultValue="overview" className="w-full">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="overview" className="text-xs">概览</TabsTrigger>
+              <TabsTrigger value="sector" className="text-xs">板块</TabsTrigger>
+              <TabsTrigger value="rotation" className="text-xs">轮动</TabsTrigger>
+              <TabsTrigger value="compare" className="text-xs">对比</TabsTrigger>
+            </TabsList>
+            <TabsContent value="overview" className="mt-3 space-y-3">
+              <PageHeader
+                onRefresh={load}
+                loading={loading}
+                fetchedAt={data?.strong?.fetchedAt}
+                flowElapsedMs={data?.flow?.elapsedMs}
+                scheduler={scheduler}
+                market={data}
+              />
+              <SchedulerStatusBar status={scheduler} onTrigger={triggerScheduler} />
+              {data ? <SummaryStrip data={data} /> : null}
+            </TabsContent>
+            <TabsContent value="sector" className="mt-3 space-y-3">
+              <StrongSectors data={data?.strong} onPick={setPicked} />
+              <CapitalFlow data={data?.flow} onPick={setPicked} />
+            </TabsContent>
+            <TabsContent value="rotation" className="mt-3 space-y-3">
+              <IndustryRotation data={data?.rotation} onRefreshSnapshot={refreshSnapshot} onPick={setPicked} />
+              <RotationTrend data={trend} onPick={setPicked} />
+            </TabsContent>
+            <TabsContent value="compare" className="mt-3 space-y-3">
+              <IndustryComparePanel
+                options={compareOptions}
+                selected={effectiveSelectedIndustries}
+                defaultCount={INDUSTRY_COMPARE_DEFAULT_COUNT}
+                loading={industryCompareLoading}
+                data={effectiveSelectedIndustries.length ? effectiveIndustryCompare : null}
+                onAdd={handleAddIndustries}
+                onRemove={handleRemoveIndustry}
+                onResetDefault={handleResetCompareIndustries}
+              />
+            </TabsContent>
+          </Tabs>
+        </div>
+        <IndustryDetailDrawer name={picked} onClose={() => setPicked(null)} />
       </div>
-      <IndustryDetailDrawer name={picked} onClose={() => setPicked(null)} />
     </WorkspaceShell>
   )
 }

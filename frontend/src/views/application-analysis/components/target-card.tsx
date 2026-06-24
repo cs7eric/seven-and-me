@@ -115,7 +115,7 @@ export function TargetCard({
               <Target className="size-4 text-slate-600" />
               Watchlist
             </CardTitle>
-            <CardDescription className="break-words">Postgres application analysis targets + self-selected target sync</CardDescription>
+            <CardDescription className="hidden break-words sm:block">Postgres application analysis targets + self-selected target sync</CardDescription>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -278,7 +278,7 @@ export function TargetCard({
                   ? "还没有目标，输入关键词搜索添加股票。"
                   : "没有匹配的目标。"
             }
-            maxHeight={collapsed ? "max-h-[28vh]" : "max-h-[40vh]"}
+            maxHeight={collapsed ? "max-h-[24vh]" : "max-h-[36vh] lg:max-h-[40vh]"}
             className=""
             itemClassName=""
           />

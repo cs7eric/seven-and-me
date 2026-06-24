@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { LineChart } from "lucide-react"
 
 import { CollapsibleCard } from "@/components/collapsible-card"
@@ -27,6 +28,14 @@ export function ChartCard({
   onAnalyzeSelection: (item: ChartPanelSelectionItem) => void
   loadingBars: boolean
 }) {
+  const [showMobileHint, setShowMobileHint] = useState(true)
+
+  useEffect(() => {
+    if (!showMobileHint) return
+    const timer = window.setTimeout(() => setShowMobileHint(false), 3500)
+    return () => window.clearTimeout(timer)
+  }, [showMobileHint])
+
   return (
     <CollapsibleCard
       title="K 线分析"
@@ -36,7 +45,16 @@ export function ChartCard({
       collapsed={collapsed}
       onToggle={onToggle}
     >
-      <div className="-mx-1 h-[360px] min-h-0 max-w-full overflow-hidden sm:h-[460px] lg:h-full lg:flex-1">
+      <div className="relative -mx-1 h-[58svh] max-h-[520px] min-h-[360px] max-w-full overflow-hidden sm:h-[460px] lg:h-full lg:max-h-none lg:min-h-0 lg:flex-1">
+        {showMobileHint ? (
+          <button
+            type="button"
+            className="absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-[11px] font-medium text-slate-600 shadow-sm backdrop-blur sm:hidden"
+            onClick={() => setShowMobileHint(false)}
+          >
+            可横向拖动 / 点选 K 柱
+          </button>
+        ) : null}
         <ChartPanel
           bars={bars}
           annotations={[]}

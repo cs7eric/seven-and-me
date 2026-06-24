@@ -50,7 +50,8 @@ export function PageHeader({
           <div className="min-w-0 max-w-3xl space-y-3">
             <div className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm">
               <Flame className="size-3.5 text-orange-500" />
-              行情 · Market Pulse · {fetchedAt ? fetchedAt.slice(0, 19).replace("T", " ") : "—"}
+              <span>行情 · Market Pulse</span>
+              <span className="hidden sm:inline">{fetchedAt ? `· ${fetchedAt.slice(0, 19).replace("T", " ")}` : "· —"}</span>
               {isTradeTime ? (
                 <Badge
                   variant="outline"
@@ -77,11 +78,11 @@ export function PageHeader({
             <h1 className="break-words text-2xl font-semibold leading-tight text-slate-950 sm:text-4xl">
               强势板块 · 主力净流入 · 行业轮动
             </h1>
-            <p className="text-sm leading-7 text-slate-600">
+            <p className="hidden text-sm leading-7 text-slate-600 md:block">
               数据源: Postgres 市场快照 · 每 10 分钟自动刷新{isTradeTime ? " (盘内)" : " (盘后/非交易日已停)"} · 15:30 收盘归档
               {typeof flowElapsedMs === "number" ? <> · flow 拉取耗时 {flowElapsedMs}ms</> : null}
             </p>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+            <div className="hidden flex-wrap items-center gap-2 text-xs text-slate-500 md:flex">
               <Badge variant="outline" className="rounded-full px-2.5 py-1">
                 <Calendar className="mr-1 size-3" />
                 展示交易日 {tradeDate ?? "—"}
@@ -104,6 +105,15 @@ export function PageHeader({
               </Badge>
               <Badge variant="outline" className="max-w-full whitespace-normal break-all rounded-full px-2.5 py-1 text-left">
                 source {source ?? "—"}
+              </Badge>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs text-slate-500 md:hidden">
+              <Badge variant="outline" className="rounded-full px-2.5 py-1">
+                <Calendar className="mr-1 size-3" />
+                {tradeDate ?? "—"}
+              </Badge>
+              <Badge variant="outline" className="rounded-full px-2.5 py-1">
+                {isTradeTime ? "交易时间" : isTradingDay ? "收盘后" : "非交易日"}
               </Badge>
             </div>
           </div>
@@ -167,27 +177,29 @@ export function SummaryStrip({ data }: { data: MarketPulse }) {
   ]
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-4 gap-2 sm:gap-3 xl:gap-4">
       {items.map((item) => {
         const Icon = item.icon
         const color =
           item.tone === "up" ? "border-red-200 bg-red-50/40" : "border-emerald-200 bg-emerald-50/40"
         const ink = item.tone === "up" ? "text-red-700" : "text-emerald-700"
         return (
-          <div key={item.label} className={`min-w-0 rounded-2xl border ${color} p-4`}>
-            <div className="flex items-center justify-between">
-              <div className="text-xs text-slate-500">{item.label}</div>
-              <Icon className={`size-4 ${ink}`} />
+          <div key={item.label} className={`min-w-0 rounded-2xl border ${color} p-2.5 sm:p-4`}>
+            <div className="flex items-center justify-between gap-1">
+              <div className="truncate text-[10px] text-slate-500 sm:text-xs">{item.label}</div>
+              <Icon className={`size-3.5 shrink-0 ${ink}`} />
             </div>
-            <div className="mt-2 truncate text-xl font-semibold text-slate-950">{item.name}</div>
-            <div className={`mt-1 flex flex-wrap items-center gap-2 text-sm tabular-nums ${ink}`}>
+            <div className="mt-2 truncate text-[12px] font-semibold leading-tight text-slate-950 sm:text-xl">{item.name}</div>
+            <div className={`mt-1 text-[11px] font-medium tabular-nums sm:text-sm ${ink}`}>
               {"net" in item ? <span>{fmtYi(item.net)}</span> : <span>{fmtPct(item.pct)}</span>}
+            </div>
+            <div className="mt-1 hidden flex-wrap items-center gap-1 text-[10px] text-slate-400 sm:flex">
               {"leading" in item && item.leading ? (
                 <Badge variant="outline" className="h-4 border-slate-200 bg-white px-1.5 text-[10px] text-slate-600">
                   领涨 {item.leading}
                 </Badge>
               ) : null}
-              {"amount" in item ? <span className="text-xs text-slate-400">{item.amount}</span> : null}
+              {"amount" in item ? <span>{item.amount}</span> : null}
             </div>
           </div>
         )

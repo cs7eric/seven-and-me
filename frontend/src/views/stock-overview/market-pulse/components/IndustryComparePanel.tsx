@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 import { bandColor, bandFg, cardChrome, fmtPct } from "../lib/format"
 import type { IndustryCompareResponse } from "../lib/types"
@@ -112,6 +113,32 @@ function ChartBody({ option }: { option: echarts.EChartsCoreOption | null }) {
   return <div ref={ref} className="h-[240px] w-full min-w-0 sm:h-[340px]" />
 }
 
+function MobileSummaryCard({
+  label,
+  value,
+  tone,
+  sub,
+}: {
+  label: string
+  value: string
+  tone: "up" | "down" | "muted"
+  sub?: string
+}) {
+  const toneClass =
+    tone === "up"
+      ? "border-red-200 bg-red-50/60 text-red-700"
+      : tone === "down"
+        ? "border-emerald-200 bg-emerald-50/60 text-emerald-700"
+        : "border-slate-200 bg-white text-slate-700"
+  return (
+    <div className={`min-w-0 rounded-xl border p-2.5 ${toneClass}`}>
+      <div className="truncate text-[10px] text-current/70">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold tabular-nums">{value}</div>
+      {sub ? <div className="mt-1 truncate text-[10px] text-current/70">{sub}</div> : null}
+    </div>
+  )
+}
+
 export function IndustryComparePanel({
   options,
   selected,
@@ -134,6 +161,7 @@ export function IndustryComparePanel({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [pendingAdd, setPendingAdd] = useState<string[]>([])
   const [chartMode, setChartMode] = useState<"netFlow" | "rank">("netFlow")
+  const [mobileView, setMobileView] = useState<"trend" | "summary">("trend")
   const series = useMemo(() => data?.industries ?? [], [data?.industries])
   const sortedSeries = useMemo(
     () =>
@@ -284,17 +312,31 @@ export function IndustryComparePanel({
     }
   }, [chartZoom, dates, sortedSeries])
 
+  const mobileSummaryRows = useMemo(
+    () =>
+      sortedSeries.slice(0, 6).map((item) => ({
+        name: item.name,
+        rank: item.compositeRank == null ? "—" : `#${item.compositeRank}`,
+        latestNet: formatNetYi(item.latestMainNet),
+        avg10: formatNetYi(item.averages["10"]),
+        appearances: `${item.appearances}/${dates.length}`,
+        latestRank: item.latestRank == null ? "—" : `#${item.latestRank}`,
+        pct: item.latestChangePct != null ? fmtPct(item.latestChangePct) : "—",
+      })),
+    [dates.length, sortedSeries],
+  )
+
   return (
     <Card className={cardChrome}>
-      <CardHeader className="border-b border-slate-100 pb-5">
+      <CardHeader className="border-b border-slate-100 pb-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">M5</div>
-            <CardTitle className="mt-1 text-xl font-semibold tracking-[-0.025em] text-slate-950">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400 max-sm:hidden">M5</div>
+            <CardTitle className="mt-1 text-lg font-semibold tracking-[-0.025em] text-slate-950 sm:text-xl">
               <GitCompareArrows className="mr-2 inline-block size-5 text-indigo-500" />
               行业净流 / 排名对比分析
             </CardTitle>
-            <CardDescription className="mt-1 text-sm text-slate-500">
+            <CardDescription className="mt-1 text-sm text-slate-500 max-sm:hidden">
               默认展示近 30 日综合 Top 10 行业，支持切换查看主力净流趋势或排名趋势，并汇总关键对比指标
             </CardDescription>
           </div>
@@ -303,7 +345,7 @@ export function IndustryComparePanel({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-5 p-5">
+      <CardContent className="space-y-4 p-4 sm:space-y-5 sm:p-5">
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap gap-2">
@@ -403,98 +445,165 @@ export function IndustryComparePanel({
           </div>
         ) : (
           <>
-            <Card className="rounded-2xl border-slate-200">
-              <CardHeader className="gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <CardTitle className="text-sm font-semibold text-slate-900">
-                    {chartMode === "netFlow" ? "多行业历史净流趋势图" : "多行业排名趋势图"}
+            <div className="md:hidden">
+              <Tabs value={mobileView} onValueChange={(value) => setMobileView(value as "trend" | "summary")} className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="trend" className="text-xs">趋势</TabsTrigger>
+                  <TabsTrigger value="summary" className="text-xs">摘要</TabsTrigger>
+                </TabsList>
+                <TabsContent value="trend" className="mt-3 space-y-3">
+                  <Card className="rounded-2xl border-slate-200">
+                    <CardHeader className="gap-3 pb-3">
+                      <div className="min-w-0">
+                        <CardTitle className="text-sm font-semibold text-slate-900">
+                          {chartMode === "netFlow" ? "多行业历史净流趋势图" : "多行业排名趋势图"}
+                        </CardTitle>
+                        <CardDescription className="text-xs text-slate-500">
+                          {chartMode === "netFlow" ? `近 ${dates.length} 个交易日 · 单位: 亿` : "排名越靠上数值越小，未上榜日期保持断点"}
+                        </CardDescription>
+                      </div>
+                      <div className="inline-flex w-full rounded-full border border-slate-200 bg-slate-50 p-1">
+                        <button
+                          type="button"
+                          onClick={() => setChartMode("netFlow")}
+                          className={`flex-1 rounded-full px-3 py-1 text-xs font-medium ${chartMode === "netFlow" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                        >
+                          净流趋势
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setChartMode("rank")}
+                          className={`flex-1 rounded-full px-3 py-1 text-xs font-medium ${chartMode === "rank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                        >
+                          排名趋势
+                        </button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="px-3 pb-4">
+                      <div className="mb-3 text-xs text-slate-500">默认组合：综合 Top {defaultCount}（近 30 日）</div>
+                      <ChartBody option={chartMode === "netFlow" ? netFlowOption : rankOption} />
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+                <TabsContent value="summary" className="mt-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    {mobileSummaryRows.map((item) => (
+                      <div key={item.name} className="rounded-2xl border border-slate-200 bg-white p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <button onClick={() => onRemove(item.name)} className="min-w-0 text-left">
+                            <div className="truncate text-sm font-semibold text-slate-900">{item.name}</div>
+                            <div className="mt-0.5 text-[11px] text-slate-500">{item.appearances}</div>
+                          </button>
+                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">{item.rank}</span>
+                        </div>
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                          <MobileSummaryCard label="最新净流" value={item.latestNet} tone="up" sub={item.pct} />
+                          <MobileSummaryCard label="10日均值" value={item.avg10} tone="down" />
+                          <MobileSummaryCard label="最新排名" value={item.latestRank} tone="muted" />
+                          <MobileSummaryCard label="出现" value={item.appearances} tone="muted" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+
+            <div className="hidden md:block">
+              <Card className="rounded-2xl border-slate-200">
+                <CardHeader className="gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <CardTitle className="text-sm font-semibold text-slate-900">
+                      {chartMode === "netFlow" ? "多行业历史净流趋势图" : "多行业排名趋势图"}
+                    </CardTitle>
+                    <CardDescription className="text-xs text-slate-500">
+                      {chartMode === "netFlow" ? `近 ${dates.length} 个交易日 · 单位: 亿` : "排名越靠上数值越小，未上榜日期保持断点"}
+                    </CardDescription>
+                  </div>
+                  <div className="inline-flex w-full rounded-full border border-slate-200 bg-slate-50 p-1 sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => setChartMode("netFlow")}
+                      className={`flex-1 rounded-full px-3 py-1 text-xs font-medium sm:flex-none ${chartMode === "netFlow" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                    >
+                      净流趋势
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChartMode("rank")}
+                      className={`flex-1 rounded-full px-3 py-1 text-xs font-medium sm:flex-none ${chartMode === "rank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
+                    >
+                      排名趋势
+                    </button>
+                  </div>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  <div className="mb-3 text-xs text-slate-500">默认组合：综合 Top {defaultCount}（近 30 日）</div>
+                  <ChartBody option={chartMode === "netFlow" ? netFlowOption : rankOption} />
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-2xl border-slate-200">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <BarChart3 className="size-4 text-indigo-500" />
+                    综合 Top 行业摘要
                   </CardTitle>
                   <CardDescription className="text-xs text-slate-500">
-                    {chartMode === "netFlow" ? `近 ${dates.length} 个交易日 · 单位: 亿` : "排名越靠上数值越小，未上榜日期保持断点"}
+                    综合排名优先展示，10 日均值用于衡量持续资金强度
                   </CardDescription>
-                </div>
-                <div className="inline-flex w-full rounded-full border border-slate-200 bg-slate-50 p-1 sm:w-auto">
-                  <button
-                    type="button"
-                    onClick={() => setChartMode("netFlow")}
-                    className={`flex-1 rounded-full px-3 py-1 text-xs font-medium sm:flex-none ${chartMode === "netFlow" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
-                  >
-                    净流趋势
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setChartMode("rank")}
-                    className={`flex-1 rounded-full px-3 py-1 text-xs font-medium sm:flex-none ${chartMode === "rank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}
-                  >
-                    排名趋势
-                  </button>
-                </div>
-              </CardHeader>
-              <CardContent className="overflow-x-auto">
-                <div className="mb-3 text-xs text-slate-500">默认组合：综合 Top {defaultCount}（近 30 日）</div>
-                <ChartBody option={chartMode === "netFlow" ? netFlowOption : rankOption} />
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-2xl border-slate-200">
-              <CardHeader className="pb-3">
-                <CardTitle className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                  <BarChart3 className="size-4 text-indigo-500" />
-                  综合 Top 行业摘要
-                </CardTitle>
-                <CardDescription className="text-xs text-slate-500">
-                  综合排名优先展示，10 日均值用于衡量持续资金强度
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="overflow-x-auto">
-                <table className="min-w-[760px] border-collapse text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-xs text-slate-500">
-                      <th className="px-3 py-2 text-left font-semibold">行业</th>
-                      <th className="px-3 py-2 text-right font-semibold">综合排名</th>
-                      <th className="px-3 py-2 text-right font-semibold">最新净流</th>
-                      <th className="px-3 py-2 text-right font-semibold">10 日均值</th>
-                      <th className="px-3 py-2 text-right font-semibold">上榜天数</th>
-                      <th className="px-3 py-2 text-right font-semibold">最新排名</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedSeries.map((item) => (
-                      <tr key={item.name} className="border-b border-slate-50">
-                        <td className="px-3 py-3">
-                          <div className="font-medium text-slate-900">{item.name}</div>
-                          {item.latestChangePct != null ? (
-                            <div
-                              className="mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
-                              style={{
-                                background: bandColor(item.latestChangePct),
-                                color: bandFg(item.latestChangePct),
-                              }}
-                            >
-                              {fmtPct(item.latestChangePct)}
-                            </div>
-                          ) : null}
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums text-slate-700">
-                          {item.compositeRank == null ? "—" : `#${item.compositeRank}`}
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums text-slate-700">{formatNetYi(item.latestMainNet)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums text-slate-700">{formatNetYi(item.averages["10"])}</td>
-                        <td className="px-3 py-3 text-right tabular-nums text-slate-500">
-                          <span className="inline-flex items-center gap-1">
-                            <TrendingUp className="size-3 text-slate-400" />
-                            {item.appearances}/{dates.length}
-                          </span>
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums text-slate-700">
-                          {item.latestRank == null ? "—" : `#${item.latestRank}`}
-                        </td>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  <table className="min-w-[760px] border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100 text-xs text-slate-500">
+                        <th className="px-3 py-2 text-left font-semibold">行业</th>
+                        <th className="px-3 py-2 text-right font-semibold">综合排名</th>
+                        <th className="px-3 py-2 text-right font-semibold">最新净流</th>
+                        <th className="px-3 py-2 text-right font-semibold">10 日均值</th>
+                        <th className="px-3 py-2 text-right font-semibold">上榜天数</th>
+                        <th className="px-3 py-2 text-right font-semibold">最新排名</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
+                    </thead>
+                    <tbody>
+                      {sortedSeries.map((item) => (
+                        <tr key={item.name} className="border-b border-slate-50">
+                          <td className="px-3 py-3">
+                            <div className="font-medium text-slate-900">{item.name}</div>
+                            {item.latestChangePct != null ? (
+                              <div
+                                className="mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums"
+                                style={{
+                                  background: bandColor(item.latestChangePct),
+                                  color: bandFg(item.latestChangePct),
+                                }}
+                              >
+                                {fmtPct(item.latestChangePct)}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-3 text-right tabular-nums text-slate-700">
+                            {item.compositeRank == null ? "—" : `#${item.compositeRank}`}
+                          </td>
+                          <td className="px-3 py-3 text-right tabular-nums text-slate-700">{formatNetYi(item.latestMainNet)}</td>
+                          <td className="px-3 py-3 text-right tabular-nums text-slate-700">{formatNetYi(item.averages["10"])}</td>
+                          <td className="px-3 py-3 text-right tabular-nums text-slate-500">
+                            <span className="inline-flex items-center gap-1">
+                              <TrendingUp className="size-3 text-slate-400" />
+                              {item.appearances}/{dates.length}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-right tabular-nums text-slate-700">
+                            {item.latestRank == null ? "—" : `#${item.latestRank}`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </CardContent>
+              </Card>
+            </div>
+
           </>
         )}
       </CardContent>

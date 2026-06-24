@@ -2,6 +2,7 @@ import { Flame, TrendingUp } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 import { bandColor, bandFg, cardChrome, fmtPct, fmtYi } from "../lib/format"
 import type { MarketPulse } from "../lib/types"
@@ -41,18 +42,18 @@ export function StrongSectors({
         </div>
       </CardHeader>
       <CardContent className="p-5">
-        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+        <div className="grid gap-2.5 grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
           {top.map((sector) => (
             <div
               key={sector.name}
               onClick={() => onPick(sector.name)}
-              className="group flex min-w-0 cursor-pointer flex-col justify-between rounded-xl border border-slate-200/60 bg-white p-3.5 transition-shadow hover:border-slate-300 hover:shadow-md"
+              className="group flex min-w-0 cursor-pointer flex-col justify-between rounded-xl border border-slate-200/60 bg-white p-2.5 transition-shadow hover:border-slate-300 hover:shadow-md sm:p-3"
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-slate-900">{sector.name}</div>
+                  <div className="truncate text-xs font-semibold text-slate-900 sm:text-sm">{sector.name}</div>
                   {sector.leadingStock ? (
-                    <div className="mt-0.5 text-[11px] text-slate-500">
+                    <div className="mt-0.5 hidden text-[11px] text-slate-500 sm:block">
                       领涨 <span className="font-medium text-slate-700">{sector.leadingStock}</span>
                       {sector.leadingChangePct != null ? (
                         <span
@@ -71,7 +72,7 @@ export function StrongSectors({
                   ) : null}
                 </div>
                 <div
-                  className="rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums"
+                  className="rounded-md px-2 py-0.5 text-[10px] font-semibold tabular-nums sm:text-xs"
                   style={{
                     background: bandColor(sector.changePercent),
                     color: bandFg(sector.changePercent),
@@ -80,7 +81,7 @@ export function StrongSectors({
                   {fmtPct(sector.changePercent)}
                 </div>
               </div>
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1 text-[10px] text-slate-500 sm:mt-2 sm:text-[11px]">
                 {typeof sector.stockCount === "number" ? (
                   <span className="tabular-nums">{sector.stockCount}只</span>
                 ) : (
@@ -92,29 +93,60 @@ export function StrongSectors({
           ))}
         </div>
         <div className="mt-5 border-t border-slate-100 pt-4">
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">弱势</div>
-          <div className="flex flex-wrap gap-2">
-            {bottom.map((sector) => (
-              <button
-                key={`bottom-${sector.name}`}
-                onClick={() => onPick(sector.name)}
-                className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs transition-colors hover:border-slate-300 hover:bg-slate-100"
-              >
-                <span className="truncate text-slate-700">{sector.name}</span>
-                <span
-                  className="font-semibold tabular-nums"
-                  style={{
-                    color:
-                      bandColor(sector.changePercent) === "#9E9E9E"
-                        ? "#475569"
-                        : bandColor(sector.changePercent),
-                  }}
-                >
-                  {fmtPct(sector.changePercent)}
-                </span>
-              </button>
-            ))}
-          </div>
+          <Tabs defaultValue="top" className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="top" className="text-xs">领涨</TabsTrigger>
+              <TabsTrigger value="bottom" className="text-xs">领跌</TabsTrigger>
+            </TabsList>
+            <TabsContent value="top" className="mt-3">
+              <div className="flex flex-wrap gap-2">
+                {top.slice(0, 6).map((sector) => (
+                  <button
+                    key={`top-${sector.name}`}
+                    onClick={() => onPick(sector.name)}
+                    className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs transition-colors hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    <span className="truncate text-slate-700">{sector.name}</span>
+                    <span
+                      className="font-semibold tabular-nums"
+                      style={{
+                        color:
+                          bandColor(sector.changePercent) === "#9E9E9E"
+                            ? "#475569"
+                            : bandColor(sector.changePercent),
+                      }}
+                    >
+                      {fmtPct(sector.changePercent)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </TabsContent>
+            <TabsContent value="bottom" className="mt-3">
+              <div className="flex flex-wrap gap-2">
+                {bottom.slice(0, 6).map((sector) => (
+                  <button
+                    key={`bottom-${sector.name}`}
+                    onClick={() => onPick(sector.name)}
+                    className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs transition-colors hover:border-slate-300 hover:bg-slate-100"
+                  >
+                    <span className="truncate text-slate-700">{sector.name}</span>
+                    <span
+                      className="font-semibold tabular-nums"
+                      style={{
+                        color:
+                          bandColor(sector.changePercent) === "#9E9E9E"
+                            ? "#475569"
+                            : bandColor(sector.changePercent),
+                      }}
+                    >
+                      {fmtPct(sector.changePercent)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </TabsContent>
+          </Tabs>
         </div>
       </CardContent>
     </Card>

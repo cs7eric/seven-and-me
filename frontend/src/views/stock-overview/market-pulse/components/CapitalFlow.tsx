@@ -2,6 +2,7 @@ import { ArrowDownRight, ArrowUpRight, Layers } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 import { bandColor, bandFg, cardChrome, fmtPct } from "../lib/format"
 import type { FlowRow, MarketPulse } from "../lib/types"
@@ -46,9 +47,19 @@ export function CapitalFlow({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-4 p-5 md:grid-cols-2">
-        <FlowColumn title="净流入" tone="up" rows={inflow} maxAbs={maxAbs} onPick={onPick} />
-        <FlowColumn title="净流出" tone="down" rows={outflow} maxAbs={maxAbs} onPick={onPick} />
+      <CardContent className="p-5">
+        <Tabs defaultValue="inflow" className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="inflow" className="text-xs">净流入</TabsTrigger>
+            <TabsTrigger value="outflow" className="text-xs">净流出</TabsTrigger>
+          </TabsList>
+          <TabsContent value="inflow" className="mt-3">
+            <FlowColumn title="净流入" tone="up" rows={inflow} maxAbs={maxAbs} onPick={onPick} />
+          </TabsContent>
+          <TabsContent value="outflow" className="mt-3">
+            <FlowColumn title="净流出" tone="down" rows={outflow} maxAbs={maxAbs} onPick={onPick} />
+          </TabsContent>
+        </Tabs>
       </CardContent>
     </Card>
   )
@@ -130,7 +141,7 @@ function FlowColumn({
                 />
               </div>
               {row.inflow != null || row.outflow != null ? (
-                <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500 tabular-nums">
+                <div className="hidden flex-wrap items-center gap-2 text-[10px] text-slate-500 tabular-nums sm:flex">
                   <span>流入 {row.inflow?.toFixed(2) ?? "—"}亿</span>
                   <span>流出 {row.outflow?.toFixed(2) ?? "—"}亿</span>
                 </div>

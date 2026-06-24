@@ -49,7 +49,7 @@ export function IndustryRotation({
               <Shuffle className="mr-2 inline-block size-5 text-indigo-500" />
               行业轮动 · 日 Top {topN}
             </CardTitle>
-            <CardDescription className="mt-1 text-sm text-slate-500">
+            <CardDescription className="mt-1 text-sm text-slate-500 max-sm:hidden">
               每个交易日, 按 TDX 56 行业指数当日涨跌幅排序, 取前 {topN}。横轴日期 (最新在左), 纵轴排名。
             </CardDescription>
           </div>
