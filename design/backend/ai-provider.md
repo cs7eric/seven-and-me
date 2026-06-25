@@ -38,6 +38,8 @@ Current types:
 
 DeepSeek uses an OpenAI-compatible chat completion API, but it is kept as a separate provider type so future DeepSeek-specific parameters can be added without changing saved generic OpenAI-compatible providers.
 
+- `anthropic_compatible`: Anthropic Messages API (`/v1/messages`). Uses `x-api-key` header and `anthropic-version: 2023-06-01`. Response content is extracted from `content[0].text`.
+
 ## Database
 
 Tables:
@@ -49,11 +51,14 @@ Migrations:
 
 - `alembic/versions/s2t3u4v5w6x7_create_ai_provider_tables.py`
 - `alembic/versions/t3u4v5w6x7y8_seed_deepseek_ai_provider.py`
+- `alembic/versions/u4v5w6x7y8z9_add_ai_providers_models.py`
+- `alembic/versions/v5w6x7y8z9a1_seed_mimo_ai_provider.py`
 
 Seed data:
 
 - `minimax-default` is bound to all current capabilities by the initial migration.
 - `deepseek-default` is created but not bound automatically. Bind individual capabilities in Settings > AI Provider.
+- `mimo-default` is created with Anthropic-compatible adapter. Bind individual capabilities in Settings > AI Provider.
 
 ## Backend Code Map
 
