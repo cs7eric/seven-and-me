@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LineChart,
   Settings,
+  BrainCircuit,
   TrendingUp,
 } from "lucide-react"
 
@@ -121,6 +122,10 @@ export const sidebarConfig = {
           title: "Scheduler",
           url: "/settings/scheduler",
         },
+        {
+          title: "AI Provider",
+          url: "/settings/ai-provider",
+        },
       ],
     },
   ],
@@ -179,6 +184,11 @@ export const sidebarConfig = {
       name: "Settings · Scheduler",
       url: "/settings/scheduler",
       icon: Settings,
+    },
+    {
+      name: "Settings · AI Provider",
+      url: "/settings/ai-provider",
+      icon: BrainCircuit,
     },
     {
       name: "Knowledge Base",

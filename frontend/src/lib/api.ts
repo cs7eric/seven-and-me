@@ -3725,6 +3725,131 @@ export async function triggerMarketPulseSnapshot(): Promise<Record<string, unkno
   return data
 }
 
+// AI Provider API docs:
+//   design/frontend/ai-provider.md
+// Keep that document in sync when changing these types or request helpers.
+
+export interface AiCapability {
+  code: string
+  label: string
+}
+
+export interface AiProviderType {
+  code: string
+  label: string
+  default_base_url: string
+  default_model: string
+  api_key_env: string
+  group_id_env: string
+}
+
+export interface AiProviderItem {
+  id: string
+  code: string
+  name: string
+  provider_type: string
+  base_url: string
+  default_model: string
+  api_key?: string
+  api_key_masked: string
+  api_key_env: string
+  group_id: string
+  group_id_env: string
+  is_enabled: boolean
+  timeout_seconds: number | null
+  extra: Record<string, unknown>
+  remark: string
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AiBindingItem {
+  id: string
+  capability: string
+  label: string
+  provider_id: string
+  provider: AiProviderItem | null
+  model_override: string
+  is_enabled: boolean
+  params: Record<string, unknown>
+  remark: string
+}
+
+export async function fetchAiCapabilities(): Promise<AiCapability[]> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/capabilities`, { cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as { items?: AiCapability[] } | null
+  if (!res.ok || !data) throw new Error("获取 AI 能力列表失败")
+  return data.items || []
+}
+
+export async function fetchAiProviderTypes(): Promise<AiProviderType[]> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/provider-types`, { cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as { items?: AiProviderType[] } | null
+  if (!res.ok || !data) throw new Error("获取 AI Provider 类型失败")
+  return data.items || []
+}
+
+export async function fetchAiProviders(): Promise<AiProviderItem[]> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers`, { cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as { items?: AiProviderItem[] } | null
+  if (!res.ok || !data) throw new Error("获取 AI Provider 失败")
+  return data.items || []
+}
+
+export async function createAiProvider(payload: Partial<AiProviderItem>): Promise<AiProviderItem> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  const data = (await res.json().catch(() => null)) as AiProviderItem | { error?: string } | null
+  if (!res.ok || !data || !("id" in data)) {
+    throw new Error((data && "error" in data && data.error) || "创建 AI Provider 失败")
+  }
+  return data
+}
+
+export async function updateAiProvider(id: string, payload: Partial<AiProviderItem>): Promise<AiProviderItem> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  const data = (await res.json().catch(() => null)) as AiProviderItem | { error?: string } | null
+  if (!res.ok || !data || !("id" in data)) {
+    throw new Error((data && "error" in data && data.error) || "更新 AI Provider 失败")
+  }
+  return data
+}
+
+export async function deleteAiProvider(id: string): Promise<void> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers/${id}`, { method: "DELETE" })
+  if (!res.ok) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(data?.error || "删除 AI Provider 失败")
+  }
+}
+
+export async function fetchAiBindings(): Promise<AiBindingItem[]> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/bindings`, { cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as { items?: AiBindingItem[] } | null
+  if (!res.ok || !data) throw new Error("获取 AI 绑定失败")
+  return data.items || []
+}
+
+export async function upsertAiBinding(payload: Partial<AiBindingItem>): Promise<AiBindingItem> {
+  const res = await fetchWithRetry(`${API_BASE}/api/ai/bindings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  })
+  const data = (await res.json().catch(() => null)) as AiBindingItem | { error?: string } | null
+  if (!res.ok || !data || !("id" in data)) {
+    throw new Error((data && "error" in data && data.error) || "保存 AI 绑定失败")
+  }
+  return data
+}
+
 export async function askQuestion(
   taskId: string,
   question: string

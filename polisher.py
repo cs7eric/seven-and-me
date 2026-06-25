@@ -1,10 +1,10 @@
 import json
 import os
 import re
-import requests
 from pathlib import Path
 from string import Template
 from typing import Callable, Optional
+from backend.services.ai_adapter_service import AIAdapterRouter
 
 
 # 所有 prompt 维护在 prompt/ 目录下，文件名即用途
@@ -42,13 +42,12 @@ class TextPolisher:
     def __init__(self, api_key: Optional[str] = None, group_id: Optional[str] = None):
         self.api_key = api_key or os.getenv("MINIMAX_API_KEY")
         self.group_id = group_id or os.getenv("MINIMAX_GROUP_ID")
+        self.ai_router = AIAdapterRouter()
 
-        if not self.api_key:
-            raise ValueError("请设置 MINIMAX_API_KEY")
-        if not self.group_id:
-            raise ValueError("请设置 MINIMAX_GROUP_ID")
-
-        print(f"[Polisher] API Key: {self.api_key[:12]}...")
+        if self.api_key:
+            print(f"[Polisher] API Key: {self.api_key[:12]}...")
+        else:
+            print("[Polisher] API Key: <configured by AI Provider registry>")
 
     def _stream_chat_completion(
         self,
@@ -56,6 +55,8 @@ class TextPolisher:
         user_text: str,
         timeout: int = 120,
         on_chunk: Optional[Callable[[str], None]] = None,
+        capability: str = "text_polish",
+        fallback_model: str = "MiniMax-M2.5",
     ) -> str:
         """调用 MiniMax 流式接口，并在每次有增量时回调当前完整文本。
 
@@ -65,87 +66,19 @@ class TextPolisher:
         这里的规则是：优先使用 delta 增量；只有没有 delta 时，才把
         message.content 当作完整候选文本进行覆盖/补全，而不是盲目 append。
         """
-        url = f"{self.BASE_URL}/v1/text/chatcompletion_v2"
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "model": "MiniMax-M2.5",
-            "messages": [
+        response = self.ai_router.chat_completion(
+            capability=capability,
+            messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ],
-            "group_id": self.group_id,
-            "stream": True,
-        }
-
-        full_text = ""
-
-        try:
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=timeout,
-                stream=True,
-            )
-        except requests.exceptions.Timeout:
-            raise ValueError("AI 请求超时")
-        except requests.exceptions.ConnectionError as e:
-            raise ValueError(f"网络连接失败: {e}")
-
-        if response.status_code != 200:
-            preview = response.text[:500] if response.text else ""
-            raise ValueError(f"API 请求失败: {response.status_code} {preview}")
-
-        for raw_line in response.iter_lines(decode_unicode=True):
-            if not raw_line:
-                continue
-
-            line = raw_line.strip()
-            if not line.startswith("data:"):
-                continue
-
-            data = line[5:].strip()
-            if data == "[DONE]":
-                break
-
-            try:
-                chunk = json.loads(data)
-            except json.JSONDecodeError:
-                continue
-
-            choices = chunk.get("choices") or []
-            if not choices:
-                continue
-
-            choice = choices[0] or {}
-            delta = choice.get("delta") or {}
-            message = choice.get("message") or {}
-
-            delta_content = delta.get("content") or ""
-            message_content = message.get("content") or ""
-
-            if delta_content:
-                full_text += delta_content
-                if on_chunk:
-                    on_chunk(full_text)
-                continue
-
-            if message_content:
-                # message.content 通常是最终完整文本。不要追加到 delta 之后。
-                if not full_text:
-                    full_text = message_content
-                    if on_chunk:
-                        on_chunk(full_text)
-                elif message_content.startswith(full_text) and len(message_content) > len(full_text):
-                    full_text = message_content
-                    if on_chunk:
-                        on_chunk(full_text)
-                # 如果 message_content 与已累计内容相同或更短，忽略，避免重复。
-
-        return full_text
+            fallback_model=fallback_model,
+            fallback_base_url=self.BASE_URL,
+            fallback_timeout=timeout,
+            stream=True,
+            on_chunk=on_chunk,
+        )
+        return response.content
 
     def _parse_json_object(self, content: str) -> dict:
         """从包含额外文本的响应中尽量提取第一个 JSON 对象。"""
@@ -280,6 +213,7 @@ class TextPolisher:
                 user_text=text,
                 timeout=120,
                 on_chunk=on_chunk,
+                capability="text_polish",
             ).strip()
             print(f"[Polisher] 润色成功: {len(text)} -> {len(polished)}")
             return polished
@@ -329,6 +263,7 @@ class TextPolisher:
                 user_text=text,
                 timeout=120,
                 on_chunk=on_chunk,
+                capability="text_summary",
             ).strip()
             print(f"[Summarizer] 摘要成功: {len(summary)} 字符")
             return summary
@@ -357,6 +292,7 @@ class TextPolisher:
                 system_prompt=system_prompt,
                 user_text=user_text,
                 timeout=60,
+                capability="post_metadata",
             ).strip()
 
             if not content:
@@ -410,6 +346,7 @@ class TextPolisher:
                 system_prompt=system_prompt,
                 user_text=user_text,
                 timeout=60,
+                capability="mp4_qa",
             ).strip()
 
             if not raw_answer:

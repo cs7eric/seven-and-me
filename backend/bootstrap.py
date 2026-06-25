@@ -8,6 +8,7 @@ from backend.api.scheduler import scheduler_bp
 from backend.api.self_selected import self_selected_bp
 from backend.api.stock.f10 import f10_bp
 from backend.api.stock_chart import stock_chart_bp
+from backend.api.ai_providers import ai_provider_bp
 from backend.api.system import create_system_bp
 from backend.api.transcription import create_transcription_bp
 from backend.config.settings import API_KEY, GROUP_ID, OUTPUT_FOLDER, UPLOAD_FOLDER
@@ -62,6 +63,7 @@ def is_api_configured() -> bool:
 
 def register_blueprints(app: Flask, *, start_schedulers: bool = True) -> None:
     app.register_blueprint(stock_chart_bp)
+    app.register_blueprint(ai_provider_bp)
     app.register_blueprint(f10_bp)
     # 触发 F10 适配器单例构建（懒加载预热）
     get_fundamentals_service()

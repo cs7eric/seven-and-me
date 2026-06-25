@@ -9,6 +9,7 @@ import IndustryApplicationPage from "../views/industry-application"
 import Mp4ToWordPage from "../views/mp4-to-word"
 import Mp4HistoryPage from "../views/mp4-to-word/history"
 import SchedulerSettingsPage from "../views/settings/scheduler"
+import AiProviderSettingsPage from "../views/settings/ai-provider"
 import SelfSelectedPage from "../views/self-selected"
 import StockChartPage from "../views/stock-chart"
 import StockOverviewPage from "../views/stock-overview"
@@ -98,6 +99,10 @@ export const router = createBrowserRouter([
       {
         path: "settings/scheduler",
         element: <SchedulerSettingsPage />,
+      },
+      {
+        path: "settings/ai-provider",
+        element: <AiProviderSettingsPage />,
       },
     ],
   },

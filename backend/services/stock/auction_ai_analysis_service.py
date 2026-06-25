@@ -201,10 +201,10 @@ def _minimax_error_preview(payload: dict[str, Any]) -> str:
 
 def call_auction_analysis_ai(system_prompt: str, analysis_input: dict[str, Any], *, target_type: str, symbol: str, name: str) -> tuple[dict[str, Any], dict[str, str]]:
     import time
-    import requests
     from backend.services.ai_provider_service import ai_provider_registry
 
     polisher = ai_provider_registry.get_polisher()
+    ai_router = ai_provider_registry.get_ai_router()
     log_prefix = "[AuctionAnalysis]"
     chunks = _chunk_input_text(analysis_input)
     print(f"{log_prefix} start model={AUCTION_ANALYSIS_MODEL} chunks={len(chunks)} chars={[len(c) for c in chunks]} prompt_chars={len(system_prompt)}", flush=True)
@@ -222,34 +222,26 @@ def call_auction_analysis_ai(system_prompt: str, analysis_input: dict[str, Any],
         ),
     })
 
-    url = f"{polisher.BASE_URL}/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {polisher.api_key}",
-        "Content-Type": "application/json",
-    }
-    payload_body = {
-        "model": AUCTION_ANALYSIS_MODEL,
-        "messages": [{"role": "system", "content": system_prompt, "name": "MiniMax AI"}, *user_messages],
-        "temperature": 0.15,
-        "stream": False,
-    }
-
+    messages = [{"role": "system", "content": system_prompt, "name": "MiniMax AI"}, *user_messages]
     started = time.monotonic()
     try:
-        response = requests.post(url, headers=headers, json=payload_body, timeout=AUCTION_ANALYSIS_TIMEOUT)
-    except requests.exceptions.Timeout as exc:
-        elapsed = int(time.monotonic() - started)
-        raise ValueError(f"Auction Analysis AI 请求超时 ({elapsed}s)，timeout={AUCTION_ANALYSIS_TIMEOUT}s") from exc
-    except requests.exceptions.ConnectionError as exc:
-        raise ValueError(f"Auction Analysis AI 网络连接失败: {exc}") from exc
+        ai_response = ai_router.chat_completion(
+            capability="auction_analysis",
+            messages=messages,
+            fallback_model=AUCTION_ANALYSIS_MODEL,
+            fallback_base_url=polisher.BASE_URL,
+            fallback_timeout=AUCTION_ANALYSIS_TIMEOUT,
+            stream=False,
+            temperature=0.15,
+        )
+    except ValueError:
+        raise
 
     elapsed = int(time.monotonic() - started)
-    print(f"{log_prefix} response status={response.status_code} elapsed={elapsed}s", flush=True)
-    if response.status_code != 200:
-        raise ValueError(f"Auction Analysis AI 请求失败: {response.status_code} {response.text[:800]}")
+    print(f"{log_prefix} response elapsed={elapsed}s", flush=True)
 
-    raw = response.json()
-    content = _extract_ai_content(raw).strip()
+    raw = ai_response.raw
+    content = (ai_response.content or _extract_ai_content(raw)).strip()
     dump_paths = _dump_ai_payload(target_type, symbol, name, raw, content)
     if not content:
         raise ValueError(f"Auction Analysis AI 返回为空，响应摘要: {_minimax_error_preview(raw)}")

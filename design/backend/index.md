@@ -28,6 +28,9 @@
 - `MP4 History / reference 落盘`
   - design: `design/backend/mp4-history-reference-flow.md`
   - code: `backend/api/mp4_history.py`, `backend/services/mp4_history_service.py`
+- `AI Provider / adapter routing`
+  - design: `design/backend/ai-provider.md`
+  - code: `backend/services/ai_adapter_service.py`, `backend/api/ai_providers.py`, `backend/repositories/ai_provider_repo.py`
 
 ## 已有专项设计
 
@@ -37,3 +40,4 @@
 - `design/backend/self-selected-postgres-migration.md`
 - `design/backend/application-analysis-target-postgres-migration.md`
 - `design/backend/stock-data-source.md`
+- `design/backend/ai-provider.md`

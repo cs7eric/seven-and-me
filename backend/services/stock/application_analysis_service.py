@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-import requests
 
 from backend.config.settings import (
     BASE_DIR,
@@ -562,19 +561,16 @@ def _call_minimax_json_once(
     symbol: str,
     name: str,
     attempt: int,
+    capability: str = 'application_analysis',
 ) -> tuple[dict, dict]:
     import time
 
+    ai_router = ai_provider_registry.get_ai_router()
     polisher = ai_provider_registry.get_polisher()
     log_prefix = f'[ApplicationAnalysis attempt={attempt}/{APPLICATION_ANALYSIS_RETRY_ATTEMPTS}]'
     print(f'{log_prefix} start model={APPLICATION_ANALYSIS_MODEL} timeout={APPLICATION_ANALYSIS_TIMEOUT}s', flush=True)
     chunks = _chunk_analysis_input_text(analysis_input)
     print(f'{log_prefix} chunks={len(chunks)} chars={[len(c) for c in chunks]} system_prompt_chars={len(system_prompt)}', flush=True)
-    url = f'{polisher.BASE_URL}/v1/chat/completions'
-    headers = {
-        'Authorization': f'Bearer {polisher.api_key}',
-        'Content-Type': 'application/json',
-    }
     user_messages: list[dict] = []
     for index, payload in enumerate(chunks):
         label = f'分析输入片段 {index + 1}/{len(chunks)}，请按顺序拼接：' if len(chunks) > 1 else '分析输入 JSON：'
@@ -586,32 +582,27 @@ def _call_minimax_json_once(
         '输出必须以 `{` 开头并以 `}` 结束；根字段只能出现 analysis_result。'
     )
     user_messages.append({'role': 'user', 'name': 'User', 'content': summary})
-    payload_body = {
-        'model': APPLICATION_ANALYSIS_MODEL,
-        'messages': [{'role': 'system', 'content': system_prompt, 'name': 'MiniMax AI'}, *user_messages],
-        'temperature': 0.2,
-        'stream': False,
-    }
-    body_size = sum(len(json.dumps(m, ensure_ascii=False)) for m in payload_body['messages'])
-    print(f'{log_prefix} request url={url} total_message_chars={body_size}', flush=True)
+    messages = [{'role': 'system', 'content': system_prompt, 'name': 'MiniMax AI'}, *user_messages]
+    body_size = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
+    print(f'{log_prefix} request capability={capability} total_message_chars={body_size}', flush=True)
     started = time.monotonic()
     try:
-        response = requests.post(url, headers=headers, json=payload_body, timeout=APPLICATION_ANALYSIS_TIMEOUT)
-    except requests.exceptions.Timeout as exc:
+        ai_response = ai_router.chat_completion(
+            capability=capability,
+            messages=messages,
+            fallback_model=APPLICATION_ANALYSIS_MODEL,
+            fallback_base_url=polisher.BASE_URL,
+            fallback_timeout=APPLICATION_ANALYSIS_TIMEOUT,
+            stream=False,
+            temperature=0.2,
+        )
+    except ValueError as exc:
         elapsed = int(time.monotonic() - started)
-        print(f'{log_prefix} timeout after {elapsed}s url={url}', flush=True)
-        raise ValueError(f'Application Analysis AI 请求超时 ({elapsed}s)，timeout={APPLICATION_ANALYSIS_TIMEOUT}s') from exc
-    except requests.exceptions.ConnectionError as exc:
-        elapsed = int(time.monotonic() - started)
-        print(f'{log_prefix} connection error after {elapsed}s url={url} error={exc}', flush=True)
-        raise ValueError(f'Application Analysis AI 网络连接失败: {exc}') from exc
+        print(f'{log_prefix} request failed after {elapsed}s error={exc}', flush=True)
+        raise
     elapsed = int(time.monotonic() - started)
-    print(f'{log_prefix} response status={response.status_code} elapsed={elapsed}s', flush=True)
-    if response.status_code != 200:
-        snippet = response.text[:800]
-        print(f'{log_prefix} non-200 body snippet: {snippet}', flush=True)
-        raise ValueError(f'Application Analysis AI 请求失败: {response.status_code} {snippet}')
-    raw = response.json()
+    print(f'{log_prefix} response elapsed={elapsed}s', flush=True)
+    raw = ai_response.raw
     raw_path: Path | None = None
     content_path: Path | None = None
     try:
@@ -621,12 +612,12 @@ def _call_minimax_json_once(
         raw_path = APPLICATION_ANALYSIS_DUMP_DIR / f'{timestamp}-{safe_target}-attempt{attempt}-raw.json'
         content_path = APPLICATION_ANALYSIS_DUMP_DIR / f'{timestamp}-{safe_target}-attempt{attempt}-content.txt'
         raw_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding='utf-8')
-        extracted = _extract_ai_content(raw)
+        extracted = ai_response.content or _extract_ai_content(raw)
         content_path.write_text(extracted or '', encoding='utf-8')
         print(f'{log_prefix} dumped raw={raw_path} content={content_path} content_chars={len(extracted)}', flush=True)
     except Exception as dump_exc:
         print(f'{log_prefix} dump failed: {dump_exc}', flush=True)
-    content = _extract_ai_content(raw).strip()
+    content = (ai_response.content or _extract_ai_content(raw)).strip()
     print(f'{log_prefix} content_chars={len(content)} base_resp={raw.get("base_resp") if isinstance(raw, dict) else None}', flush=True)
     if not content:
         preview = _minimax_error_preview(raw)
@@ -646,6 +637,7 @@ def _call_minimax_json(
     symbol: str,
     name: str,
     validator: Callable[[dict], None] | None = None,
+    capability: str = 'application_analysis',
 ) -> tuple[dict, dict]:
     import time
 
@@ -654,7 +646,7 @@ def _call_minimax_json(
     last_dump_paths: dict[str, Any] = {}
     for attempt in range(1, attempts + 1):
         try:
-            parsed, dump_paths = _call_minimax_json_once(system_prompt, analysis_input, target_type, symbol, name, attempt)
+            parsed, dump_paths = _call_minimax_json_once(system_prompt, analysis_input, target_type, symbol, name, attempt, capability)
             last_dump_paths = dict(dump_paths)
             if validator:
                 validator(parsed)
@@ -1087,6 +1079,7 @@ def run_application_analysis_recent30(target_type: str, symbol: str, name: str, 
         symbol,
         name,
         validator=_validate_short_term_response,
+        capability='application_recent30',
     )
     raw_keys = list(raw_response.keys()) if isinstance(raw_response, dict) else None
     print(f'[ApplicationAnalysisRecent30] raw keys={raw_keys}', flush=True)
