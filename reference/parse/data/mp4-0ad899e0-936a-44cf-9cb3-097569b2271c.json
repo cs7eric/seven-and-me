@@ -3,7 +3,7 @@
   "type": "mp4_parse",
   "version": 1,
   "created_at": "2026-05-30T16:41:17.376293",
-  "updated_at": "2026-05-30T16:41:17.376293",
+  "updated_at": "2026-06-26T01:00:23.536937",
   "title": "顶级龙头选手的情绪周期交易模式",
   "task": {
     "task_id": "0ad899e0-936a-44cf-9cb3-097569b2271c",
@@ -42,6 +42,36 @@
       "eta_seconds": 0
     },
     "qa_items": [
+      {
+        "id": "qa-1782406823536",
+        "question": "龙头断板当天如何识别补涨龙的共识？",
+        "answer": "{\"version\": \"qa_v1\", \"answer_type\": \"operation_logic\", \"grounding\": {\"source_used\": true, \"summary_used\": true, \"extension_used\": true, \"source_summary_conflict\": false}, \"sections\": {\"core_answer\": [\"补涨龙的共识需要在龙头断板当日或次日通过市场走势确认。\", \"观察谁在断板节点逆势走强、带动板块，且是低位启动。\", \"不能只看涨停时间，更要看能否形成市场一致的定位认知。\"], \"source_explanation\": [\"原文指出：补涨龙出现在最高标断板的当日和次日。\", \"本质是龙头断板当天大家有共识的高低切，走出来的标的易获定位。\", \"同时强调：补涨龙必须做低位，不能切中位股。\", \"共识靠市场自发形成，不是靠个人预判，要跟随多数人想法。\"], \"plain_language\": [\"龙头倒了，大家都在找下一个能打的，谁在当天或第二天带头涨，大家就认谁是补涨龙。\", \"不是看到涨停就算，要看它有没有带动板块里其他股票一起涨。\", \"千万别去碰那些不上不下的中位股，它们通常是给龙头挡刀的。\"], \"extra_context\": [\"可以看断板当天分时图，谁最先封板且封单强、带动板块跟风。\", \"结合板块内其他个股表现，如果该标的一涨整个板块都活跃，共识更强。\", \"也可以通过龙虎榜观察游资席位是否集中买入，辅助判断共识。\", \"但注意：共识可能很快变化，需要盘中动态确认。\"], \"caution\": [\"共识不是百分百确定，断板当天的强势股也可能次日就失败。\", \"情绪转折节点判断难度高，一旦误判可能吃大面。\", \"补涨龙时间窗口极短，买入时机要求精准，错过就别追。\", \"不要提前预判补涨龙，必须在龙头确认断板后再行动。\"]}, \"followups\": [\"补涨龙确认后如何寻找买入时机？\", \"如果断板当天没有明显补涨龙怎么办？\", \"中位股和低位股如何区分？\"], \"disclaimer\": \"仅用于投资知识学习，不构成投资建议。\"}",
+        "created_at": "2026-06-26T01:00:23.536931"
+      },
+      {
+        "id": "qa-1782406785577",
+        "question": "高度打开 需要几板",
+        "answer": "{\"version\": \"qa_v1\", \"answer_type\": \"operation_logic\", \"grounding\": {\"source_used\": false, \"summary_used\": false, \"extension_used\": true, \"source_summary_conflict\": false}, \"sections\": {\"core_answer\": [\"原文没有明确规定高度打开需要几板，通常指龙头连板达到市场认可的高度。\", \"高度打开的核心是形成赚钱效应并带动板块，而非固定板数。\", \"一般在情绪上升期，至少需要5板以上才能算真正打开空间。\"], \"source_explanation\": [\"原文仅强调高度比宽度重要，高度打开才有情绪和持续性。\", \"未给出具体板数，因为高度是相对市场环境的动态概念。\", \"作者的实际交易中，龙头高度需根据当时市场最高板定位。\", \"参考不言不语的操作，他更关注龙头对板块的带动效应。\"], \"plain_language\": [\"简单说，龙头涨得越高，市场情绪越热，赚钱效应越强。\", \"但多少板算高，没有标准答案，要看当时市场其他股票表现。\", \"比如市场最高板才3板，那4板就算打开高度了。\"], \"extra_context\": [\"通用知识中，连板高度常以7板为分水岭，7板以上容易走妖。\", \"实际应用中，需结合涨停梯队、封板质量、板块助攻来判断。\", \"高度打开后，补涨龙空间通常在3-5板左右。\", \"不要只看板数，关键看龙头断板后市场的承接和情绪。\"], \"caution\": [\"不可机械套用板数，忽视题材强度和情绪阶段。\", \"龙头高度可能单日被透支，次日直接闷杀。\", \"补涨龙高度受龙头高度限制，龙头若仅5板，补涨空间有限。\", \"新手容易误以为板数越高越好，忽略了联动性和持续性。\"]}, \"followups\": [\"如何看待当前市场最高板的带动效应？\", \"如何判断高度打开后补涨龙的介入时机？\", \"龙头断板当天如何识别补涨龙的共识？\"], \"disclaimer\": \"仅用于投资知识学习，不构成投资建议。\"}",
+        "created_at": "2026-06-26T00:59:45.577725"
+      },
+      {
+        "id": "qa-1782406442827",
+        "question": "中位股 有什么特征呢",
+        "answer": "{\"version\": \"qa_v1\", \"answer_type\": \"general\", \"grounding\": {\"source_used\": false, \"summary_used\": false, \"extension_used\": false, \"source_summary_conflict\": false}, \"sections\": {\"core_answer\": [\"抱歉，回答生成失败，请稍后重试。\"], \"source_explanation\": [], \"plain_language\": [], \"extra_context\": [], \"caution\": []}, \"followups\": [], \"disclaimer\": \"仅用于投资知识学习，不构成投资建议。\"}",
+        "created_at": "2026-06-26T00:54:02.827182"
+      },
+      {
+        "id": "qa-1782406374075",
+        "question": "怎么判断",
+        "answer": "{\"version\": \"qa_v1\", \"answer_type\": \"general\", \"grounding\": {\"source_used\": false, \"summary_used\": false, \"extension_used\": false, \"source_summary_conflict\": false}, \"sections\": {\"core_answer\": [\"抱歉，回答生成失败，请稍后重试。\"], \"source_explanation\": [], \"plain_language\": [], \"extra_context\": [], \"caution\": []}, \"followups\": [], \"disclaimer\": \"仅用于投资知识学习，不构成投资建议。\"}",
+        "created_at": "2026-06-26T00:52:54.075224"
+      },
+      {
+        "id": "qa-1782406331189",
+        "question": "在情绪转折关键节点行动 怎么判断",
+        "answer": "{\"version\": \"qa_v1\", \"answer_type\": \"general\", \"grounding\": {\"source_used\": false, \"summary_used\": false, \"extension_used\": false, \"source_summary_conflict\": false}, \"sections\": {\"core_answer\": [\"抱歉，回答生成失败，请稍后重试。\"], \"source_explanation\": [], \"plain_language\": [], \"extra_context\": [], \"caution\": []}, \"followups\": [], \"disclaimer\": \"仅用于投资知识学习，不构成投资建议。\"}",
+        "created_at": "2026-06-26T00:52:11.189665"
+      },
       {
         "id": "qa-1780130454452",
         "question": "买入时机",
