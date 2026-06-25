@@ -37,6 +37,7 @@ from apscheduler.triggers.cron import CronTrigger
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
+from backend.services.scheduler.target_date import resolve_scheduler_target_date
 from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
@@ -115,11 +116,11 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 # ---------------------------------------------------------------------------
 # stdout 解析
 # ---------------------------------------------------------------------------
-def _job_run_backfill() -> None:
+def _job_run_backfill(target_date=None) -> None:
     """17:15 抓取行业资金流并直接写 Postgres 交易日快照."""
     now = _beijing_now()
     today = now.date()
-    target_date = resolve_target_trading_day(today)
+    target_date = resolve_scheduler_target_date(today, target_date)
 
     status = _load_job_status()
     t0 = time.time()
@@ -249,10 +250,10 @@ def get_ths_industry_fund_flow_daily_scheduler_status() -> dict[str, Any]:
     return status
 
 
-def run_ths_industry_fund_flow_daily_now() -> dict[str, Any]:
+def run_ths_industry_fund_flow_daily_now(target_date=None) -> dict[str, Any]:
     """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
     with trigger_type("manual"):
-        _job_run_backfill()
+        _job_run_backfill(target_date=target_date)
     status = get_ths_industry_fund_flow_daily_scheduler_status()
     return {
         "ok": bool(status.get("lastRunOk")),

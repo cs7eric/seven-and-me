@@ -43,18 +43,24 @@ interface PaletteItem {
 }
 
 const STATIC_NAV_ITEMS: PaletteItem[] = [
-  { id: "page-dashboard", label: "Dashboard", group: "Pages", icon: LayoutDashboard, to: "/dashboard", keywords: "dashboard home" },
-  { id: "page-downloader", label: "Downloader", group: "Pages", icon: Sparkles, to: "/downloader", keywords: "downloader media" },
-  { id: "page-mp4", label: "MP4 to Word · Workspace", group: "Pages", icon: History, to: "/mp4-to-word", keywords: "mp4 word transcript" },
-  { id: "page-mp4-history", label: "MP4 · History", group: "Pages", icon: History, to: "/mp4-to-word/history", keywords: "mp4 history archive" },
-  { id: "page-stock-chart", label: "Stock Chart · Workspace", group: "Pages", icon: TrendingUp, to: "/stock-chart", keywords: "stock chart kline k 线" },
-  { id: "page-stock-overview", label: "Stock Overview · 市场情景", group: "Pages", icon: LineChart, to: "/stock-overview", keywords: "market regime overview 大盘" },
-  { id: "page-app-analysis", label: "Application Analysis", group: "Pages", icon: Compass, to: "/stock-overview/application-analysis", keywords: "application analysis 题材 120 日 4 段" },
-  { id: "page-industry-application", label: "Industry / Concept · 行业概念", group: "Pages", icon: Compass, to: "/stock-overview/industry-application", keywords: "industry concept sector 行业 概念 板块 sh8803 sh8804 eltdx" },
-  { id: "page-self-selected", label: "Self-Selected · 自选", group: "Pages", icon: Star, to: "/stock-overview/self-selected", keywords: "self selected watchlist 自选" },
-  { id: "page-stock-review", label: "Stock Review", group: "Pages", icon: LineChart, to: "/stock-review", keywords: "stock review" },
-  { id: "page-scheduler", label: "Settings · Scheduler", group: "Pages", icon: Sparkles, to: "/settings/scheduler", keywords: "scheduler settings 调度" },
-  { id: "page-knowledge", label: "Knowledge Base", group: "Pages", icon: History, to: "/knowledge-base", keywords: "knowledge base 知识库" },
+  { id: "page-home", label: "Applications · 首页", group: "Core", icon: LayoutDashboard, to: "/", keywords: "home applications app launcher 首页 应用" },
+  { id: "page-dashboard", label: "Dashboard", group: "Core", icon: LayoutDashboard, to: "/dashboard", keywords: "dashboard overview metrics home 总览 仪表盘" },
+  { id: "page-downloader", label: "Downloader", group: "Tools", icon: Sparkles, to: "/downloader", keywords: "downloader media video audio download 下载 媒体" },
+  { id: "page-mp4", label: "MP4 to Word · Workspace", group: "Tools", icon: History, to: "/mp4-to-word", keywords: "mp4 word transcript transcription parse video 转写 文稿" },
+  { id: "page-mp4-history", label: "MP4 · History", group: "Tools", icon: History, to: "/mp4-to-word/history", keywords: "mp4 history archive transcript 历史 归档" },
+  { id: "page-scheduler", label: "Settings · Scheduler", group: "Tools", icon: Sparkles, to: "/settings/scheduler", keywords: "scheduler settings cron job 调度 任务 设置" },
+  { id: "page-stock-chart", label: "Stock Chart · Workspace", group: "Stock", icon: TrendingUp, to: "/stock-chart", keywords: "stock chart kline candlestick k 线 股票 图表" },
+  { id: "page-self-selected", label: "Self-Selected · 自选", group: "Stock", icon: Star, to: "/stock-overview/self-selected", keywords: "self selected watchlist favorites 自选 分组" },
+  { id: "page-stock-review", label: "Stock Review", group: "Stock", icon: LineChart, to: "/stock-review", keywords: "stock review 复盘 股票 评审" },
+  { id: "page-stock-overview", label: "Stock Overview · 市场情景", group: "Market", icon: LineChart, to: "/stock-overview", keywords: "market regime overview 大盘 市场概览 情景" },
+  { id: "page-stock-overview-market", label: "Stock Overview · Market Pulse", group: "Market", icon: LineChart, to: "/stock-overview/market", keywords: "market pulse old overview 大盘 市场脉搏 旧版" },
+  { id: "page-market-pulse", label: "Market Pulse · 市场脉搏", group: "Market", icon: TrendingUp, to: "/market/pulse", keywords: "market pulse breadth industry fund flow 涨跌 行业 资金 市场脉搏" },
+  { id: "page-market-sentiment", label: "Market Sentiment · MSI", group: "Market", icon: LineChart, to: "/market/sentiment", keywords: "market sentiment msi emotion risk appetite 市场情绪 情绪指数" },
+  { id: "page-app-analysis", label: "Application Analysis", group: "Market", icon: Compass, to: "/stock-overview/application-analysis", keywords: "application analysis theme 题材 120 日 四段 分析" },
+  { id: "page-industry-application", label: "Industry / Concept · 行业概念", group: "Market", icon: Compass, to: "/stock-overview/industry-application", keywords: "industry concept sector heatmap 行业 概念 板块 sh8803 sh8804 eltdx 热力图" },
+  { id: "page-poc", label: "POC Lab", group: "Dev", icon: Sparkles, to: "/poc", keywords: "poc lab prototype demo 实验" },
+  { id: "page-heatmap-demo", label: "Heatmap Demo", group: "Dev", icon: LineChart, to: "/heatmap-demo", keywords: "heatmap demo treemap 热力图 demo" },
+  { id: "page-heatmap-debug", label: "Heatmap Data Debug", group: "Dev", icon: LineChart, to: "/heatmap-data-debug", keywords: "heatmap data debug treemap 热力图 数据 调试" },
 ]
 
 const PALETTE_CACHE_TTL_MS = 30_000
@@ -65,6 +71,25 @@ interface PaletteData {
   analysis: ApplicationAnalysisTarget[]
   recentMp4: MP4HistoryListItem[]
   fetchedAt: number
+}
+
+function normalizeSelfSelectedTarget(item: SelfSelectedItem) {
+  const symbol = item.symbol.trim().toUpperCase()
+  const targetType =
+    item.target_type ?? (item.market?.toUpperCase() === "HK" ? "hk_stock" : "stock")
+  const market = (item.market || targetType).trim().toUpperCase()
+  return {
+    key: `${targetType}:${market}:${symbol}`,
+    symbol,
+    targetType,
+  }
+}
+
+function formatGroupHint(groupNames: string[]) {
+  const names = Array.from(new Set(groupNames.filter(Boolean)))
+  if (names.length === 0) return undefined
+  if (names.length === 1) return names[0]
+  return `${names[0]} +${names.length - 1}`
 }
 
 // ---- 模块级 store（singleton open 状态 + 跨组件触发） ----
@@ -94,11 +119,11 @@ export function GlobalCommandTrigger({ className }: { className?: string }) {
       type="button"
       onClick={openGlobalCommand}
       className={cn(
-        "inline-flex h-8 items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-2.5 text-xs text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground",
+        "inline-flex h-9 items-center gap-2 rounded-md border border-border/70 bg-muted/40 px-3 text-sm text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground",
         className,
       )}
     >
-      <Search className="size-3.5" />
+      <Search className="size-4" />
       <span>搜索</span>
       <span className="ml-1 inline-flex items-center gap-0.5 rounded border border-border/70 bg-background/80 px-1 py-0.5 font-mono text-[10px]">
         Alt K
@@ -199,16 +224,32 @@ export function GlobalCommandPalette() {
     if (!data) return STATIC_NAV_ITEMS
     const groupNameById = new Map(data.groups.map((g) => [g.id, g.name]))
 
-    const selfSelected: PaletteItem[] = data.selfSelected.map((it) => {
-      const groupName = groupNameById.get(it.group_id) ?? ""
+    const uniqueSelfSelected = new Map<
+      string,
+      { item: SelfSelectedItem; groupNames: string[] }
+    >()
+    for (const item of data.selfSelected) {
+      const target = normalizeSelfSelectedTarget(item)
+      const groupName = groupNameById.get(item.group_id) ?? ""
+      const existing = uniqueSelfSelected.get(target.key)
+      if (existing) {
+        existing.groupNames.push(groupName)
+      } else {
+        uniqueSelfSelected.set(target.key, { item, groupNames: [groupName] })
+      }
+    }
+
+    const selfSelected: PaletteItem[] = Array.from(uniqueSelfSelected.values()).map(({ item, groupNames }) => {
+      const target = normalizeSelfSelectedTarget(item)
+      const hint = formatGroupHint(groupNames)
       return {
-        id: `self-${it.id}`,
-        label: `${it.name || it.symbol} · ${it.symbol}`,
-        hint: groupName || undefined,
+        id: `self-${target.key}`,
+        label: `${item.name || target.symbol} · ${target.symbol}`,
+        hint,
         group: "自选",
         icon: Star,
-        to: `/stock-chart?target_type=${encodeURIComponent(it.market || "stock")}&symbol=${encodeURIComponent(it.symbol)}&name=${encodeURIComponent(it.name || it.symbol)}`,
-        keywords: `${it.symbol} ${it.name ?? ""} ${groupName} watchlist`,
+        to: `/stock-chart?target_type=${encodeURIComponent(target.targetType)}&symbol=${encodeURIComponent(target.symbol)}&name=${encodeURIComponent(item.name || target.symbol)}`,
+        keywords: `${target.symbol} ${item.name ?? ""} ${groupNames.join(" ")} watchlist 自选`,
       }
     })
 
@@ -253,14 +294,14 @@ export function GlobalCommandPalette() {
       onOpenChange={handleOpenChange}
       title="全局搜索"
       description="Alt + K 唤起，搜索页面 / 自选 / 分析标的 / MP4 历史"
-      className="border-0 shadow-2xl"
+      className="w-[calc(100vw-1rem)] border-0 shadow-2xl sm:max-w-[840px] lg:max-w-[960px]"
     >
       <CommandInput
         autoFocus
         placeholder="搜索页面、股票、代码、拼音... (Alt + K)"
         className="border-0"
       />
-      <CommandList>
+      <CommandList className="max-h-[min(72vh,640px)]">
         <CommandEmpty>
           {loading ? "正在拉取数据..." : "未找到结果"}
         </CommandEmpty>

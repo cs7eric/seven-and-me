@@ -4066,9 +4066,16 @@ export async function fetchSchedulerJobHistory(
 async function postSchedulerAction(
   jobId: string,
   action: "enable" | "disable" | "trigger" | "start" | "stop",
+  body?: Record<string, unknown>,
 ): Promise<SchedulerJobActionResponse> {
   const res = await fetchWithRetry(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}/${action}`, {
     method: "POST",
+    ...(body
+      ? {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      : {}),
   })
   const data = (await res.json().catch(() => null)) as SchedulerJobActionResponse | null
   if (!res.ok || !data) {
@@ -4079,7 +4086,12 @@ async function postSchedulerAction(
 
 export const enableSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "enable")
 export const disableSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "disable")
-export const triggerSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "trigger")
+export const triggerSchedulerJob = (jobId: string, options?: { targetDate?: string | null }) =>
+  postSchedulerAction(
+    jobId,
+    "trigger",
+    options?.targetDate ? { target_date: options.targetDate } : undefined,
+  )
 export const startSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "start")
 export const stopSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "stop")
 

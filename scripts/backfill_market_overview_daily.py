@@ -1,19 +1,20 @@
-"""大盘概况 / 市场脉搏 · duckdb 一次性回填 + 每日增量.
+"""大盘概况 / 市场脉搏 · duckdb 同步 / 历史回填.
 
-数据源 (扫本地 JSON, 不走网络):
-  1. reference/market-overview/archive/YYYYMMDD.json
-     → market_overview_daily (akshare 资金流 + spot_em 涨跌家数)
-  2. reference/market-overview/market-overview/archive/YYYYMMDD.json
-     → market_overview_daily (eltdx 涨跌家数 / 成交额, 字段级补充, 不覆盖已有)
-  3. reference/stock-universe/market_pulse/rotation/YYYY-MM-DD.json
-     → market_pulse_sector_daily (90 行业 当日快照)
+默认数据源:
+  - PostgreSQL app.market_overview_snapshots
+    → duckdb.market_overview_daily (MSI / turnover_activity 的成交额数据源)
+
+历史兼容源:
+  - reference/market-overview/archive/YYYYMMDD.json
+  - reference/market-overview/market-overview/archive/YYYYMMDD.json
+  - reference/stock-universe/market_pulse/rotation/YYYY-MM-DD.json
 
 幂等: 全部走 INSERT OR REPLACE / 字段级 UPSERT, 重复跑不写脏.
 
 用法:
     python scripts/backfill_market_overview_daily.py
     python scripts/backfill_market_overview_daily.py --days=60
-    python scripts/backfill_market_overview_daily.py --days=30 --source=akshare
+    python scripts/backfill_market_overview_daily.py --days=30 --source=archive
     python scripts/backfill_market_overview_daily.py --dry-run
     python scripts/backfill_market_overview_daily.py --date=2026-06-16     # 单日
 """
@@ -168,8 +169,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="回填最近 N 天 (默认 60)")
     ap.add_argument("--date", type=str, default=None,
                     help="单日 (YYYY-MM-DD 或 YYYYMMDD), 只回填这一天")
-    ap.add_argument("--source", choices=["all", "akshare", "eltdx", "sector"], default="all",
-                    help="只回填某个数据源 (默认 all)")
+    ap.add_argument("--source", choices=["pg", "archive", "all", "akshare", "eltdx", "sector"], default="pg",
+                    help="数据源: pg=Postgres runtime source; archive/all/akshare/eltdx/sector=历史 JSON 兼容")
     ap.add_argument("--dry-run", action="store_true", help="只看计划, 不写入")
     args = ap.parse_args(argv)
 
@@ -180,36 +181,59 @@ def main(argv: list[str] | None = None) -> int:
     init_schema()
     log.info("schema 初始化完成 (幂等)")
 
-    # 单日模式
+    # 生产路径: Postgres runtime source -> DuckDB downstream cache.
+    if args.source == "pg":
+        if args.date:
+            target = _normalize_date_arg(args.date)
+            return _sync_pg_date(target, dry_run=args.dry_run)
+        return _sync_pg_history(days=args.days, dry_run=args.dry_run)
+
+    # 单日 archive 兼容模式
     if args.date:
-        d_norm = args.date.replace("-", "")
-        if len(d_norm) == 8 and d_norm.isdigit():
-            iso = f"{d_norm[:4]}-{d_norm[4:6]}-{d_norm[6:8]}"
-        else:
-            iso = args.date
+        iso = _normalize_date_arg(args.date)
+        d_norm = iso.replace("-", "")
         args.days = max(args.days, 1)  # 单日也走 days 路径 (下面会过滤)
+        found_sources: list[str] = []
+        missing_paths: list[Path] = []
         # 直接读对应 archive
         if args.source in ("all", "akshare"):
             p = AKSHARE_ARCHIVE / f"{d_norm}.json"
             if p.exists():
+                found_sources.append("akshare")
                 items = [json.loads(p.read_text(encoding="utf-8"))]
                 log.info("akshare archive: %s", p)
                 if not args.dry_run:
                     _upsert_akshare(items)
+            else:
+                missing_paths.append(p)
         if args.source in ("all", "eltdx"):
             p = ELTDX_ARCHIVE / f"{d_norm}.json"
             if p.exists():
+                found_sources.append("eltdx")
                 items = [json.loads(p.read_text(encoding="utf-8"))]
                 log.info("eltdx archive: %s", p)
                 if not args.dry_run:
                     _upsert_eltdx(items)
+            else:
+                missing_paths.append(p)
         if args.source in ("all", "sector"):
             p = ROTATION_DIR / f"{iso}.json"
             if p.exists():
+                found_sources.append("sector")
                 data = json.loads(p.read_text(encoding="utf-8"))
                 log.info("rotation: %s (items=%d)", p, len(data.get("items") or []))
                 if not args.dry_run:
                     _upsert_rotation({iso: data.get("items") or []})
+            else:
+                missing_paths.append(p)
+        if not found_sources:
+            log.error(
+                "目标日 %s 没有任何本地源 archive, 无法写 market_overview_daily. missing=%s",
+                iso,
+                ", ".join(str(p) for p in missing_paths),
+            )
+            return 1
+        log.info("done. date=%s sources=%s", iso, ",".join(found_sources))
         return 0
 
     # 区间模式
@@ -238,6 +262,125 @@ def main(argv: list[str] | None = None) -> int:
         log.info("done.  akshare_upserted=%d  eltdx_upserted=%d  sector_days=%d",
                  n_akshare, n_eltdx, n_sector_days)
     return 0
+
+
+def _normalize_date_arg(value: str) -> str:
+    d_norm = value.replace("-", "")
+    if len(d_norm) == 8 and d_norm.isdigit():
+        return f"{d_norm[:4]}-{d_norm[4:6]}-{d_norm[6:8]}"
+    # validate
+    return date.fromisoformat(value).isoformat()
+
+
+def _sync_pg_date(target: str, dry_run: bool = False) -> int:
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO_ROOT / ".env")
+    from backend.config.database import session_scope
+    from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
+
+    with session_scope() as db:
+        item = MarketOverviewPgRepository(db).get(target)
+
+    if item is None:
+        log.error("PG app.market_overview_snapshots 没有目标日 %s 的记录", target)
+        return 1
+    if item.get("total_amount") in (None, 0):
+        log.error("PG app.market_overview_snapshots.%s total_amount 为空, 不能同步到 DuckDB", target)
+        return 1
+
+    if dry_run:
+        log.info(
+            "[dry-run] pg snapshot: date=%s total_amount=%s source=%s",
+            target,
+            item.get("total_amount"),
+            item.get("source"),
+        )
+        return 0
+
+    _upsert_pg_snapshot_to_duckdb(item)
+    log.info(
+        "done. pg_to_duckdb date=%s total_amount=%s source=%s",
+        target,
+        item.get("total_amount"),
+        item.get("source"),
+    )
+    return 0
+
+
+def _sync_pg_history(days: int, dry_run: bool = False) -> int:
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO_ROOT / ".env")
+    from backend.config.database import session_scope
+    from backend.repositories.market.market_overview_pg_repo import MarketOverviewPgRepository
+
+    with session_scope() as db:
+        items = MarketOverviewPgRepository(db).get_history(days=days)
+
+    items = [it for it in items if it.get("total_amount") not in (None, 0)]
+    if dry_run:
+        log.info("[dry-run] pg snapshots with total_amount: %d", len(items))
+        return 0
+    for item in items:
+        _upsert_pg_snapshot_to_duckdb(item)
+    log.info("done. pg_to_duckdb rows=%d", len(items))
+    return 0 if items else 1
+
+
+def _upsert_pg_snapshot_to_duckdb(item: dict) -> None:
+    from backend.adapters.market.duckdb_store import get_conn
+
+    cols = [
+        "trade_date",
+        "total_amount",
+        "total_volume",
+        "rising_count",
+        "falling_count",
+        "flat_count",
+        "limit_up_count",
+        "limit_down_count",
+        "stock_count",
+        "main_net_inflow",
+        "super_large_net_inflow",
+        "large_net_inflow",
+        "medium_net_inflow",
+        "small_net_inflow",
+        "main_net_inflow_ratio",
+        "super_large_net_ratio",
+        "large_net_ratio",
+        "medium_net_ratio",
+        "small_net_ratio",
+        "source",
+    ]
+    params = [
+        item.get("trade_date"),
+        item.get("total_amount"),
+        item.get("total_volume"),
+        item.get("rising_count"),
+        item.get("falling_count"),
+        item.get("flat_count"),
+        item.get("limit_up_count"),
+        item.get("limit_down_count"),
+        item.get("stock_count"),
+        item.get("main_net_inflow"),
+        item.get("super_large_net_inflow"),
+        item.get("large_net_inflow"),
+        item.get("medium_net_inflow"),
+        item.get("small_net_inflow"),
+        item.get("main_net_inflow_ratio"),
+        item.get("super_large_net_ratio"),
+        item.get("large_net_ratio"),
+        item.get("medium_net_ratio"),
+        item.get("small_net_ratio"),
+        f"pg:{item.get('source') or 'market_overview_snapshots'}"[:32],
+    ]
+    placeholders = ", ".join(["?"] * len(cols))
+    con = get_conn()
+    con.execute(
+        f"INSERT OR REPLACE INTO market_overview_daily ({', '.join(cols)}) VALUES ({placeholders})",
+        params,
+    )
 
 
 def _upsert_akshare(items: list[dict]) -> int:

@@ -1,6 +1,6 @@
 {
   "name": "market_overview_daily",
-  "description": "工作日 17:10 触发, 调 scripts/backfill_market_overview_daily.py 扫本地 JSON archive, 把 (1) akshare 资金流 + spot_em 全 A 涨跌家数 (2) eltdx 涨跌家数 / 成交额 (3) akshare 90 行业 涨跌幅 / 流入流出 / 主力净流入 全部 upsert 到 duckdb (market_overview_daily + market_pulse_sector_daily 表). 全部走 INSERT OR REPLACE / 字段级 UPSERT, 幂等. 周末 / 节假日由 is_trading_day 二次过滤. 预计耗时 < 30s (扫 60 天 archive).",
+  "description": "工作日 17:10 触发, 调 scripts/backfill_market_overview_daily.py 从 PostgreSQL app.market_overview_snapshots 同步目标日大盘快照到 DuckDB market_overview_daily, 供 MSI / turnover_activity 下游读取. 本地 JSON archive 仅保留为历史兼容 / 手工回填路径. 全部走 INSERT OR REPLACE, 幂等.",
   "enabled": true,
   "schedule": {
     "workday_only": true,

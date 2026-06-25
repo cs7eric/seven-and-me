@@ -37,6 +37,7 @@ from backend.services.scheduler.config_store import register_job
 from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
+from backend.services.scheduler.target_date import resolve_scheduler_target_date
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +154,7 @@ def _register_job(job_id: str, name: str) -> None:
 # ---------------------------------------------------------------------------
 # Job 函数
 # ---------------------------------------------------------------------------
-def _job_run_download() -> None:
+def _job_run_download(target_date=None) -> None:
     """16:30 跑 download_tdx_hsjday.py (subprocess, 不阻塞 scheduler).
 
     周末 / 节假日不 skip, 改按最近一个交易日 (target_date) 跑, 避免 cron 漏跑.
@@ -161,7 +162,7 @@ def _job_run_download() -> None:
     """
     now = _beijing_now()
     today = now.date()
-    target_date = resolve_target_trading_day(today)
+    target_date = resolve_scheduler_target_date(today, target_date)
 
     status = _load_job_status()
     t0 = time.time()
@@ -553,10 +554,10 @@ def get_tdx_hsjday_download_scheduler_status() -> dict[str, Any]:
     return status
 
 
-def run_tdx_hsjday_download_now() -> dict[str, Any]:
+def run_tdx_hsjday_download_now(target_date=None) -> dict[str, Any]:
     """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
     with trigger_type("manual"):
-        _job_run_download()
+        _job_run_download(target_date=target_date)
     status = get_tdx_hsjday_download_scheduler_status()
     # 包装成前端友好的 {ok, count, failed_count} 形态 (跟其他 scheduler 一致)
     return {

@@ -1,19 +1,16 @@
-"""大盘概况 / 市场脉搏 90 行业 duckdb 回填 scheduler.
+"""大盘概况 / 市场脉搏 90 行业 DuckDB 同步 scheduler.
 
 单 job:
   - 工作日 17:10 触发 (cron ``10 17 * * mon-fri``, is_trading_day 二次过滤)
   - 调 ``scripts/backfill_market_overview_daily.py``:
-    1. 扫 reference/market-overview/archive/YYYYMMDD.json
-       → duckdb.market_overview_daily (akshare 资金流 + spot_em)
-    2. 扫 reference/market-overview/market-overview/archive/YYYYMMDD.json
-       → duckdb.market_overview_daily (eltdx 字段, 不覆盖已有)
-    3. 扫 reference/stock-universe/market_pulse/rotation/YYYY-MM-DD.json
-       → duckdb.market_pulse_sector_daily (90 行业)
+    1. 从 PostgreSQL app.market_overview_snapshots 取目标日大盘快照
+       → duckdb.market_overview_daily (MSI / turnover_activity 下游缓存)
+    2. 本地 JSON archive 仅保留为历史兼容 / 手工回填路径
   - 幂等: 全部走 INSERT OR REPLACE / 字段级 UPSERT
 
 跟 daily_eod_incremental 关系:
   - 17:00 daily_eod_incremental 跑完 → daily_raw 已落地
-  - 17:10 这个 job 跑 → 落 market_overview_daily + market_pulse_sector_daily
+  - 17:10 这个 job 跑 → 落 market_overview_daily
     (跟 daily_eod 不冲突, 一个写 daily_raw / limit_emotion, 一个写 overview / sector)
 
 启动: :mod:`backend.bootstrap` 调 :func:`start_market_overview_daily_scheduler`.
@@ -44,6 +41,7 @@ from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
+from backend.services.scheduler.target_date import resolve_scheduler_target_date
 from backend.services.scheduler.backfill_validator import fetch_scalar_value, validate_scalar
 
 logger = logging.getLogger(__name__)
@@ -52,7 +50,7 @@ OVERVIEW_DAILY_CRON = "45 18 * * mon-fri"  # 工作日 18:45 (北京时间, 跟 
 _JOB_ID = "market_overview_daily"
 _SCRIPT_PATH_KEY = "market_overview_daily_script"  # 状态文件可覆盖脚本路径 (测试用)
 
-# backfill 扫 60 天 archive 通常 < 30s; 给 5 min 上限足够, 防止 90 行业 rotation archive 异常卡住
+# PG -> DuckDB 同步通常 < 30s; 给 5 min 上限足够, 防止历史兼容路径异常卡住
 _JOB_TIMEOUT_SECONDS = 5 * 60
 
 _scheduler: BackgroundScheduler | None = None
@@ -96,7 +94,7 @@ def _save_job_status(status: dict[str, Any]) -> None:
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
     register_job(
         code="market_overview_daily", name=name,
-        description="工作日 17:10 触发, 扫本地 JSON archive, 把 akshare 资金流 + eltdx 大盘 + 90 行业全部 upsert 到 duckdb.",
+        description="工作日 17:10 触发, 从 PostgreSQL app.market_overview_snapshots 同步目标日大盘快照到 DuckDB market_overview_daily.",
         service_module="backend.services.scheduler.market_overview_daily_scheduler",
         service_class="MarketOverviewDailyScheduler",
         config_file="market_overview_daily_job.json",
@@ -131,14 +129,14 @@ def _parse_kv_count(stdout: str, key: str) -> int | None:
 # ---------------------------------------------------------------------------
 # Job 函数
 # ---------------------------------------------------------------------------
-def _job_run_backfill() -> None:
+def _job_run_backfill(target_date=None) -> None:
     """17:10 跑 backfill_market_overview_daily.py (subprocess).
 
     周末 / 节假日不 skip, 改按最近一个交易日 (target_date) 跑, 避免 cron 漏跑.
     """
     now = _beijing_now()
     today = now.date()
-    target_date = resolve_target_trading_day(today)
+    target_date = resolve_scheduler_target_date(today, target_date)
 
     status = _load_job_status()
     t0 = time.time()
@@ -184,7 +182,7 @@ def _job_run_backfill() -> None:
             "MINIMAX_TARGET_TRADE_DATE": target_date.isoformat(),
         }
         r = subprocess.run(
-            [sys.executable, "-u", str(script), "--days=60"],
+            [sys.executable, "-u", str(script), f"--date={target_date.isoformat()}", "--source=pg"],
             cwd=str(_repo_root()),
             check=False,
             capture_output=True,
@@ -194,22 +192,12 @@ def _job_run_backfill() -> None:
         )
         elapsed = time.time() - t0
         status["lastDurationSeconds"] = round(elapsed, 1)
-        status["lastDaysRequested"] = 60
+        status["lastDaysRequested"] = 1
 
-        # 抓脚本 stdout 关键行
-        stdout = (r.stdout or "") + "\n" + (r.stderr or "")
-        status["lastAkshareUpserted"] = (
-            _grep_int(stdout, "akshare archive 命中 ")
-            or _parse_kv_count(stdout, "akshare_upserted")
-        )
-        status["lastEltdxUpserted"] = (
-            _grep_int(stdout, "eltdx archive 命中 ")
-            or _parse_kv_count(stdout, "eltdx_upserted")
-        )
-        status["lastSectorDays"] = (
-            _grep_int(stdout, "rotation 命中 ")
-            or _parse_kv_count(stdout, "sector_days")
-        )
+        # PG runtime path no longer reports legacy archive counters.
+        status["lastAkshareUpserted"] = None
+        status["lastEltdxUpserted"] = None
+        status["lastSectorDays"] = None
 
         if r.returncode == 0:
             # DuckDB 数据校验: 有值且不为 0
@@ -223,18 +211,18 @@ def _job_run_backfill() -> None:
                 status["lastRunOk"] = True
                 status["lastRunError"] = None
 
+                total_amount = fetch_scalar_value("market_overview_daily", "total_amount", target_date)
+                status["lastPgToDuckdbSynced"] = True
+                status["lastTotalAmount"] = total_amount
                 status["lastMessage"] = (
-                    f"akshare={status.get('lastAkshareUpserted','?')}条 "
-                    f"eltdx={status.get('lastEltdxUpserted','?')}条 "
-                    f"sector={status.get('lastSectorDays','?')}天"
-                    f" (target={target_date.isoformat()})"
+                    f"pg_to_duckdb total_amount={total_amount} "
+                    f"(target={target_date.isoformat()})"
                 )
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                "market_overview_daily ok in %.1fs: akshare=%s eltdx=%s sector_days=%s",
-                elapsed, status.get("lastAkshareUpserted"),
-                status.get("lastEltdxUpserted"), status.get("lastSectorDays"),
-            )
+                    "market_overview_daily ok in %.1fs: pg_to_duckdb total_amount=%s target=%s",
+                    elapsed, total_amount, target_date,
+                )
             # 写覆盖度给前端看
             _refresh_coverage(status)
         else:
@@ -371,10 +359,10 @@ def get_market_overview_daily_scheduler_status() -> dict[str, Any]:
     return status
 
 
-def run_market_overview_daily_now() -> dict[str, Any]:
+def run_market_overview_daily_now(target_date=None) -> dict[str, Any]:
     """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
     with trigger_type("manual"):
-        _job_run_backfill()
+        _job_run_backfill(target_date=target_date)
     status = get_market_overview_daily_scheduler_status()
     return {
         "ok": bool(status.get("lastRunOk")),

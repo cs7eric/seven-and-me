@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import traceback
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from flask import Blueprint, jsonify, request
@@ -30,6 +31,7 @@ from backend.services.scheduler.auction_analysis_scheduler import (
 )
 from backend.services.scheduler.status_store import load_status
 from backend.services.scheduler.config_store import sync_job_descriptions
+from backend.services.scheduler.target_date import normalize_target_date
 from backend.services.scheduler.daily_eod_incremental_scheduler import (
     get_daily_eod_incremental_scheduler_status,
     run_daily_eod_incremental_now,
@@ -779,7 +781,7 @@ def _stop_scheduler(job_id: str) -> None:
         stop_turnover_activity_scheduler()
 
 
-def _trigger_scheduler(job_id: str) -> dict[str, Any]:
+def _trigger_scheduler(job_id: str, target_date: date | None = None) -> dict[str, Any]:
     """手动触发一次。返回 dict 给前端展示。
 
     整段包在 ``trigger_type("manual")`` context 里, 让所有子调用的 scheduler /
@@ -787,10 +789,10 @@ def _trigger_scheduler(job_id: str) -> dict[str, Any]:
     """
     from backend.services.scheduler.job_history import trigger_type
     with trigger_type("manual"):
-        return _trigger_scheduler_inner(_canonical_job_id(job_id) or job_id)
+        return _trigger_scheduler_inner(_canonical_job_id(job_id) or job_id, target_date=target_date)
 
 
-def _trigger_scheduler_inner(job_id: str) -> dict[str, Any]:
+def _trigger_scheduler_inner(job_id: str, target_date: date | None = None) -> dict[str, Any]:
     job_id = _canonical_job_id(job_id) or job_id
     if job_id == 'turnover_refresh':
         sched = get_turnover_scheduler()
@@ -874,37 +876,37 @@ def _trigger_scheduler_inner(job_id: str) -> dict[str, Any]:
             'failed_count': 0,
         }
     if job_id == 'daily_eod_incremental':
-        return run_daily_eod_incremental_now()
+        return run_daily_eod_incremental_now(target_date=target_date)
     if job_id == 'tdx_hsjday_download':
-        return run_tdx_hsjday_download_now()
+        return run_tdx_hsjday_download_now(target_date=target_date)
     if job_id == 'market_overview_daily':
-        return run_market_overview_daily_now()
+        return run_market_overview_daily_now(target_date=target_date)
     if job_id == 'ths_industry_fund_flow_daily':
-        return run_ths_industry_fund_flow_daily_now()
+        return run_ths_industry_fund_flow_daily_now(target_date=target_date)
     if job_id == 'market_sentiment_chain_refresh':
-        return run_market_sentiment_chain_now()
+        return run_market_sentiment_chain_now(target_date=target_date)
     if job_id == 'style_risk_appetite_refresh':
-        return run_style_risk_appetite_now()
+        return run_style_risk_appetite_now(target_date=target_date)
     if job_id == 'profit_effect_refresh':
-        return run_profit_effect_now()
+        return run_profit_effect_now(target_date=target_date)
     if job_id == 'market_sentiment_index_refresh':
-        return run_market_sentiment_index_now()
+        return run_market_sentiment_index_now(target_date=target_date)
     if job_id == 'ma_count_refresh':
-        return run_ma_count_now()
+        return run_ma_count_now(target_date=target_date)
     if job_id == 'risk_appetite_refresh':
-        return run_risk_appetite_now()
+        return run_risk_appetite_now(target_date=target_date)
     if job_id == 'volatility_sentiment_refresh':
-        return run_volatility_sentiment_now()
+        return run_volatility_sentiment_now(target_date=target_date)
     if job_id == 'limit_emotion_refresh':
-        return run_limit_emotion_now()
+        return run_limit_emotion_now(target_date=target_date)
     if job_id == 'sector_breadth_refresh':
-        return run_sector_breadth_now()
+        return run_sector_breadth_now(target_date=target_date)
     if job_id == 'initial_backfill_refresh':
-        return run_initial_backfill_now()
+        return run_initial_backfill_now(target_date=target_date)
     if job_id == 'qfq_reconciliation_refresh':
-        return run_qfq_reconciliation_now()
+        return run_qfq_reconciliation_now(target_date=target_date)
     if job_id == 'turnover_activity_refresh':
-        return run_turnover_activity_now()
+        return run_turnover_activity_now(target_date=target_date)
     # test_scheduler_demo: 测试 entry, 没有对应 scheduler, trigger / start / stop 都返回错误
     if job_id == 'test_scheduler_demo':
         return {'ok': False, 'error': 'test_scheduler_demo 是测试 entry, 没有对应 scheduler 模块; 用来演示 jobs.json 注册表 CRUD'}
@@ -1292,7 +1294,13 @@ def trigger_job(job_id: str):
     if not _job_exists(job_id):
         return jsonify({'ok': False, 'error': f'unknown job_id: {job_id}'}), 404
     try:
-        result = _trigger_scheduler(job_id)
+        payload = request.get_json(silent=True) or {}
+        raw_target_date = payload.get("target_date") or payload.get("targetDate")
+        try:
+            target_date = normalize_target_date(raw_target_date)
+        except ValueError as exc:
+            return jsonify({'ok': False, 'error': str(exc)}), 400
+        result = _trigger_scheduler(job_id, target_date=target_date)
         # 兼容前端 notification 组件: 把 count/failed_count 提升到顶层.
         # application_analysis 的 result 自带 count/failed_count;
         # stock_universe / turnover / auction 的 result 是 status 形态, 这里兜底算 1.
@@ -1305,6 +1313,7 @@ def trigger_job(job_id: str):
         return jsonify({
             "ok": True,
             "job_id": job_id,
+            "target_date": target_date.isoformat() if target_date else None,
             "count": top_count,
             "failed_count": top_failed,
             "result": result,

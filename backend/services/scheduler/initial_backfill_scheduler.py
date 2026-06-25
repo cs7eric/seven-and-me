@@ -34,6 +34,7 @@ from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
+from backend.services.scheduler.target_date import resolve_scheduler_target_date
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +97,9 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
     )
 
 
-def job_run_backfill() -> dict:
+def job_run_backfill(target_date=None) -> dict:
     now = _beijing_now()
-    target_date = resolve_target_trading_day(now.date())
+    target_date = resolve_scheduler_target_date(now.date(), target_date)
     status = _load_job_status()
     t0 = time.time()
     start_at_iso = now.isoformat(timespec="seconds")
@@ -239,9 +240,9 @@ def get_initial_backfill_scheduler_status() -> dict[str, Any]:
     return status
 
 
-def run_initial_backfill_now() -> dict[str, Any]:
+def run_initial_backfill_now(target_date=None) -> dict[str, Any]:
     with trigger_type("manual"):
-        result = job_run_backfill()
+        result = job_run_backfill(target_date=target_date)
     status = get_initial_backfill_scheduler_status()
     return {"ok": bool(result.get("ok")), "items": [status], "count": 1,
             "failed_count": 0 if result.get("ok") else 1}

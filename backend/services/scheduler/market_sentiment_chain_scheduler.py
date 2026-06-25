@@ -92,7 +92,7 @@ _run_lock = threading.Lock()
 _CHAIN_LOCK_PATH = Path(__file__).resolve().parents[3] / "runtime" / "market_sentiment_chain_refresh.lock"
 
 
-StepRunner = Callable[[], Any]
+StepRunner = Callable[..., Any]
 StepStatusGetter = Callable[[], dict[str, Any]]
 
 
@@ -266,7 +266,7 @@ def _record_already_running() -> None:
     logger.warning("market_sentiment_chain trigger skipped: already running")
 
 
-def _job_run_chain_unlocked() -> None:
+def _job_run_chain_unlocked(target_date=None) -> None:
     now = _beijing_now()
     start_at_iso = now.isoformat(timespec="seconds")
     history_id = begin_run(
@@ -331,7 +331,7 @@ def _job_run_chain_unlocked() -> None:
         status["lastStep"] = step_code
         _save_job_status(status)
         try:
-            runner()
+            runner(target_date=target_date)
         except Exception as exc:
             status["lastRunOk"] = False
             status["lastStatus"] = "failed"
@@ -406,7 +406,7 @@ def _job_run_chain_unlocked() -> None:
     )
 
 
-def _job_run_chain() -> None:
+def _job_run_chain(target_date=None) -> None:
     if not _run_lock.acquire(blocking=False):
         _record_already_running()
         return
@@ -416,7 +416,7 @@ def _job_run_chain() -> None:
         _record_already_running()
         return
     try:
-        _job_run_chain_unlocked()
+        _job_run_chain_unlocked(target_date=target_date)
     finally:
         process_lock.release()
         _run_lock.release()
@@ -499,9 +499,9 @@ def get_market_sentiment_chain_scheduler_status() -> dict[str, Any]:
     return status
 
 
-def run_market_sentiment_chain_now() -> dict[str, Any]:
+def run_market_sentiment_chain_now(target_date=None) -> dict[str, Any]:
     with trigger_type("manual"):
-        _job_run_chain()
+        _job_run_chain(target_date=target_date)
     status = get_market_sentiment_chain_scheduler_status()
     return {
         "ok": bool(status.get("lastRunOk")),

@@ -35,6 +35,7 @@ from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.scheduler.time_utils import cst_now_str
 from backend.services.scheduler.job_history import record_run, trigger_type
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
+from backend.services.scheduler.target_date import resolve_scheduler_target_date
 from backend.services.scheduler.backfill_validator import (
     fetch_scalar_value,
     resolve_latest_scalar_date,
@@ -100,11 +101,11 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 # ---------------------------------------------------------------------------
 # Job 函数
 # ---------------------------------------------------------------------------
-def job_run_backfill() -> dict:
+def job_run_backfill(target_date=None) -> dict:
     """17:09 跑 backfill_profit_effect.py --days=2 --force (subprocess)."""
     now = _beijing_now()
     today = now.date()
-    target_date = resolve_target_trading_day(today)
+    target_date = resolve_scheduler_target_date(today, target_date)
 
     status = _load_job_status()
     t0 = time.time()
@@ -294,10 +295,10 @@ def get_profit_effect_scheduler_status() -> dict[str, Any]:
     return status
 
 
-def run_profit_effect_now() -> dict[str, Any]:
+def run_profit_effect_now(target_date=None) -> dict[str, Any]:
     """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
     with trigger_type("manual"):
-        result = job_run_backfill()
+        result = job_run_backfill(target_date=target_date)
     status = get_profit_effect_scheduler_status()
     return {
         "ok": bool(result.get("ok")),

@@ -41,6 +41,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { DatePicker } from "@/components/ui/date-picker"
 import { Separator } from "@/components/ui/separator"
 import {
   Tabs,
@@ -60,6 +61,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import DogLoader from "@/components/loader/dog-loader"
+import { toLocalIso, todayLocal } from "@/lib/date-utils"
 import {
   type SchedulerCategory,
   type SchedulerDailyStatItem,
@@ -82,6 +84,8 @@ type ActionState = Record<string, ActionKey | null>
 
 const REFRESH_INTERVAL_MS = 5_000
 const ALL_TAB = "all"  // 兜底 tab (不过滤)
+const MARKET_SENTIMENT_CATEGORY_LABEL = "市场情绪"
+const MARKET_SENTIMENT_CATEGORY_FALLBACK_ID = 5
 
 // ---------------------------------------------------------------------------
 // Icon mapping: 后端 icon_hint (lucide 图标名) → 实际组件.
@@ -771,6 +775,7 @@ export default function SchedulerSettingsPage() {
   const [categories, setCategories] = useState<SchedulerCategory[]>([])
   const [dailyStats, setDailyStats] = useState<SchedulerDailyStatItem[]>([])
   const [dailyStatsSummary, setDailyStatsSummary] = useState<{ total: number; failed: number; success_rate: number } | null>(null)
+  const [marketSentimentTargetDate, setMarketSentimentTargetDate] = useState(() => toLocalIso(todayLocal()))
 
   const refresh = useCallback(async (withSpinner = false) => {
     if (withSpinner) setLoading(true)
@@ -824,6 +829,16 @@ export default function SchedulerSettingsPage() {
       setPending((prev) => ({ ...prev, [jobId]: action }))
       try {
         let res
+        const job = jobs.find((item) => item.id === jobId)
+        const marketSentimentCategoryIds = new Set<number>([
+          MARKET_SENTIMENT_CATEGORY_FALLBACK_ID,
+          ...categories
+            .filter((category) => category.label === MARKET_SENTIMENT_CATEGORY_LABEL)
+            .map((category) => category.id),
+        ])
+        const shouldUseTargetDate =
+          action === "trigger" &&
+          Boolean(job?.categories?.some((categoryId) => marketSentimentCategoryIds.has(categoryId)))
         switch (action) {
           case "enable":
             res = await enableSchedulerJob(jobId)
@@ -838,7 +853,9 @@ export default function SchedulerSettingsPage() {
             res = await stopSchedulerJob(jobId)
             break
           case "trigger":
-            res = await triggerSchedulerJob(jobId)
+            res = await triggerSchedulerJob(jobId, {
+              targetDate: shouldUseTargetDate ? marketSentimentTargetDate : undefined,
+            })
             break
           case "delete":
             res = await deleteSchedulerJob(jobId)
@@ -886,7 +903,9 @@ export default function SchedulerSettingsPage() {
               } else {
                 notification.success({
                   title: "已触发一次",
-                  description: `${count} 个标的全部执行成功`,
+                  description: shouldUseTargetDate
+                    ? `${count} 个任务按 ${marketSentimentTargetDate} 执行成功`
+                    : `${count} 个标的全部执行成功`,
                 })
               }
             } else {
@@ -919,7 +938,7 @@ export default function SchedulerSettingsPage() {
         }, 600)
       }
     },
-    [refresh],
+    [categories, jobs, marketSentimentTargetDate, refresh],
   )
 
   const summary = useMemo(() => {
@@ -978,16 +997,25 @@ export default function SchedulerSettingsPage() {
           </p>
         </div>
         <div className="flex flex-col items-stretch gap-1.5 sm:items-end">
-          <Button
-            size="sm"
-            variant="outline"
-            className="w-full rounded-xl sm:w-auto"
-            onClick={() => void refresh(false)}
-            disabled={loading}
-          >
-            <RefreshCcw className="size-3.5" />
-            立即刷新
-          </Button>
+          <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-end">
+            <DatePicker
+              value={marketSentimentTargetDate}
+              onChange={(date) => setMarketSentimentTargetDate(toLocalIso(date ?? todayLocal()))}
+              clearable={false}
+              aria-label="选择市场情绪手动触发日期"
+              triggerClassName="hidden h-8 w-[9.5rem] sm:inline-flex"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              className="w-full rounded-xl sm:w-auto"
+              onClick={() => void refresh(false)}
+              disabled={loading}
+            >
+              <RefreshCcw className="size-3.5" />
+              reload
+            </Button>
+          </div>
           <div className="text-left text-xs text-muted-foreground sm:text-right">
             {lastUpdated
               ? `最近刷新：${lastUpdated.toLocaleTimeString("zh-CN", { hour12: false })} · 每 ${REFRESH_INTERVAL_MS / 1000}s 自动刷新`

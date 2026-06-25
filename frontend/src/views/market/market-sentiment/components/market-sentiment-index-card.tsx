@@ -235,17 +235,14 @@ export function MarketSentimentIndexCard({
 
     const flowHitCount = flowData.filter((d) => d.value != null).length
     const amountHitCount = amountData.filter((d) => d.value != null).length
-    const filterSeriesData = (items: typeof flowData) =>
-      items.flatMap((it) => (it.value == null ? [] : [{ date: it.date, value: it.value }]))
-
     return {
       mainNetFlowOverlay:
         flowHitCount >= 2
-          ? ({ name: "主力净流", color: "#ef4444", data: filterSeriesData(flowData) } as SentimentOverlaySeries)
+          ? ({ name: "主力净流", color: "#ef4444", data: flowData } as SentimentOverlaySeries)
           : undefined,
       amountOverlay:
         amountHitCount >= 2
-          ? ({ name: "成交额", color: "#5470c6", data: filterSeriesData(amountData) } as SentimentOverlaySeries)
+          ? ({ name: "成交额", color: "#5470c6", data: amountData } as SentimentOverlaySeries)
           : undefined,
     }
   }, [sortedHistory, overview, turnoverHistory])

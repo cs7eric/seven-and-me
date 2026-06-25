@@ -32,6 +32,7 @@ from backend.services.scheduler.status_store import load_status, save_status
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.services.stock.trading_day_resolver import resolve_target_trading_day
 from backend.services.scheduler.job_history import record_run, trigger_type
+from backend.services.scheduler.target_date import resolve_scheduler_target_date
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 # ---------------------------------------------------------------------------
 # Job 函数
 # ---------------------------------------------------------------------------
-def _job_run_incremental() -> None:
+def _job_run_incremental(target_date=None) -> None:
     """17:00 跑 daily_eod_incremental.py (subprocess, 不阻塞 scheduler).
 
     行为:
@@ -119,7 +120,7 @@ def _job_run_incremental() -> None:
     """
     now = _beijing_now()
     today = now.date()
-    target_date = resolve_target_trading_day(today)
+    target_date = resolve_scheduler_target_date(today, target_date)
 
     status = _load_job_status()
     t0 = time.time()
@@ -318,8 +319,8 @@ def get_daily_eod_incremental_scheduler_status() -> dict[str, Any]:
     return status
 
 
-def run_daily_eod_incremental_now() -> dict[str, Any]:
+def run_daily_eod_incremental_now(target_date=None) -> dict[str, Any]:
     """手动触发一次 (供 API 测试 / 前端按钮用). 标记 trigger=manual 进 history."""
     with trigger_type("manual"):
-        _job_run_incremental()
+        _job_run_incremental(target_date=target_date)
     return get_daily_eod_incremental_scheduler_status()
