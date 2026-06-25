@@ -3750,6 +3750,7 @@ export interface AiProviderItem {
   provider_type: string
   base_url: string
   default_model: string
+  models: string[]
   api_key?: string
   api_key_masked: string
   api_key_env: string

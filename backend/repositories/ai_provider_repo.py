@@ -67,6 +67,7 @@ def _provider_to_dict(row: AIProvider, *, include_secret: bool = False) -> dict[
         "provider_type": row.provider_type,
         "base_url": row.base_url or "",
         "default_model": row.default_model or "",
+        "models": row.models or [],
         "api_key": row.api_key if include_secret else "",
         "api_key_masked": _mask_secret(row.api_key),
         "api_key_env": row.api_key_env or "",
@@ -136,12 +137,15 @@ class AIProviderRepository:
         ).scalar_one_or_none()
 
     def create_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_models = payload.get("models")
+        models = [str(m).strip() for m in raw_models if str(m).strip()] if isinstance(raw_models, list) else []
         row = AIProvider(
             code=str(payload.get("code") or "").strip(),
             name=str(payload.get("name") or "").strip(),
             provider_type=str(payload.get("provider_type") or "minimax").strip(),
             base_url=str(payload.get("base_url") or "").strip() or None,
             default_model=str(payload.get("default_model") or "").strip() or None,
+            models=models,
             api_key=str(payload.get("api_key") or "").strip() or None,
             api_key_env=str(payload.get("api_key_env") or "").strip() or None,
             group_id=str(payload.get("group_id") or "").strip() or None,
@@ -180,6 +184,8 @@ class AIProviderRepository:
             row.timeout_seconds = payload.get("timeout_seconds") or None
         if "extra" in payload and isinstance(payload.get("extra"), dict):
             row.extra = payload["extra"]
+        if "models" in payload and isinstance(payload.get("models"), list):
+            row.models = [str(m).strip() for m in payload["models"] if str(m).strip()]
         row.updated_at = datetime.utcnow()
         self.db.flush()
         return _provider_to_dict(row)

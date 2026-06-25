@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { BrainCircuit, CheckCircle2, Database, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
+import { BrainCircuit, CheckCircle2, Database, Plus, RefreshCw, Save, Trash2, X } from "lucide-react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -44,6 +44,7 @@ type ProviderDraft = {
   provider_type: string
   base_url: string
   default_model: string
+  models: string[]
   api_key: string
   api_key_env: string
   group_id: string
@@ -59,6 +60,7 @@ const emptyDraft: ProviderDraft = {
   provider_type: "openai_compatible",
   base_url: "",
   default_model: "",
+  models: [],
   api_key: "",
   api_key_env: "",
   group_id: "",
@@ -76,6 +78,7 @@ function draftFromProvider(provider: AiProviderItem): ProviderDraft {
     provider_type: provider.provider_type,
     base_url: provider.base_url,
     default_model: provider.default_model,
+    models: provider.models || [],
     api_key: "",
     api_key_env: provider.api_key_env,
     group_id: provider.group_id,
@@ -98,6 +101,7 @@ export default function AiProviderSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [newModelInput, setNewModelInput] = useState("")
 
   const selectedProvider = useMemo(
     () => providers.find((item) => item.id === selectedProviderId) || null,
@@ -358,6 +362,8 @@ export default function AiProviderSettingsPage() {
                 {capabilities.map((capability) => {
                   const binding = bindingByCapability.get(capability.code)
                   const providerId = binding?.provider_id || ""
+                  const currentProvider = providers.find((p) => p.id === providerId)
+                  const providerModels = currentProvider?.models || []
                   return (
                     <div key={capability.code} className="grid min-w-[760px] grid-cols-[minmax(180px,1.4fr)_minmax(180px,1fr)_minmax(160px,1fr)_96px] items-center gap-3 px-3 py-3">
                       <div className="min-w-0">
@@ -378,11 +384,27 @@ export default function AiProviderSettingsPage() {
                           ))}
                         </SelectContent>
                       </Select>
-                      <Input
-                        defaultValue={binding?.model_override || ""}
-                        onBlur={(event) => void handleBindingChange(capability, providerId, event.target.value)}
-                        placeholder={binding?.provider?.default_model || "provider default"}
-                      />
+                      {providerModels.length > 0 ? (
+                        <Select
+                          value={binding?.model_override || ""}
+                          onValueChange={(value) => void handleBindingChange(capability, providerId, value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={currentProvider?.default_model || "provider default"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {providerModels.map((model) => (
+                              <SelectItem key={model} value={model}>{model}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          defaultValue={binding?.model_override || ""}
+                          onBlur={(event) => void handleBindingChange(capability, providerId, event.target.value)}
+                          placeholder={currentProvider?.default_model || "provider default"}
+                        />
+                      )}
                       <Badge variant={binding?.is_enabled ? "outline" : "secondary"}>
                         {binding?.is_enabled ? "active" : "fallback"}
                       </Badge>
@@ -429,6 +451,53 @@ export default function AiProviderSettingsPage() {
                 <div className="space-y-2">
                   <Label>Default model</Label>
                   <Input value={draft.default_model} onChange={(e) => setDraft({ ...draft, default_model: e.target.value })} placeholder="gpt-4.1-mini" />
+                </div>
+                <div className="space-y-2 md:col-span-2 xl:col-span-4">
+                  <Label>Models</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {draft.models.map((model) => (
+                      <Badge key={model} variant="secondary" className="gap-1 pr-1">
+                        {model}
+                        <button
+                          type="button"
+                          className="ml-1 rounded-full p-0.5 hover:bg-muted-foreground/20"
+                          onClick={() => setDraft({ ...draft, models: draft.models.filter((m) => m !== model) })}
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      value={newModelInput}
+                      onChange={(e) => setNewModelInput(e.target.value)}
+                      placeholder="Add model name"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault()
+                          const val = newModelInput.trim()
+                          if (val && !draft.models.includes(val)) {
+                            setDraft({ ...draft, models: [...draft.models, val] })
+                          }
+                          setNewModelInput("")
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        const val = newModelInput.trim()
+                        if (val && !draft.models.includes(val)) {
+                          setDraft({ ...draft, models: [...draft.models, val] })
+                        }
+                        setNewModelInput("")
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
                 </div>
                 <div className="space-y-2 md:col-span-2 xl:col-span-4">
                   <Label>Base URL</Label>
