@@ -90,6 +90,7 @@ _scheduler: BackgroundScheduler | None = None
 _scheduler_lock = threading.Lock()
 _run_lock = threading.Lock()
 _CHAIN_LOCK_PATH = Path(__file__).resolve().parents[3] / "runtime" / "market_sentiment_chain_refresh.lock"
+_CHAIN_CHECKPOINT_PATH = Path(__file__).resolve().parents[3] / "runtime" / "market_sentiment_chain_refresh.checkpoint.json"
 
 
 StepRunner = Callable[..., Any]
@@ -102,26 +103,35 @@ class _ChainProcessLock:
 
     def acquire(self) -> bool:
         _CHAIN_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(_CHAIN_LOCK_PATH, "a+b")
-        fh.seek(0, os.SEEK_END)
-        if fh.tell() == 0:
-            fh.write(b"0")
-            fh.flush()
-        fh.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
+        for attempt in range(2):
+            fh = open(_CHAIN_LOCK_PATH, "a+b")
+            fh.seek(0, os.SEEK_END)
+            if fh.tell() == 0:
+                fh.write(b"0")
+                fh.flush()
+            fh.seek(0)
+            try:
+                if os.name == "nt":
+                    import msvcrt
 
-                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
+                    msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
 
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            fh.close()
-            return False
-        self._fh = fh
-        return True
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                fh.close()
+                if attempt == 0:
+                    # Lock may be stale from a killed process — remove and retry
+                    try:
+                        _CHAIN_LOCK_PATH.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    continue
+                return False
+            self._fh = fh
+            return True
+        return False
 
     def release(self) -> None:
         fh = self._fh
@@ -140,6 +150,48 @@ class _ChainProcessLock:
                 fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         finally:
             fh.close()
+
+
+def _save_checkpoint(target_date: Any, completed_steps: list[str]) -> None:
+    """Save checkpoint so the chain can resume after a restart."""
+    try:
+        _CHAIN_CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        import json as _json
+
+        data = {
+            "target_date": target_date.isoformat() if hasattr(target_date, "isoformat") else target_date,
+            "completed_steps": completed_steps,
+            "saved_at": _beijing_now().isoformat(timespec="seconds"),
+        }
+        tmp = _CHAIN_CHECKPOINT_PATH.with_suffix(".tmp")
+        tmp.write_text(_json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(_CHAIN_CHECKPOINT_PATH)
+    except Exception:
+        logger.warning("Failed to save chain checkpoint", exc_info=True)
+
+
+def _load_checkpoint() -> dict[str, Any] | None:
+    """Load checkpoint if one exists. Returns None if no valid checkpoint."""
+    try:
+        if not _CHAIN_CHECKPOINT_PATH.exists():
+            return None
+        import json as _json
+
+        data = _json.loads(_CHAIN_CHECKPOINT_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or "completed_steps" not in data:
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _clear_checkpoint() -> None:
+    """Remove checkpoint file after chain completes or fails."""
+    try:
+        if _CHAIN_CHECKPOINT_PATH.exists():
+            _CHAIN_CHECKPOINT_PATH.unlink()
+    except Exception:
+        pass
 
 
 _CHAIN_STEPS: list[tuple[str, StepRunner, StepStatusGetter]] = [
@@ -302,10 +354,44 @@ def _job_run_chain_unlocked(target_date=None) -> None:
             )
 
     status = _load_job_status()
+
+    # --- Checkpoint / Resume ---
+    checkpoint = _load_checkpoint()
+    if checkpoint and checkpoint.get("completed_steps"):
+        # Resuming from a previous interrupted run
+        completed_steps: list[str] = list(checkpoint["completed_steps"])
+        if target_date is None and checkpoint.get("target_date"):
+            target_date = checkpoint["target_date"]
+        step_results: list[dict[str, Any]] = []
+        # Rebuild step_results from sub-step statuses for already-completed steps
+        step_code_to_getter = {code: getter for code, _, getter in _CHAIN_STEPS}
+        for code in completed_steps:
+            getter = step_code_to_getter.get(code)
+            if getter:
+                step_results.append(_build_step_summary(code, getter()))
+        remaining_steps = [
+            (code, runner, getter)
+            for code, runner, getter in _CHAIN_STEPS
+            if code not in set(completed_steps)
+        ]
+        logger.info(
+            "market_sentiment_chain resuming from checkpoint: %d done, %d remaining",
+            len(completed_steps), len(remaining_steps),
+        )
+    else:
+        completed_steps = []
+        step_results = []
+        remaining_steps = list(_CHAIN_STEPS)
+
     status["lastRunAt"] = start_at_iso
     status["lastStep"] = None
-    status["lastCompletedSteps"] = []
-    status["lastTargetsProcessed"] = 0
+    status["lastCompletedSteps"] = completed_steps.copy()
+    status["lastTargetsProcessed"] = len(completed_steps)
+    # Clear stale error/status from previous interrupted run
+    status["lastRunError"] = None
+    status["lastStatus"] = "running"
+    status["lastRunOk"] = None
+    status["lastMessage"] = f"{cst_now_str()} market_sentiment_chain running"
     _save_job_status(status)
 
     t0 = time.time()
@@ -317,6 +403,7 @@ def _job_run_chain_unlocked(target_date=None) -> None:
         status["lastRunError"] = f"{cst_time} 非交易日, 跳过串行 MSI 链路"
         status["lastDurationSeconds"] = round(time.time() - t0, 1)
         _save_job_status(status)
+        _clear_checkpoint()
         _finish_history(
             final_status="skipped",
             duration_seconds=status.get("lastDurationSeconds"),
@@ -324,11 +411,9 @@ def _job_run_chain_unlocked(target_date=None) -> None:
         )
         return
 
-    completed_steps: list[str] = []
-    step_results: list[dict[str, Any]] = []
-
-    for step_code, runner, status_getter in _CHAIN_STEPS:
+    for step_code, runner, status_getter in remaining_steps:
         status["lastStep"] = step_code
+        status["lastMessage"] = f"{cst_now_str()} running {step_code}"
         _save_job_status(status)
         try:
             runner(target_date=target_date)
@@ -346,6 +431,7 @@ def _job_run_chain_unlocked(target_date=None) -> None:
                 step_code,
                 traceback.format_exc(),
             )
+            # Keep checkpoint — next restart will resume from completed steps
             _finish_history(
                 final_status="failed",
                 duration_seconds=status.get("lastDurationSeconds"),
@@ -374,6 +460,7 @@ def _job_run_chain_unlocked(target_date=None) -> None:
                 step_code,
                 status["lastRunError"],
             )
+            # Keep checkpoint — next restart will resume from completed steps
             _finish_history(
                 final_status="failed",
                 duration_seconds=status.get("lastDurationSeconds"),
@@ -387,6 +474,7 @@ def _job_run_chain_unlocked(target_date=None) -> None:
         status["lastTargetsProcessed"] = len(completed_steps)
         status["lastStepResults"] = step_results.copy()
         _save_job_status(status)
+        _save_checkpoint(target_date, completed_steps)
 
     status["lastRunOk"] = True
     status["lastStatus"] = "success"
@@ -398,6 +486,7 @@ def _job_run_chain_unlocked(target_date=None) -> None:
     status["lastMessage"] = f"completed {len(completed_steps)} MSI steps"
     status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
     _save_job_status(status)
+    _clear_checkpoint()
     logger.info("market_sentiment_chain ok in %.1fs: steps=%d", status["lastDurationSeconds"], len(completed_steps))
     _finish_history(
         final_status="success",
@@ -427,13 +516,20 @@ def _cleanup_interrupted_processing_runs() -> None:
     if not process_lock.acquire():
         return
     try:
-        message = f"{cst_now_str()} 服务重启/热重载导致上次执行中断"
+        message = f"{cst_now_str()} 上次执行进程未正常收尾, 已标记为中断"
+        status = _load_job_status()
         count = mark_processing_interrupted(
             _JOB_ID,
             end_at=_beijing_now().isoformat(timespec="seconds"),
             message=message,
         )
         if count:
+            status["lastRunOk"] = False
+            status["lastStatus"] = "failed"
+            status["lastRunError"] = message
+            status["lastMessage"] = message
+            status["totalFailures"] = int(status.get("totalFailures") or 0) + count
+            _save_job_status(status)
             logger.warning("market_sentiment_chain marked %d interrupted processing history rows", count)
     finally:
         process_lock.release()
@@ -452,6 +548,7 @@ def start_market_sentiment_chain_scheduler() -> None:
             return
 
         _cleanup_interrupted_processing_runs()
+        status = _load_job_status()
 
         sched = BackgroundScheduler(timezone="Asia/Shanghai")
         sched.add_job(
@@ -500,12 +597,22 @@ def get_market_sentiment_chain_scheduler_status() -> dict[str, Any]:
 
 
 def run_market_sentiment_chain_now(target_date=None) -> dict[str, Any]:
-    with trigger_type("manual"):
-        _job_run_chain(target_date=target_date)
-    status = get_market_sentiment_chain_scheduler_status()
+    # Clear stale error immediately so frontend doesn't see old interrupted message
+    status = _load_job_status()
+    status["lastRunError"] = None
+    status["lastStatus"] = "running"
+    status["lastRunOk"] = None
+    _save_job_status(status)
+
+    def _run():
+        with trigger_type("manual"):
+            _job_run_chain(target_date=target_date)
+
+    t = threading.Thread(target=_run, name="chain-manual-trigger", daemon=True)
+    t.start()
     return {
-        "ok": bool(status.get("lastRunOk")),
-        "items": [status],
+        "ok": True,
+        "items": [{"status": "started", "message": "chain 已在后台启动, 请刷新查看进度"}],
         "count": 1,
-        "failed_count": 0 if status.get("lastRunOk") else 1,
+        "failed_count": 0,
     }

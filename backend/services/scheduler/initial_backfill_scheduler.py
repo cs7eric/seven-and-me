@@ -192,8 +192,8 @@ def job_run_backfill(target_date=None) -> dict:
     return {"ok": bool(status.get("lastRunOk"))}
 
 
-def _job_run_backfill() -> None:
-    job_run_backfill()
+def _job_run_backfill(target_date=None) -> None:
+    job_run_backfill(target_date=target_date)
 
 
 def start_initial_backfill_scheduler() -> None:

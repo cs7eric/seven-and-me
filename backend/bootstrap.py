@@ -60,7 +60,7 @@ def is_api_configured() -> bool:
     return bool(API_KEY and GROUP_ID)
 
 
-def register_blueprints(app: Flask) -> None:
+def register_blueprints(app: Flask, *, start_schedulers: bool = True) -> None:
     app.register_blueprint(stock_chart_bp)
     app.register_blueprint(f10_bp)
     # 触发 F10 适配器单例构建（懒加载预热）
@@ -71,6 +71,9 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(create_system_bp(is_api_configured, ai_provider_registry.is_model_loaded))
     app.register_blueprint(scheduler_bp)
     app.register_blueprint(self_selected_bp)
+    if not start_schedulers:
+        logger.info("scheduler startup skipped in Werkzeug reloader parent process")
+        return
     if is_application_analysis_scheduler_enabled():
         try:
             start_application_analysis_scheduler()

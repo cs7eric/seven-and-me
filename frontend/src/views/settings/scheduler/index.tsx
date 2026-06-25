@@ -135,6 +135,8 @@ function statusBadgeVariant(status: string | null | undefined): "default" | "sec
     case "in_progress":
     case "processing":
       return "secondary"
+    case "skipped":
+      return "secondary"
     default:
       return "outline"
   }
@@ -153,6 +155,157 @@ function pickValue<T = unknown>(record: Record<string, unknown> | undefined, key
   if (!record) return undefined
   const value = record[key]
   return value as T | undefined
+}
+
+// Chain step display labels
+const CHAIN_STEP_LABELS: Record<string, string> = {
+  tdx_hsjday_download: "通达信行情下载",
+  initial_backfill_refresh: "初始回填补全",
+  qfq_reconciliation_refresh: "前复权对账",
+  limit_emotion_refresh: "涨跌停情绪",
+  risk_appetite_refresh: "风险偏好",
+  ma_count_refresh: "均线计数",
+  volatility_sentiment_refresh: "波动率情绪",
+  style_risk_appetite_refresh: "风格风险偏好",
+  profit_effect_refresh: "盈利效应",
+  market_overview_daily: "市场概览",
+  turnover_activity_refresh: "换手活跃度",
+  ths_industry_fund_flow_daily: "行业资金流",
+  sector_breadth_refresh: "板块广度",
+  market_sentiment_index_refresh: "市场情绪指数",
+}
+
+interface ChainStepResult {
+  jobId: string
+  ok: boolean
+  lastStatus?: string
+  lastRunError?: string
+  lastMessage?: string
+}
+
+function ChainStepProgress({
+  currentStep,
+  completedSteps,
+  stepResults,
+  overallStatus,
+}: {
+  currentStep: string | null | undefined
+  completedSteps: string[] | undefined
+  stepResults: ChainStepResult[] | undefined
+  overallStatus: string | null | undefined
+}) {
+  const allSteps = Object.keys(CHAIN_STEP_LABELS)
+  const total = allSteps.length
+  const completedSet = new Set(completedSteps || [])
+  const resultMap = new Map((stepResults || []).map((r) => [r.jobId, r]))
+  const isFinished = overallStatus === "success" || overallStatus === "failed" || overallStatus === "skipped"
+
+  const doneCount = completedSet.size
+  const hasFailed = (stepResults || []).some((r) => !r.ok)
+  const failedStep = hasFailed ? (stepResults || []).find((r) => !r.ok) : null
+  const currentLabel = currentStep ? (CHAIN_STEP_LABELS[currentStep] || currentStep) : null
+  // Current step ordinal (1-based)
+  const currentStepIdx = currentStep ? allSteps.indexOf(currentStep) : -1
+  const currentOrdinal = currentStepIdx >= 0 ? currentStepIdx + 1 : 0
+  // For progress: show actual completed count, never fabricate 14/14
+  const displayCount = doneCount
+
+  // Only show steps with meaningful status (skip pending)
+  const activeSteps = allSteps.filter((code) => {
+    const result = resultMap.get(code)
+    const isCompleted = completedSet.has(code)
+    const isCurrent = !isFinished && currentStep === code
+    const isFailed = result && !result.ok
+    return isCompleted || isCurrent || isFailed
+  })
+
+  return (
+    <div className="space-y-1.5 text-xs">
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <span className="text-[10px] font-medium uppercase tracking-wide">链路进度</span>
+        {/* Progress bar */}
+        <div className="flex flex-1 items-center gap-1">
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className={cn(
+                "h-full rounded-full transition-all duration-300",
+                hasFailed ? "bg-destructive" : isFinished ? "bg-emerald-500" : "bg-blue-500",
+              )}
+              style={{ width: `${Math.round((displayCount / total) * 100)}%` }}
+            />
+          </div>
+          <span className="tabular-nums text-[10px]">{displayCount}/{total}</span>
+        </div>
+        {/* Current step label: show ordinal + name while running */}
+        {!isFinished && currentOrdinal > 0 ? (
+          <span className="flex items-center gap-1 text-blue-600">
+            <RefreshCw className="size-3 animate-spin" />
+            {currentOrdinal}/{total} {currentLabel}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Only list steps that are done / failed / running — skip pending */}
+      {activeSteps.length > 0 ? (
+        <div className="flex flex-wrap gap-1">
+          {activeSteps.map((stepCode) => {
+            const label = CHAIN_STEP_LABELS[stepCode] || stepCode
+            const result = resultMap.get(stepCode)
+            const isCompleted = completedSet.has(stepCode)
+            const isCurrent = !isFinished && currentStep === stepCode
+            const isFailed = result && !result.ok
+
+            if (isFailed) {
+              return (
+                <Badge
+                  key={stepCode}
+                  variant="destructive"
+                  className="max-w-full gap-0.5 px-1.5 py-0 text-[10px]"
+                  title={result.lastRunError || "failed"}
+                >
+                  <AlertTriangle className="size-2.5" />
+                  {label}
+                </Badge>
+              )
+            }
+            if (isCurrent) {
+              return (
+                <Badge
+                  key={stepCode}
+                  variant="secondary"
+                  className="border-blue-500/30 bg-blue-500/10 px-1.5 py-0 text-[10px] text-blue-600"
+                >
+                  <RefreshCw className="size-2.5 animate-spin" />
+                  {label}
+                </Badge>
+              )
+            }
+            if (isCompleted) {
+              return (
+                <Badge
+                  key={stepCode}
+                  variant="outline"
+                  className="gap-0.5 px-1.5 py-0 text-[10px] text-emerald-600"
+                >
+                  <CheckCircle2 className="size-2.5" />
+                  {label}
+                </Badge>
+              )
+            }
+            return null
+          })}
+        </div>
+      ) : null}
+
+      {/* Failed step error detail */}
+      {failedStep?.lastRunError ? (
+        <div className="flex items-start gap-1 rounded border border-destructive/20 bg-destructive/5 px-2 py-1 text-[10px] leading-4 text-destructive">
+          <AlertTriangle className="mt-0.5 size-2.5 shrink-0" />
+          <span className="break-all">{failedStep.lastRunError}</span>
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 interface JobCardProps {
@@ -182,6 +335,12 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   const registeredAt = job.registered_at
   const inflight = pickValue<Record<string, string>>(live, "inflight")
   const lastRun = pickValue<Record<string, unknown>>(live, "last_run")
+
+  // Chain step progress fields (market_sentiment_chain_refresh)
+  const chainCurrentStep = pickValue<string>(config, "lastStep")
+  const chainCompletedSteps = pickValue<string[]>(config, "lastCompletedSteps")
+  const chainStepResults = pickValue<ChainStepResult[]>(config, "lastStepResults")
+  const hasChainProgress = chainCurrentStep || (chainCompletedSteps && chainCompletedSteps.length > 0)
 
   const isActionPending = (action: ActionKey) => pending === action
 
@@ -342,6 +501,19 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
           </div>
 
           <Separator />
+
+          {/* 链路步骤进度 (仅 chain job) */}
+          {hasChainProgress ? (
+            <>
+              <ChainStepProgress
+                currentStep={chainCurrentStep}
+                completedSteps={chainCompletedSteps}
+                stepResults={chainStepResults}
+                overallStatus={lastStatus}
+              />
+              <Separator />
+            </>
+          ) : null}
 
           {/* 上次运行 + 注册信息 */}
           <div className="grid gap-3 sm:grid-cols-2">

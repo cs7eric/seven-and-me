@@ -225,9 +225,9 @@ def job_run_backfill(target_date=None) -> dict:
     return {"ok": bool(status.get("lastRunOk"))}
 
 
-def _job_run_backfill() -> None:
+def _job_run_backfill(target_date=None) -> None:
     """APScheduler 入口, 不返值."""
-    job_run_backfill()
+    job_run_backfill(target_date=target_date)
 
 
 # ---------------------------------------------------------------------------
