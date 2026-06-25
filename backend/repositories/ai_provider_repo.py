@@ -48,6 +48,14 @@ PROVIDER_TYPES: list[dict[str, str]] = [
         "api_key_env": "DEEPSEEK_API_KEY",
         "group_id_env": "",
     },
+    {
+        "code": "anthropic_compatible",
+        "label": "Anthropic compatible",
+        "default_base_url": "",
+        "default_model": "",
+        "api_key_env": "",
+        "group_id_env": "",
+    },
 ]
 
 

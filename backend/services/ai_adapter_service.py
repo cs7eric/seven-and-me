@@ -144,6 +144,57 @@ class DeepSeekAdapter(OpenAICompatibleAdapter):
         )
 
 
+class AnthropicAdapter(BaseAIAdapter):
+    """Adapter for Anthropic-compatible APIs (e.g. MiMo)."""
+
+    def chat_completion(
+        self,
+        messages: list[Message],
+        *,
+        stream: bool = False,
+        timeout: int | None = None,
+        temperature: float | None = None,
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> AIResponse:
+        base_url = self.config.base_url.rstrip("/")
+        endpoint = self.config.extra.get("chat_endpoint") or "/v1/messages"
+        max_tokens = self.config.extra.get("max_tokens", 4096)
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "max_tokens": max_tokens,
+            "messages": messages,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        headers = {
+            "x-api-key": self.config.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        url = f"{base_url}{endpoint}"
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout or self.config.timeout_seconds)
+        except requests.exceptions.Timeout as exc:
+            raise ValueError(f"AI 请求超时 ({timeout or self.config.timeout_seconds}s)") from exc
+        except requests.exceptions.ConnectionError as exc:
+            raise ValueError(f"AI 网络连接失败: {exc}") from exc
+        if response.status_code != 200:
+            raise ValueError(f"AI 请求失败: {response.status_code} {response.text[:800]}")
+        raw = response.json()
+        return AIResponse(content=_extract_anthropic_content(raw), raw=raw)
+
+
+def _extract_anthropic_content(payload: dict[str, Any]) -> str:
+    content = payload.get("content")
+    if isinstance(content, list) and content:
+        first = content[0]
+        if isinstance(first, dict) and isinstance(first.get("text"), str):
+            return first["text"]
+    if isinstance(payload.get("text"), str):
+        return payload["text"]
+    return ""
+
+
 def _post_chat_completion(
     *,
     url: str,
@@ -231,6 +282,7 @@ class AIAdapterRouter:
             "minimax": MiniMaxAdapter,
             "openai_compatible": OpenAICompatibleAdapter,
             "deepseek": DeepSeekAdapter,
+            "anthropic_compatible": AnthropicAdapter,
         }
 
     def chat_completion(
