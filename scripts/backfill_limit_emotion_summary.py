@@ -4,9 +4,9 @@
     python scripts/backfill_limit_emotion_summary.py [--days=60] [--force]
 
 数据流:
-  - 走 duckdb.daily_raw + limit_repo.get_today_limit_snapshot
+  - 走 ClickHouse daily_raw + limit_repo.get_today_limit_snapshot
   - 单日计算: 涨跌停比 / 炸板率 / 昨日涨停收益 / composite
-  - 落盘: INSERT OR REPLACE INTO limit_emotion_summary_daily
+  - 落盘: PostgreSQL msi_limit_emotion_daily
 
 回填窗口: 从 --days 天前到今天, 跳过周末/节假日 (无 daily_raw 数据).
 强制重算: --force 会覆盖已有记录.
@@ -23,12 +23,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.clickhouse_store import query_one
+from backend.config.database import session_scope
 from backend.repositories.market.limit_repo import (
     calc_limit_emotion_summary,
     save_limit_emotion_summary,
 )
+from backend.repositories.market.market_pg_cynexus_repo import qname
 from backend.services.stock.trading_calendar import is_trading_day, previous_trading_day
+from sqlalchemy import text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,21 +42,17 @@ _TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
 
 def _has_raw_data(trade_date: date) -> bool:
-    """检查 daily_raw 在指定日是否有数据."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT 1 FROM daily_raw WHERE trade_date = ? LIMIT 1",
-        [trade_date],
-    ).fetchone()
+    """检查 ClickHouse daily_raw 在指定日是否有数据."""
+    r = query_one("SELECT 1 FROM daily_raw WHERE trade_date = %s LIMIT 1", (trade_date,))
     return r is not None
 
 
 def _les_exists(trade_date: date) -> bool:
-    con = get_conn()
-    r = con.execute(
-        "SELECT 1 FROM limit_emotion_summary_daily WHERE trade_date = ?",
-        [trade_date],
-    ).fetchone()
+    with session_scope() as db:
+        r = db.execute(
+            text(f"SELECT 1 FROM {qname('msi_limit_emotion_daily')} WHERE trade_date = :td AND deleted_at IS NULL LIMIT 1"),
+            {"td": trade_date},
+        ).first()
     return r is not None
 
 
@@ -75,12 +74,8 @@ def _resolve_end_date() -> date:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """回填 limit_emotion_summary_daily 到 duckdb.
-
-    `argv` 默认 None → 走 sys.argv. 接受 list 给 in-process 调用方传参
-    (e.g. daily_eod_incremental 调它, 避免 subprocess 再开 duckdb 撞锁).
-    """
-    ap = argparse.ArgumentParser(description="回填 limit_emotion_summary_daily 到 duckdb")
+    """回填 limit_emotion_summary_daily 到 PostgreSQL."""
+    ap = argparse.ArgumentParser(description="回填 limit_emotion_summary_daily 到 PostgreSQL")
     ap.add_argument("--days", type=int, default=60,
                     help="回填窗口天数 (默认 60, 内部会过滤非交易日)")
     ap.add_argument("--force", action="store_true", help="覆盖已有记录")

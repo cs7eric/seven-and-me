@@ -1,10 +1,10 @@
-"""风险偏好 (Risk Appetite Spread) duckdb 回填 scheduler.
+"""风险偏好 (Risk Appetite Spread) ClickHouse/PostgreSQL 回填 scheduler.
 
 单 job:
   - 工作日 17:05 触发 (cron ``5 17 * * mon-fri``, is_trading_day 二次过滤)
   - 调 ``scripts/backfill_risk_appetite.py --days=2`` (增量, 默认跳过已有)
-  - 数据源: duckdb.daily_qfq (沪深300 + 511010/511090 三个 ETF)
-  - 输出: duckdb.risk_appetite_daily (1 日 1 行)
+  - 数据源: ClickHouse/PostgreSQL.daily_qfq (沪深300 + 511010/511090 三个 ETF)
+  - 输出: ClickHouse/PostgreSQL.risk_appetite_daily (1 日 1 行)
 
 依赖: daily_eod_incremental (17:00) 必须先把 daily_raw + qfq 落库, 这里才能算.
 
@@ -45,7 +45,7 @@ from backend.services.scheduler.backfill_validator import (
 
 logger = logging.getLogger(__name__)
 
-RISK_APPETITE_CRON = "55 17 * * mon-fri"  # 工作日 17:55 (北京时间, 等 17:10/17:30 上游 DuckDB 写入结束后再跑)
+RISK_APPETITE_CRON = "55 17 * * mon-fri"  # 工作日 17:55 (北京时间, 等 17:10/17:30 上游 CH/PG 写入结束后再跑)
 _JOB_ID = "risk_appetite_refresh"
 _SCRIPT_PATH_KEY = "risk_appetite_script"  # 状态文件可覆盖脚本路径 (测试用)
 # 单日 --days=2 计算 < 0.5s, 给 2 min 上限足够
@@ -103,7 +103,7 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
         description=(
             "MSI Factor 4: risk_appetite (风险偏好, weight 10%). "
             "Cron 17:05, 沪深300 20日收益 - 国债ETF 20日收益 spread → 3年分位 0-100. "
-            "落 duckdb.risk_appetite_daily."
+            "落 ClickHouse/PostgreSQL.risk_appetite_daily."
         ),
         service_module="backend.services.scheduler.risk_appetite_scheduler",
         service_class="RiskAppetiteScheduler",
@@ -211,7 +211,7 @@ def _job_run_backfill(target_date=None) -> None:
             status["lastRowsSkipped"] = None
 
         if r.returncode == 0:
-            # DuckDB 数据校验: 有值且不为 0
+            # PostgreSQL 数据校验: 有值且不为 0
             validated_date = resolve_latest_scalar_date("risk_appetite_daily", "spread_weighted", target_date) or target_date
             status["lastValidatedTradeDate"] = validated_date.isoformat()
             _valid_ok, _valid_err = validate_scalar("risk_appetite_daily", "spread_weighted", validated_date)
@@ -274,17 +274,9 @@ def _job_run_backfill(target_date=None) -> None:
 
 def _refresh_coverage(status: dict[str, Any]) -> None:
     try:
-        from backend.adapters.market.duckdb_store import get_conn
-        with get_conn(read_only=True) as c:
-            r = c.execute(
-                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
-                "FROM risk_appetite_daily"
-            ).fetchone()
-        status["lastCoverage"] = {
-            "firstDate": r[0].isoformat() if r[0] else None,
-            "lastDate": r[1].isoformat() if r[1] else None,
-            "rowCount": int(r[2]) if r[2] else 0,
-        }
+        from backend.repositories.market.market_pg_cynexus_repo import coverage
+
+        status["lastCoverage"] = coverage("msi_risk_appetite_daily")
     except Exception as exc:
         logger.debug("refresh_coverage failed: %s", exc)
 
@@ -320,7 +312,7 @@ def start_risk_appetite_scheduler() -> None:
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
         _register_job(
             _JOB_ID,
-            "risk_appetite_refresh (17:05 工作日, 风险偏好 spread 回填 duckdb)",
+            "risk_appetite_refresh (17:05 工作日, 风险偏好 spread 回填 ClickHouse/PostgreSQL)",
             None,
             )
         _save_job_status(status)

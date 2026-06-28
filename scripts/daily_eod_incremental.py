@@ -1,18 +1,15 @@
-"""每日 EOD 增量入 duckdb 编排器 (供 17:00 scheduler 调用).
+"""每日 EOD 增量编排器 (供 17:00 scheduler 调用).
 
 逻辑:
-  1. 查 duckdb daily_raw 当前最大 trade_date
-  2. 与今天对比, 缺 N 天 → in-process 调 initial_backfill (INSERT OR IGNORE 幂等,
-     重复跑不会写脏数据, 会自动补齐缺的日期)  3. qfq/hfq 对账: 找 daily_raw 有但 daily_qfq/hfq 缺的 trade_date, 逐日
-     in-process 调 fetch_one_date_eltdx (防 daily_eod step 2 漏跑导致 last day 没 qfq)  4. in-process 调 backfill_market_overview_daily (大盘 / 行业 90)  5. in-process 调 backfill_turnover_activity (成交活跃度)
+  1. 查 ClickHouse daily_raw 当前最大 trade_date
+  2. 与今天对比, 缺 N 天 → in-process 调 initial_backfill (CH delete+insert 幂等,
+     重复跑不会写脏数据, 会自动补齐缺的日期)
+  3. qfq/hfq 对账: 找 daily_raw 有但 daily_qfq/hfq 缺的 trade_date, 逐日
+     in-process 调 fetch_one_date_eltdx (防 daily_eod step 2 漏跑导致 last day 没 qfq)
+  4. in-process 调 backfill_market_overview_daily (大盘 / 行业 90)
+  5. in-process 调 backfill_turnover_activity (成交活跃度)
 
-in-process 调用原因: DuckDB 同一 .duckdb 文件不支持多进程同时写, subprocess 子进程
-会再开一次连接 → 撞 OS 文件锁 → "另一个程序正在使用此文件" 报错.
-
-duckdb_store 现在用**短连接** (per-call 打开, 函数返回 GC 自动 close), 跨进程冲突变成
-"协作式": Flask server 只在处理 HTTP 时瞬间持锁, 中间空闲期 daily 脚本就能拿到锁.
-本脚本 in-process 调用也是同一思路: 一个 process 内 5 个子步骤共享 1 个 connection,
-期间别的 process 能用 DuckDB 文件.
+in-process 调用保留为兼容旧脚本 main(argv) 入口; 数据读写已迁到 ClickHouse/PostgreSQL.
 
 跟 daily_eod.py 区别:
   - daily_eod.py 跑全套 8 步 (qfq/hfq/validate/MA 计数等), 是手动一次性
@@ -42,7 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.adapters.market.duckdb_store import conn, get_conn
+from backend.adapters.market.clickhouse_store import query_one, query_rows
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,8 +51,7 @@ SCRIPTS = Path(__file__).resolve().parent
 
 
 def _max_trade_date() -> date | None:
-    with conn() as c:
-        row = c.execute("SELECT MAX(trade_date) FROM daily_raw").fetchone()
+    row = query_one("SELECT MAX(trade_date) FROM daily_raw")
     if row and row[0] is not None:
         v = row[0]
         return v.date() if hasattr(v, "date") else v
@@ -63,27 +59,22 @@ def _max_trade_date() -> date | None:
 
 
 def _missing_qfq_dates() -> list[date]:
-    """找 daily_raw 有但 daily_qfq 缺的 trade_date (近 14 天窗口).
-
-    防御 daily_eod step 2 漏跑导致 "last day 0 行" 局面 (2026-06-17 出现过).
-    14 天窗口足够覆盖周末 + 节假日 + 1-2 天 scheduler 漏跑.
-    """
+    """找 daily_raw 有但 daily_qfq 缺的 trade_date (近 14 天窗口)."""
     try:
-        with conn() as c:
-            rows = c.execute("""
-                SELECT trade_date
-                  FROM (
+        rows = query_rows("""
+            SELECT trade_date
+              FROM (
                     SELECT DISTINCT trade_date
                       FROM daily_raw
-                     WHERE trade_date >= current_date - INTERVAL 14 DAY
-                  ) r
-                  ANTI JOIN (
+                     WHERE trade_date >= today() - 14
+                   ) r
+             WHERE trade_date NOT IN (
                     SELECT DISTINCT trade_date
                       FROM daily_qfq
-                     WHERE trade_date >= current_date - INTERVAL 14 DAY
-                  ) q USING (trade_date)
-                 ORDER BY trade_date
-            """).fetchall()
+                     WHERE trade_date >= today() - 14
+                   )
+             ORDER BY trade_date
+        """)
     except Exception as exc:
         log.warning("查 missing qfq dates 失败: %s", exc)
         return []
@@ -97,21 +88,20 @@ def _missing_qfq_dates() -> list[date]:
 def _missing_hfq_dates() -> list[date]:
     """同上, daily_hfq."""
     try:
-        with conn() as c:
-            rows = c.execute("""
-                SELECT trade_date
-                  FROM (
+        rows = query_rows("""
+            SELECT trade_date
+              FROM (
                     SELECT DISTINCT trade_date
                       FROM daily_raw
-                     WHERE trade_date >= current_date - INTERVAL 14 DAY
-                  ) r
-                  ANTI JOIN (
+                     WHERE trade_date >= today() - 14
+                   ) r
+             WHERE trade_date NOT IN (
                     SELECT DISTINCT trade_date
                       FROM daily_hfq
-                     WHERE trade_date >= current_date - INTERVAL 14 DAY
-                  ) h USING (trade_date)
-                 ORDER BY trade_date
-            """).fetchall()
+                     WHERE trade_date >= today() - 14
+                   )
+             ORDER BY trade_date
+        """)
     except Exception as exc:
         log.warning("查 missing hfq dates 失败: %s", exc)
         return []
@@ -123,10 +113,7 @@ def _missing_hfq_dates() -> list[date]:
 
 
 def _run_in_process(label: str, fn, argv) -> bool:
-    """In-process 调子脚本 main(argv). 跟原 subprocess 区别:
-    - 共用同一个 duckdb 连接 (没有 OS 文件锁竞争)
-    - 输出直接进当前 logger
-    - 失败 / 异常被捕获, 不让一个子步骤把整个编排搞崩
+    """In-process 调子脚本 main(argv).
 
     返回: True=OK, False=FAIL.
     """
@@ -154,7 +141,7 @@ def _run_in_process(label: str, fn, argv) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="每日 EOD 增量入 duckdb")
+    ap = argparse.ArgumentParser(description="每日 EOD 增量编排")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划, 不执行")
     ap.add_argument("--no-backfill", action="store_true", help="跳过 initial_backfill 步骤")
     ap.add_argument("--no-overview", action="store_true", help="跳过 market_overview_daily 步骤")
@@ -201,7 +188,7 @@ def main() -> int:
         need_backfill = True
     else:
         # 差太多 (例如 3 天以上), 大概率是周末 + 节假日
-        log.info("差 %d 天 (max=%s, today=%s) — 跑 backfill (INSERT OR IGNORE 幂等)", gap_days, max_td, today)
+        log.info("差 %d 天 (max=%s, today=%s) — 跑 backfill (CH delete+insert 幂等)", gap_days, max_td, today)
         need_backfill = True
 
     # 3. qfq/hfq 对账: 找 daily_raw 有但 qfq/hfq 缺的 trade_date
@@ -221,11 +208,11 @@ def main() -> int:
 
     ok = True
 
-    # ── Step 1: initial_backfill (in-process, 共用当前 duckdb 连接) ──
+    # ── Step 1: initial_backfill (ClickHouse daily_raw) ──
     if need_backfill and not args.no_backfill:
         from scripts import initial_backfill as _initial_backfill_mod
         ok &= _run_in_process(
-            "Step 1  initial_backfill.main()  (全量重 parse, INSERT OR IGNORE 补齐缺日)",
+            "Step 1  initial_backfill.main()  (全量重 parse, CH daily_raw 补齐缺日)",
             _initial_backfill_mod.main,
             [],  # argv=[], 用 default 参数
         )
@@ -256,7 +243,7 @@ def main() -> int:
     if not args.no_overview:
         from scripts import backfill_market_overview_daily as _movd_mod
         ok &= _run_in_process(
-            f"Step 3  backfill_market_overview_daily.main() --days=3  (大盘 / 行业 90 → duckdb)",
+            f"Step 3  backfill_market_overview_daily.main() --days=3  (大盘 / 行业 90)",
             _movd_mod.main,
             ["--days=3"],
         )
@@ -265,7 +252,7 @@ def main() -> int:
     if not args.no_turnover:
         from scripts import backfill_turnover_activity as _ta_mod
         ok &= _run_in_process(
-            "Step 4  backfill_turnover_activity.main() --days=3  (成交活跃度 → duckdb)",
+            "Step 4  backfill_turnover_activity.main() --days=3  (成交活跃度 → PG)",
             _ta_mod.main,
             ["--days=3"],
         )

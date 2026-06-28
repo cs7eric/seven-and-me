@@ -9,6 +9,14 @@ export default defineConfig({
     host: '0.0.0.0',
     allowedHosts: ['.trycloudflare.com', 'nooops.makeup', '.nooops.makeup'],
     proxy: {
+      '/api/ai': {
+        target: 'http://localhost:18000',
+        changeOrigin: true,
+      },
+      '/api/market': {
+        target: 'http://localhost:18000',
+        changeOrigin: true,
+      },
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true,

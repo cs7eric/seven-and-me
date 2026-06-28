@@ -1,4 +1,4 @@
-"""市场情绪指数 (composite) duckdb 回填脚本.
+"""市场情绪指数 (composite) PostgreSQL 回填脚本.
 
 公式 (v1.0):
   composite_score = 15% × 波动率情绪
@@ -12,7 +12,7 @@
                  +  5% × 风格风险偏好
 
 数据源: 各 *_daily 子表 (8 张 sub-card 都要先 backfill 好, 才能拿到完整 composite)
-目标表: market_sentiment_index_daily (INSERT OR REPLACE by trade_date)
+目标表: PostgreSQL msi_index_daily
 
 用法:
     python scripts/backfill_market_sentiment_index.py
@@ -38,21 +38,23 @@ logging.basicConfig(
 log = logging.getLogger("backfill_market_sentiment_index")
 _TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
-from backend.adapters.market.duckdb_store import init_schema, get_conn
+from backend.config.database import session_scope
+from backend.repositories.market.market_pg_cynexus_repo import qname
 from backend.services.stock.trading_calendar import is_trading_day
+from sqlalchemy import text
 
 
-# 8 张 sub-card 的 trade_date 来源 (选取 schema §24 公式里的 9 个 component 的底层表)
+# 8 张 sub-card 的 PostgreSQL trade_date 来源 (9 个 component 的底层表)
 # 同一日 9 个 component 不一定全有, calc 内部把缺失视为 50 (中性)
 _SUB_CARD_TABLES = [
-    "volatility_sentiment_daily",
-    "turnover_activity_daily",
-    "ma_count_daily",            # 价强 + 广度都来自这
-    "risk_appetite_daily",
-    "limit_emotion_summary_daily",
-    "profit_effect_daily",
-    "market_pulse_sector_breadth_daily",
-    "style_risk_appetite_daily",
+    "msi_volatility_daily",
+    "msi_turnover_activity_daily",
+    "msi_ma_count_daily",            # 价强 + 广度都来自这
+    "msi_risk_appetite_daily",
+    "msi_limit_emotion_daily",
+    "msi_profit_effect_daily",
+    "msi_sector_breadth_daily",
+    "msi_style_risk_daily",
 ]
 
 
@@ -64,7 +66,7 @@ def _resolve_end_date() -> date:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="市场情绪指数 duckdb 回填")
+    ap = argparse.ArgumentParser(description="市场情绪指数 PostgreSQL 回填")
     ap.add_argument("--days", type=int, default=365, help="回填最近 N 天 (默认 365)")
     ap.add_argument("--start", type=str, default=None, help="起始日 YYYY-MM-DD")
     ap.add_argument("--end", type=str, default=None, help="结束日 YYYY-MM-DD (默认今天)")
@@ -72,10 +74,6 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="跳过 cache 强制重算")
     ap.add_argument("--require-full", action="store_true", help="仅写入 9/9 component 全齐的日期")
     args = ap.parse_args()
-
-    init_schema()
-
-    con = get_conn()
 
     # 收集所有 sub-card 表的并集交易日, 再取窗口
     end_date = _resolve_end_date()
@@ -92,22 +90,25 @@ def main() -> int:
     log.info("=== sub-card coverage ===")
     db_min = end
     db_max = start
-    for tbl in _SUB_CARD_TABLES:
-        try:
-            r = con.execute(f"SELECT MIN(trade_date), MAX(trade_date), COUNT(*) FROM {tbl}").fetchone()
-        except Exception as exc:
-            log.warning("  %s: skip (%s)", tbl, exc)
-            continue
-        if not r or r[0] is None:
-            log.info("  %-32s EMPTY", tbl)
-            continue
-        mn = r[0].date() if hasattr(r[0], "date") else r[0]
-        mx = r[1].date() if hasattr(r[1], "date") else r[1]
-        log.info("  %-32s %s ~ %s  (%d rows)", tbl, mn, mx, int(r[2] or 0))
-        if mn < db_min:
-            db_min = mn
-        if mx > db_max:
-            db_max = mx
+    with session_scope() as db:
+        for tbl in _SUB_CARD_TABLES:
+            try:
+                r = db.execute(
+                    text(f"SELECT MIN(trade_date), MAX(trade_date), COUNT(*) FROM {qname(tbl)} WHERE deleted_at IS NULL")
+                ).fetchone()
+            except Exception as exc:
+                log.warning("  %s: skip (%s)", tbl, exc)
+                continue
+            if not r or r[0] is None:
+                log.info("  %-32s EMPTY", tbl)
+                continue
+            mn = r[0].date() if hasattr(r[0], "date") else r[0]
+            mx = r[1].date() if hasattr(r[1], "date") else r[1]
+            log.info("  %-32s %s ~ %s  (%d rows)", tbl, mn, mx, int(r[2] or 0))
+            if mn < db_min:
+                db_min = mn
+            if mx > db_max:
+                db_max = mx
 
     if db_min > db_max:
         log.error("无 sub-card 数据, 请先 backfill 各子卡 (profit_effect / risk_appetite / ...)")
@@ -124,18 +125,21 @@ def main() -> int:
 
     # 收集窗口内所有 (任一 sub-card 有数据的) 交易日
     union_dates: set[date] = set()
-    for tbl in _SUB_CARD_TABLES:
-        try:
-            rows = con.execute(
-                f"SELECT DISTINCT trade_date FROM {tbl} "
-                f"WHERE trade_date BETWEEN ? AND ?",
-                [actual_start, actual_end],
-            ).fetchall()
-        except Exception:
-            continue
-        for r in rows:
-            d = r[0].date() if hasattr(r[0], "date") else r[0]
-            union_dates.add(d)
+    with session_scope() as db:
+        for tbl in _SUB_CARD_TABLES:
+            try:
+                rows = db.execute(
+                    text(
+                        f"SELECT DISTINCT trade_date FROM {qname(tbl)} "
+                        "WHERE trade_date BETWEEN :start AND :end AND deleted_at IS NULL"
+                    ),
+                    {"start": actual_start, "end": actual_end},
+                ).fetchall()
+            except Exception:
+                continue
+            for r in rows:
+                d = r[0].date() if hasattr(r[0], "date") else r[0]
+                union_dates.add(d)
 
     trade_dates = sorted(d for d in union_dates if is_trading_day(d))
     skipped = len(union_dates) - len(trade_dates)

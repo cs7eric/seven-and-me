@@ -4,7 +4,7 @@
 limit_emotion_service.snapshot_today_daily 的字段兼容.
 
 算法:
-  - 用 LAG(close) 取 pre_close, 算涨停价 limit_up_price = pre_close * (1 + threshold)
+  - 用 lag(close) 取 pre_close, 算涨停价 limit_up_price = pre_close * (1 + threshold)
   - close >= limit_up_price * (1 - tol) → is_limit_up (封板)
   - high  >= limit_up_price * (1 - tol) → is_touched  (盘中触板)
   - 连板 streak: ROW_NUMBER 减去前一个非涨停日 ROW_NUMBER 的累加计数
@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date
+from contextlib import contextmanager
+from datetime import date, datetime
 from typing import Any
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.clickhouse_store import query_rows
+from backend.config.database import session_scope
+from backend.repositories.market.market_pg_cynexus_repo import execute_upsert
 from backend.repositories.market.percentile_helper import percentile_score
 from backend.services.stock.trading_calendar import is_trading_day
 from backend.repositories.market.stock_meta_repo import (
@@ -26,6 +29,32 @@ from backend.repositories.market.stock_meta_repo import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _ClickHouseResult:
+    def __init__(self, rows: list[tuple[Any, ...]]):
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self._rows
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._rows[0] if self._rows else None
+
+
+class _ClickHouseCompatConn:
+    def execute(self, sql: str, params: list[Any] | tuple[Any, ...] | None = None) -> _ClickHouseResult:
+        rows = query_rows(sql.replace("?", "%s"), tuple(params or ()))
+        return _ClickHouseResult(rows)
+
+
+@contextmanager
+def conn(read_only: bool = False):
+    yield _ClickHouseCompatConn()
+
+
+def get_conn(read_only: bool = False) -> _ClickHouseCompatConn:
+    return _ClickHouseCompatConn()
 
 _TOL = 0.0001   # 涨跌停判定容差 (与 limit_emotion_service 一致)
 _HIGH_TOL = 0.0005  # 盘中触板容差
@@ -67,7 +96,7 @@ def get_limit_streak_history(
     sql = f"""
         WITH base AS (
           SELECT r.code, r.trade_date, r.open, r.high, r.low, r.close, r.volume,
-                 LAG(r.close) OVER w_ AS pre_close
+                 lag(r.close) OVER w_ AS pre_close
             FROM daily_raw r
            WHERE {where_sql}
            WINDOW w_ AS (PARTITION BY r.code ORDER BY r.trade_date)
@@ -96,7 +125,7 @@ def get_limit_streak_history(
                     ELSE (close - pre_close) / pre_close * 100 END AS change_pct,
                is_limit_up, is_touched,
                CASE WHEN is_limit_up = 0 AND
-                         LAG(is_limit_up) OVER (PARTITION BY code ORDER BY trade_date) = 1
+                         lag(is_limit_up) OVER (PARTITION BY code ORDER BY trade_date) = 1
                     THEN 1 ELSE 0 END AS is_broken,
                CASE WHEN is_limit_up = 1
                     THEN COUNT(*) OVER (PARTITION BY code, grp)
@@ -184,26 +213,22 @@ def _snapshot_python(
 ) -> list[dict[str, Any]]:
     """取 td 当日 OHLC, 在 Python 端查最近 60 天历史算 streak.
 
-    性能: 5500 只 × 60 天 × LAG = 单次 DuckDB 扫 ≈ 几十万行, < 1s.
+    性能: 5500 只 × 60 天 × lag = 单次 ClickHouse 扫几十万行.
     """
     con = get_conn()
     placeholders = ",".join(["?"] * len(codes))
 
     # 今天 OHLC + pre_close.
-    # 用 LATERAL join (subquery) 拿最近的 "td 之前" 的最近一个交易日的 close
-    # 而不是 LAG OVER (PARTITION BY code) — 后者在今天=该 code 第一天时返回 NULL.
     today_rows = con.execute(f"""
-        WITH today AS (
-          SELECT code, trade_date, open, high, low, close, volume
-            FROM daily_raw
-           WHERE code IN ({placeholders}) AND trade_date = ?
-        )
-        SELECT t.code, t.open, t.high, t.low, t.close, t.volume,
-               (SELECT close FROM daily_raw p
-                 WHERE p.code = t.code AND p.trade_date < t.trade_date
-                 ORDER BY p.trade_date DESC LIMIT 1) AS pre_close
-          FROM today t
-    """, [*codes, td]).fetchall()
+        SELECT code, open, high, low, close, volume, pre_close
+          FROM (
+            SELECT code, trade_date, open, high, low, close, volume,
+                   lag(close, 1) OVER (PARTITION BY code ORDER BY trade_date) AS pre_close
+              FROM daily_raw
+             WHERE code IN ({placeholders}) AND trade_date <= ?
+          )
+         WHERE trade_date = ?
+    """, [*codes, td, td]).fetchall()
     today_by_code = {r[0]: r for r in today_rows}
     if not today_by_code:
         return []
@@ -212,12 +237,13 @@ def _snapshot_python(
     from datetime import timedelta
     history_start = td - timedelta(days=120)
     raw_history = con.execute(f"""
-        SELECT code, trade_date, close,
-               (SELECT close FROM daily_raw p
-                 WHERE p.code = code AND p.trade_date < trade_date
-                 ORDER BY p.trade_date DESC LIMIT 1) AS pre_close
-          FROM daily_raw
-         WHERE code IN ({placeholders}) AND trade_date >= ? AND trade_date < ?
+        SELECT code, trade_date, close, pre_close
+          FROM (
+            SELECT code, trade_date, close,
+                   lag(close, 1) OVER (PARTITION BY code ORDER BY trade_date) AS pre_close
+              FROM daily_raw
+             WHERE code IN ({placeholders}) AND trade_date >= ? AND trade_date < ?
+          )
          ORDER BY code, trade_date
     """, [*codes, history_start, td]).fetchall()
 
@@ -481,7 +507,7 @@ def calc_limit_emotion_summary(
         "compositeScore": 50.78,
         "level": "normal",
         "elapsedMs": 1234,
-        "source": "duckdb.daily_raw"
+        "source": "clickhouse.daily_raw"
       }
     """
     td = _to_date(trade_date)
@@ -519,7 +545,7 @@ def calc_limit_emotion_summary(
             "compositeScore": 30.0,
             "level": "weak",
             "elapsedMs": int((time.time() - t0) * 1000),
-            "source": "duckdb.daily_raw",
+            "source": "clickhouse.daily_raw",
         }
 
     limit_up_count = sum(1 for r in snap_today if r.get("isLimitUp"))
@@ -595,15 +621,12 @@ def calc_limit_emotion_summary(
         "compositeScore": composite_score,
         "level": level,
         "elapsedMs": elapsed_ms,
-        "source": "duckdb.daily_raw",
+        "source": "clickhouse.daily_raw",
     }
 
 
 def save_limit_emotion_summary(payload: dict) -> None:
-    """把 calc_limit_emotion_summary 的 dict 落盘 (INSERT OR REPLACE by trade_date).
-
-    非交易日拒绝落盘 (历史上有 2026-02-24 春节调休脏数据).
-    """
+    """把 calc_limit_emotion_summary 的 dict 落盘到 PostgreSQL msi_limit_emotion_daily."""
     td = _to_date(payload.get("tradeDate"))
     if td is None:
         raise ValueError("payload.tradeDate required")
@@ -614,49 +637,26 @@ def save_limit_emotion_summary(payload: dict) -> None:
     yest_avg = payload.get("yesterdayLimitUpAvgReturn")
     bb_rate = payload.get("breakBoardRate")
     ratio = payload.get("limitUpDownRatio")
-    con = get_conn()
-
-    # v2026-06-18: new column — migrate silently
-    try:
-        con.execute(
-            "ALTER TABLE limit_emotion_summary_daily "
-            "ADD COLUMN limit_up_down_ratio DECIMAL(10, 4)"
-        )
-    except Exception:
-        pass  # already exists
-
-    con.execute("""
-        INSERT OR REPLACE INTO limit_emotion_summary_daily
-            (trade_date, limit_up_count, limit_down_count, touched_count, broken_count,
-             break_board_rate, limit_up_down_ratio,
-             yesterday_limit_up_count, yesterday_limit_up_avg_return,
-             up_down_score, break_board_score, yesterday_return_score,
-             composite_score, level,
-             elapsed_ms, source, ingested_at)
-        VALUES (?, ?, ?, ?, ?,
-                ?, ?,
-                ?, ?,
-                ?, ?, ?,
-                ?, ?,
-                ?, ?, current_timestamp)
-    """, [
-        td,
-        int(payload.get("limitUpCount") or 0),
-        int(payload.get("limitDownCount") or 0),
-        int(payload.get("touchedCount") or 0),
-        int(payload.get("brokenCount") or 0),
-        float(bb_rate) if bb_rate is not None else 0.0,
-        float(ratio) if ratio is not None else 0.0,
-        int(payload.get("yesterdayLimitUpCount") or 0),
-        float(yest_avg) if yest_avg is not None else 0.0,
-        float(comp.get("upDownScore") or 0),
-        float(comp.get("breakBoardScore") or 0),
-        float(comp.get("yesterdayReturnScore") or 0),
-        float(payload.get("compositeScore") or 0),
-        str(payload.get("level") or "normal"),
-        int(payload.get("elapsedMs") or 0),
-        str(payload.get("source") or "duckdb.daily_raw"),
-    ])
+    with session_scope() as db:
+        execute_upsert(db, table="msi_limit_emotion_daily", key_columns=["trade_date"], values={
+            "trade_date": td,
+            "limit_up_count": int(payload.get("limitUpCount") or 0),
+            "limit_down_count": int(payload.get("limitDownCount") or 0),
+            "touched_count": int(payload.get("touchedCount") or 0),
+            "broken_count": int(payload.get("brokenCount") or 0),
+            "break_board_rate": float(bb_rate) if bb_rate is not None else 0.0,
+            "limit_up_down_ratio": float(ratio) if ratio is not None else 0.0,
+            "yesterday_limit_up_count": int(payload.get("yesterdayLimitUpCount") or 0),
+            "yesterday_limit_up_avg_return": float(yest_avg) if yest_avg is not None else 0.0,
+            "up_down_score": float(comp.get("upDownScore") or 0),
+            "break_board_score": float(comp.get("breakBoardScore") or 0),
+            "yesterday_return_score": float(comp.get("yesterdayReturnScore") or 0),
+            "composite_score": float(payload.get("compositeScore") or 0),
+            "level": str(payload.get("level") or "normal"),
+            "elapsed_ms": int(payload.get("elapsedMs") or 0),
+            "source": str(payload.get("source") or "clickhouse.daily_raw"),
+            "ingested_at": datetime.now(),
+        })
 
 
 _LIMIT_EMOTION_SUMMARY_COLS = (
@@ -701,16 +701,14 @@ def _row_to_summary_payload(row: tuple) -> dict:
 
 
 def get_limit_emotion_summary(trade_date: date | str) -> dict | None:
-    """按日期查 limit_emotion_summary_daily. 无记录返 None (不抛)."""
+    """按日期查 msi_limit_emotion_daily. 无记录返 None (不抛)."""
     td = _to_date(trade_date)
     if td is None:
         return None
-    con = get_conn()
-    r = con.execute(
-        f"SELECT {_LIMIT_EMOTION_SUMMARY_SELECT} "
-        f"FROM limit_emotion_summary_daily WHERE trade_date = ?",
-        [td],
-    ).fetchone()
+    with session_scope() as db:
+        r = db.execute(__import__("sqlalchemy").text(
+            f"SELECT {_LIMIT_EMOTION_SUMMARY_SELECT} FROM cynexus_appl_market.msi_limit_emotion_daily WHERE trade_date = :td AND deleted_at IS NULL LIMIT 1"
+        ), {"td": td}).first()
     return _row_to_summary_payload(r) if r else None
 
 
@@ -718,19 +716,15 @@ def get_limit_emotion_summary_history(
     start: date | str,
     end: date | str | None = None,
 ) -> list[dict]:
-    """区间查 limit_emotion_summary_daily (按 trade_date ASC), 一日一条."""
+    """区间查 msi_limit_emotion_daily (按 trade_date ASC), 一日一条."""
     s = _to_date(start)
     e = _to_date(end) if end is not None else s
     if s is None or e is None:
         return []
-    con = get_conn()
-    rows = con.execute(
-        f"SELECT {_LIMIT_EMOTION_SUMMARY_SELECT} "
-        f"FROM limit_emotion_summary_daily "
-        f"WHERE trade_date BETWEEN ? AND ? "
-        f"ORDER BY trade_date ASC",
-        [s, e],
-    ).fetchall()
+    with session_scope() as db:
+        rows = db.execute(__import__("sqlalchemy").text(
+            f"SELECT {_LIMIT_EMOTION_SUMMARY_SELECT} FROM cynexus_appl_market.msi_limit_emotion_daily WHERE trade_date BETWEEN :s AND :e AND deleted_at IS NULL ORDER BY trade_date ASC"
+        ), {"s": s, "e": e}).all()
     return [_row_to_summary_payload(r) for r in rows]
 
 

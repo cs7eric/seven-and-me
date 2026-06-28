@@ -1,30 +1,60 @@
-"""技术指标 — DuckDB 窗口函数实现.
+"""技术指标与 MA 计数仓储 — ClickHouse source + PostgreSQL cache.
 
-所有指标在 SQL 里算完, 返回 list[dict], 不在 Python 里循环. 单只股票最大 8000
-行, DuckDB 单查 < 50ms.
-
-精度说明:
-  - MA / BOLL: 精确 (无近似)
-  - MACD / EMA: 用 ROWS BETWEEN n-1 PRECEDING AND CURRENT ROW 加权平均近似递归 EMA,
-    与 pandas_ta / 同花顺对比误差 < 1e-3 (实际用户肉眼看不出)
-  - KDJ: 用 MAX/MIN OVER (ROWS n-1 PRECEDING) 算 N 日 HHV/LLV, 精确
+This module preserves the long-lived public function names used by the API and
+maintenance scripts, but the runtime data source has moved from DuckDB to
+ClickHouse/PostgreSQL.
 """
 from __future__ import annotations
 
-from datetime import date
+from contextlib import contextmanager
+from datetime import date, datetime
 from typing import Any
 
-from backend.adapters.market.duckdb_store import conn, get_conn
-from backend.repositories.market.percentile_helper import (
-    enrich_history_scores,
-    percentile_score,
-)
-from backend.services.stock.trading_calendar import is_trading_day
-
 import logging
-logger = logging.getLogger(__name__)
 
+from backend.adapters.market.clickhouse_store import command, query_rows
+from backend.config.database import session_scope
+from backend.repositories.market.market_pg_cynexus_repo import execute_upsert, to_date
+from backend.repositories.market.percentile_helper import enrich_history_scores, percentile_score
+from backend.services.stock.trading_calendar import is_trading_day
+from backend.repositories.market.stock_meta_repo import get_board_type, get_stock_meta, _codes_json
+
+logger = logging.getLogger(__name__)
 _DEFAULT_MA_WINDOWS = (5, 10, 20, 30, 60, 120, 250)
+
+
+class _ClickHouseResult:
+    def __init__(self, rows: list[tuple[Any, ...]]):
+        self._rows = rows
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self._rows
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self._rows[0] if self._rows else None
+
+
+class _ClickHouseCompatConn:
+    def execute(self, sql: str, params: list[Any] | tuple[Any, ...] | None = None) -> _ClickHouseResult:
+        sql_str = sql.lstrip().lower()
+        if sql_str.startswith(("select", "with", "show", "describe")):
+            rows = query_rows(sql.replace("?", "%s"), tuple(params or ()))
+            return _ClickHouseResult(rows)
+        command(sql.replace("?", "%s"), tuple(params or ()))
+        return _ClickHouseResult([])
+
+    def executemany(self, sql: str, params_seq: list[tuple[Any, ...]]) -> None:
+        for params in params_seq:
+            self.execute(sql, params)
+
+
+@contextmanager
+def conn(read_only: bool = False):
+    yield _ClickHouseCompatConn()
+
+
+def get_conn(read_only: bool = False) -> _ClickHouseCompatConn:
+    return _ClickHouseCompatConn()
 
 
 def _to_date(v: date | str | None) -> date | None:
@@ -34,19 +64,19 @@ def _to_date(v: date | str | None) -> date | None:
 
 
 def _build_ma_select(windows: list[int]) -> str:
-    """生成 AVG(close) OVER ... 子句, 每窗口一个 ma{N} 列."""
     parts = []
     for n in sorted(set(windows)):
         if n < 1:
             continue
         parts.append(
-            f"AVG(close) OVER ("
-            f"  PARTITION BY code ORDER BY trade_date "
-            f"  ROWS BETWEEN {n - 1} PRECEDING AND CURRENT ROW"
-            f") AS ma{n}"
+            f"AVG(close) OVER (PARTITION BY code ORDER BY trade_date ROWS BETWEEN {n - 1} PRECEDING AND CURRENT ROW) AS ma{n}"
         )
     return ", ".join(parts)
 
+
+# ---------------------------------------------------------------------------
+# 1. 单股技术指标
+# ---------------------------------------------------------------------------
 
 def calc_ma(
     code: str,
@@ -54,49 +84,25 @@ def calc_ma(
     end_date: date | str | None = None,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """MA 均线. 返回 [{trade_date, close, ma5, ma10, ...}, ...] 按 trade_date ASC.
-
-    Args:
-        code: 6 位代码
-        windows: MA 周期列表, 默认 5/10/20/30/60/120/250
-        end_date: 截止日期 (含). None 表示到最新
-        limit: 返回最近 N 条 (按 trade_date DESC LIMIT, 再升序返回)
-    """
     windows = sorted(set(int(w) for w in windows if int(w) >= 1))
     if not windows:
         return []
-
     ma_cols = _build_ma_select(windows)
-
-    where = ["code = ?"]
+    where = ["code = %s"]
     params: list[Any] = [code]
     if end_date is not None:
-        where.append("trade_date <= ?")
+        where.append("trade_date <= %s")
         params.append(_to_date(end_date))
     where_sql = " AND ".join(where)
-
-    limit_sql = ""
-    order_sql = " ORDER BY trade_date ASC"
     if limit is not None:
-        limit_sql = f" ORDER BY trade_date DESC LIMIT {int(limit)}"
-
-    sql = f"""
-        SELECT trade_date, close, {ma_cols}
-          FROM daily_qfq
-         WHERE {where_sql}
-         {limit_sql}
-    """
-    if limit is not None:
-        sql = f"SELECT * FROM ({sql}){order_sql}"
-
-    con = get_conn()
-    rows = con.execute(sql, params).fetchall()
+        sql = f"SELECT trade_date, close, {ma_cols} FROM (SELECT trade_date, close, {ma_cols} FROM daily_qfq WHERE {where_sql} ORDER BY trade_date DESC LIMIT %s) ORDER BY trade_date ASC"
+        params.append(int(limit))
+    else:
+        sql = f"SELECT trade_date, close, {ma_cols} FROM daily_qfq WHERE {where_sql} ORDER BY trade_date ASC"
+    rows = query_rows(sql, tuple(params))
     out: list[dict[str, Any]] = []
     for r in rows:
-        d: dict[str, Any] = {
-            "trade_date": r[0].isoformat(),
-            "close": float(r[1]),
-        }
+        d: dict[str, Any] = {"trade_date": r[0].isoformat(), "close": float(r[1])}
         for i, n in enumerate(windows):
             val = r[2 + i]
             d[f"ma{n}"] = float(val) if val is not None else None
@@ -105,49 +111,30 @@ def calc_ma(
 
 
 def _ema_expr(col_name: str, span: int) -> str:
-    """生成 EMA 加权平均表达式 (不含 alias / OVER).
-
-    alpha = 2/(span+1), EMA_t = α*x_t + (1-α)*EMA_{t-1}
-    近似: 在 ROWS span PRECEDING 窗口内, 第 j 行权重 (j=0 最老) = (1-α)^(span-1-j),
-    加权平均 = SUM(weight * x) / SUM(weight).
-    边界误差: < 1e-3 (无 EMA 起点, 用窗口内均值代替).
-    """
     alpha = 2.0 / (span + 1)
     decay = 1.0 - alpha
     parts = []
     for i in range(span):
-        # i=0 → newest (LAG with offset 0)
         w = decay ** (span - 1 - i)
-        parts.append(f"{w:.10f} * COALESCE(LAG({col_name}, {i}) OVER w_, {col_name})")
+        parts.append(f"{w:.10f} * COALESCE(lag({col_name}, {i}) OVER w_, {col_name})")
     weights = " + ".join(parts)
     weight_sum = sum(decay ** i for i in range(span))
     return f"({weights}) / {weight_sum:.10f}"
 
 
-def calc_macd(
-    code: str,
-    end_date: date | str | None = None,
-    limit: int | None = None,
-    fast: int = 12,
-    slow: int = 26,
-    signal: int = 9,
-) -> list[dict[str, Any]]:
-    """MACD = EMA(fast) - EMA(slow); signal = EMA(signal period, MACD); hist = (MACD - signal) * 2.
-
-    近似精度 vs pandas_ta: 误差 < 1e-3 (用 ROWS 加权平均替代递归 EMA).
-    """
-    where = ["code = ?"]
+def calc_macd(code: str, end_date: date | str | None = None, limit: int | None = None, fast: int = 12, slow: int = 26, signal: int = 9) -> list[dict[str, Any]]:
+    where = ["code = %s"]
     params: list[Any] = [code]
     if end_date is not None:
-        where.append("trade_date <= ?")
+        where.append("trade_date <= %s")
         params.append(_to_date(end_date))
     where_sql = " AND ".join(where)
-
-    limit_sql = ""
-    order_sql = " ORDER BY trade_date ASC"
     if limit is not None:
         limit_sql = f" ORDER BY trade_date DESC LIMIT {int(limit)}"
-
+        order_sql = " ORDER BY trade_date ASC"
+    else:
+        limit_sql = ""
+        order_sql = " ORDER BY trade_date ASC"
     sql = f"""
         WITH base AS (
           SELECT trade_date, close,
@@ -155,98 +142,49 @@ def calc_macd(
                  {_ema_expr("close", slow)} AS ema_slow
             FROM daily_qfq
            WHERE {where_sql}
-           WINDOW w_ AS (PARTITION BY code ORDER BY trade_date
-                         ROWS BETWEEN {slow - 1} PRECEDING AND CURRENT ROW)
-        ),
-        macd_line AS (
-          SELECT trade_date, close, ema_fast, ema_slow,
-                 (ema_fast - ema_slow) AS macd
-            FROM base
-        ),
-        signal_line AS (
+           WINDOW w_ AS (PARTITION BY code ORDER BY trade_date ROWS BETWEEN {slow - 1} PRECEDING AND CURRENT ROW)
+        ), macd_line AS (
+          SELECT trade_date, close, ema_fast, ema_slow, (ema_fast - ema_slow) AS macd FROM base
+        ), signal_line AS (
           SELECT trade_date, close, ema_fast, ema_slow, macd,
                  {_ema_expr("macd", signal)} AS signal
             FROM macd_line
-           WINDOW w_ AS (ORDER BY trade_date
-                         ROWS BETWEEN {signal - 1} PRECEDING AND CURRENT ROW)
+           WINDOW w_ AS (ORDER BY trade_date ROWS BETWEEN {signal - 1} PRECEDING AND CURRENT ROW)
         )
-        SELECT trade_date, close, ema_fast, ema_slow, macd, signal,
-               (macd - signal) * 2 AS hist
+        SELECT trade_date, close, ema_fast, ema_slow, macd, signal, (macd - signal) * 2 AS hist
           FROM signal_line
           {limit_sql}
     """
     if limit is not None:
         sql = f"SELECT * FROM ({sql}){order_sql}"
-
-    con = get_conn()
-    rows = con.execute(sql, params).fetchall()
+    rows = query_rows(sql, tuple(params))
     out: list[dict[str, Any]] = []
     for r in rows:
-        out.append({
-            "trade_date": r[0].isoformat(),
-            "close": float(r[1]),
-            "ema_fast": float(r[2]) if r[2] is not None else None,
-            "ema_slow": float(r[3]) if r[3] is not None else None,
-            "macd": float(r[4]) if r[4] is not None else None,
-            "signal": float(r[5]) if r[5] is not None else None,
-            "hist": float(r[6]) if r[6] is not None else None,
-        })
+        out.append({"trade_date": r[0].isoformat(), "close": float(r[1]), "ema_fast": float(r[2]) if r[2] is not None else None, "ema_slow": float(r[3]) if r[3] is not None else None, "macd": float(r[4]) if r[4] is not None else None, "signal": float(r[5]) if r[5] is not None else None, "hist": float(r[6]) if r[6] is not None else None})
     return out
 
 
-def calc_kdj(
-    code: str,
-    n: int = 9,
-    m1: int = 3,
-    m2: int = 3,
-    end_date: date | str | None = None,
-    limit: int | None = None,
-) -> list[dict[str, Any]]:
-    """KDJ 指标 (默认 N=9, M1=3, M2=3 同花顺默认).
-
-    RSV_t = (C_t - LLV_N) / (HHV_N - LLV_N) * 100
-    K_t   = (M1-1)/M1 * K_{t-1} + 1/M1 * RSV_t
-    D_t   = (M2-1)/M2 * D_{t-1} + 1/M2 * K_t
-    J_t   = 3K - 2D
-
-    EMA 平滑近似用 ROWS m1-1 PRECEDING / m2-1 PRECEDING 加权.
-    """
-    where = ["code = ?"]
+def calc_kdj(code: str, n: int = 9, m1: int = 3, m2: int = 3, end_date: date | str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    where = ["code = %s"]
     params: list[Any] = [code]
     if end_date is not None:
-        where.append("trade_date <= ?")
+        where.append("trade_date <= %s")
         params.append(_to_date(end_date))
     where_sql = " AND ".join(where)
-
-    limit_sql = ""
-    order_sql = " ORDER BY trade_date ASC"
     if limit is not None:
         limit_sql = f" ORDER BY trade_date DESC LIMIT {int(limit)}"
-
-    # HHV_N / LLV_N 用 MAX/MIN OVER (ROWS n-1 PRECEDING)
-    # 然后 K/D 用 ROWS 平滑 (近似递归)
-    # 同花顺 K 默认初值 = 50, D 默认初值 = 50
-    # 近似: K_t = (M1-1)/M1 * K_{t-1} + 1/M1 * RSV_t
-    #   ≈ SUM(K_{t-i} * (1/M1) * ((M1-1)/M1)^i) over i in 0..M1-1
-    #   起点没有 K_{t-1} 时 (窗口不足), 用窗口内平均代替
+        order_sql = " ORDER BY trade_date ASC"
+    else:
+        limit_sql = ""
+        order_sql = " ORDER BY trade_date ASC"
     k_weights = [(1.0 / m1) * ((m1 - 1) / m1) ** i for i in range(m1)]
     k_weight_sum = sum(k_weights)
     d_weights = [(1.0 / m2) * ((m2 - 1) / m2) ** i for i in range(m2)]
     d_weight_sum = sum(d_weights)
-
-    k_parts = []
-    for i in range(m1):
-        w = k_weights[i]
-        k_parts.append(f"{w:.10f} * COALESCE(LAG(rsv, {m1 - 1 - i}) OVER (ORDER BY trade_date ROWS BETWEEN {m1 - 1} PRECEDING AND CURRENT ROW), rsv, 50.0)")
-    d_parts = []
-    for i in range(m2):
-        w = d_weights[i]
-        # K 平滑后的值是 (k_smoothed) — 用上一阶内插
-        d_parts.append(f"{w:.10f} * COALESCE(LAG(k_smoothed, {m2 - 1 - i}) OVER (ORDER BY trade_date ROWS BETWEEN {m2 - 1} PRECEDING AND CURRENT ROW), k_smoothed, 50.0)")
-
+    k_parts = [f"{w:.10f} * COALESCE(lag(rsv, {m1 - 1 - i}) OVER (ORDER BY trade_date ROWS BETWEEN {m1 - 1} PRECEDING AND CURRENT ROW), rsv, 50.0)" for i, w in enumerate(k_weights)]
+    d_parts = [f"{w:.10f} * COALESCE(lag(k_smoothed, {m2 - 1 - i}) OVER (ORDER BY trade_date ROWS BETWEEN {m2 - 1} PRECEDING AND CURRENT ROW), k_smoothed, 50.0)" for i, w in enumerate(d_weights)]
     k_smoothed_expr = "(" + " + ".join(k_parts) + f") / {k_weight_sum:.10f}"
     d_smoothed_expr = "(" + " + ".join(d_parts) + f") / {d_weight_sum:.10f}"
-
     sql = f"""
         WITH base AS (
           SELECT trade_date, close,
@@ -254,121 +192,71 @@ def calc_kdj(
                  MIN(close) OVER (PARTITION BY code ORDER BY trade_date ROWS BETWEEN {n - 1} PRECEDING AND CURRENT ROW) AS llv_c
             FROM daily_qfq
            WHERE {where_sql}
-        ),
-        rsv AS (
+        ), rsv AS (
           SELECT trade_date, close,
-                 CASE WHEN (hhv_c - llv_c) > 0
-                      THEN (close - llv_c) / (hhv_c - llv_c) * 100.0
-                      ELSE 50.0 END AS rsv
+                 CASE WHEN (hhv_c - llv_c) > 0 THEN (close - llv_c) / (hhv_c - llv_c) * 100.0 ELSE 50.0 END AS rsv
             FROM base
-        ),
-        k_step AS (
-          SELECT trade_date, close, rsv, {k_smoothed_expr} AS k_smoothed
-            FROM rsv
-           WINDOW _ AS (ORDER BY trade_date ROWS BETWEEN {m1 - 1} PRECEDING AND CURRENT ROW)
-        ),
-        d_step AS (
-          SELECT trade_date, close, rsv, k_smoothed, {d_smoothed_expr} AS d_smoothed
-            FROM k_step
-           WINDOW _ AS (ORDER BY trade_date ROWS BETWEEN {m2 - 1} PRECEDING AND CURRENT ROW)
+        ), k_step AS (
+          SELECT trade_date, close, rsv, {k_smoothed_expr} AS k_smoothed FROM rsv WINDOW _ AS (ORDER BY trade_date ROWS BETWEEN {m1 - 1} PRECEDING AND CURRENT ROW)
+        ), d_step AS (
+          SELECT trade_date, close, rsv, k_smoothed, {d_smoothed_expr} AS d_smoothed FROM k_step WINDOW _ AS (ORDER BY trade_date ROWS BETWEEN {m2 - 1} PRECEDING AND CURRENT ROW)
         )
-        SELECT trade_date, close, rsv, k_smoothed, d_smoothed,
-               (3 * k_smoothed - 2 * d_smoothed) AS j
+        SELECT trade_date, close, rsv, k_smoothed, d_smoothed, (3 * k_smoothed - 2 * d_smoothed) AS j
           FROM d_step
           {limit_sql}
     """
     if limit is not None:
         sql = f"SELECT * FROM ({sql}){order_sql}"
-
-    con = get_conn()
-    rows = con.execute(sql, params).fetchall()
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        out.append({
-            "trade_date": r[0].isoformat(),
-            "close": float(r[1]),
-            "rsv": float(r[2]) if r[2] is not None else None,
-            "k": float(r[3]) if r[3] is not None else None,
-            "d": float(r[4]) if r[4] is not None else None,
-            "j": float(r[5]) if r[5] is not None else None,
-        })
-    return out
+    rows = query_rows(sql, tuple(params))
+    return [{"trade_date": r[0].isoformat(), "close": float(r[1]), "rsv": float(r[2]) if r[2] is not None else None, "k": float(r[3]) if r[3] is not None else None, "d": float(r[4]) if r[4] is not None else None, "j": float(r[5]) if r[5] is not None else None} for r in rows]
 
 
-def calc_boll(
-    code: str,
-    n: int = 20,
-    k: float = 2.0,
-    end_date: date | str | None = None,
-    limit: int | None = None,
-) -> list[dict[str, Any]]:
-    """布林带: MID = MA(n); UPPER = MID + k*STD(n); LOWER = MID - k*STD(n)."""
-    where = ["code = ?"]
+def calc_boll(code: str, n: int = 20, k: float = 2.0, end_date: date | str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    where = ["code = %s"]
     params: list[Any] = [code]
     if end_date is not None:
-        where.append("trade_date <= ?")
+        where.append("trade_date <= %s")
         params.append(_to_date(end_date))
     where_sql = " AND ".join(where)
-
-    limit_sql = ""
-    order_sql = " ORDER BY trade_date ASC"
     if limit is not None:
         limit_sql = f" ORDER BY trade_date DESC LIMIT {int(limit)}"
-
+        order_sql = " ORDER BY trade_date ASC"
+    else:
+        limit_sql = ""
+        order_sql = " ORDER BY trade_date ASC"
     sql = f"""
         SELECT trade_date, close,
-               AVG(close)    OVER w_ AS mid,
-               STDDEV_SAMP(close) OVER w_ AS stddev
+               AVG(close) OVER w_ AS mid,
+               AVG(close) OVER w_ + {float(k)} * STDDEV_SAMP(close) OVER w_ AS upper,
+               AVG(close) OVER w_ - {float(k)} * STDDEV_SAMP(close) OVER w_ AS lower
           FROM daily_qfq
          WHERE {where_sql}
-         WINDOW w_ AS (PARTITION BY code ORDER BY trade_date
-                       ROWS BETWEEN {n - 1} PRECEDING AND CURRENT ROW)
-         {limit_sql}
+         WINDOW w_ AS (PARTITION BY code ORDER BY trade_date ROWS BETWEEN {n - 1} PRECEDING AND CURRENT ROW)
+          {limit_sql}
     """
     if limit is not None:
         sql = f"SELECT * FROM ({sql}){order_sql}"
-
-    con = get_conn()
-    rows = con.execute(sql, params).fetchall()
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        mid = float(r[2]) if r[2] is not None else None
-        std = float(r[3]) if r[3] is not None else None
-        out.append({
-            "trade_date": r[0].isoformat(),
-            "close": float(r[1]),
-            "mid": mid,
-            "upper": (mid + k * std) if (mid is not None and std is not None) else None,
-            "lower": (mid - k * std) if (mid is not None and std is not None) else None,
-        })
-    return out
+    rows = query_rows(sql, tuple(params))
+    return [{"trade_date": r[0].isoformat(), "close": float(r[1]), "mid": float(r[2]) if r[2] is not None else None, "upper": float(r[3]) if r[3] is not None else None, "lower": float(r[4]) if r[4] is not None else None} for r in rows]
 
 
-def calc_ma_codes(
-    code: str,
-    trade_date: date | str,
-    windows: tuple[int, ...] = (10, 15, 20, 30, 60, 90, 252),
-) -> dict[str, Any] | None:
-    """单只股票在指定日的均线码 (110 = 收盘在 ma10/ma20 上, ma30 下).
-
-    返回 {code, trade_date, close, ma_codes, ma10, ma15, ...}, 或 None (无数据).
-    与 limit_history_service.calculate_ma_codes 单条 shape 对齐.
-    """
+def calc_ma_codes(code: str, trade_date: date | str, windows: list[int] | tuple[int, ...] = _DEFAULT_MA_WINDOWS) -> dict[str, Any] | None:
+    windows = sorted(set(int(w) for w in windows if int(w) >= 1))
+    if not windows:
+        return None
     td = _to_date(trade_date)
     assert td is not None
-    ma_cols = _build_ma_select(list(windows))
-
+    ma_cols = _build_ma_select(windows)
     sql = f"""
         SELECT trade_date, close, {ma_cols}
           FROM daily_qfq
-         WHERE code = ? AND trade_date <= ?
+         WHERE code = %s AND trade_date <= %s
          QUALIFY ROW_NUMBER() OVER (PARTITION BY code ORDER BY trade_date DESC) = 1
     """
-    con = get_conn()
-    row = con.execute(sql, [code, td]).fetchone()
-    if row is None:
+    row = query_rows(sql, (code, td))
+    if not row:
         return None
-
+    row = row[0]
     actual_date = row[0]
     close = float(row[1])
     ma_vals: dict[int, float | None] = {}
@@ -377,134 +265,58 @@ def calc_ma_codes(
         val = row[2 + i]
         v = float(val) if val is not None else None
         ma_vals[n] = v
-        if v is None:
-            bits.append("-")
-        elif close >= v:
-            bits.append("1")
-        else:
-            bits.append("0")
-    ma_codes = "".join(bits)
-    return {
-        "code": code,
-        "trade_date": actual_date.isoformat(),
-        "close": close,
-        "ma_codes": ma_codes,
-        **{f"ma{n}": v for n, v in ma_vals.items()},
-    }
-
-
-if __name__ == "__main__":
-    # Smoke test
-    import json as _json
-    print("=== MA5/10/20 for 000001 last 5 ===")
-    print(_json.dumps(calc_ma("000001", windows=[5, 10, 20], limit=5), indent=2))
-    print("\n=== BOLL(20,2) for 000001 last 3 ===")
-    print(_json.dumps(calc_boll("000001", limit=3), indent=2))
-    print("\n=== KDJ for 000001 last 3 ===")
-    print(_json.dumps(calc_kdj("000001", limit=3), indent=2))
-    print("\n=== MACD for 000001 last 3 ===")
-    print(_json.dumps(calc_macd("000001", limit=3), indent=2))
-    print("\n=== ma_codes for 000001 on 2026-06-15 ===")
-    print(_json.dumps(calc_ma_codes("000001", "2026-06-15"), indent=2))
+        bits.append("-") if v is None else bits.append("1" if close >= v else "0")
+    return {"code": code, "trade_date": actual_date.isoformat(), "close": close, "ma_codes": "".join(bits), **{f"ma{n}": v for n, v in ma_vals.items()}}
 
 
 # ---------------------------------------------------------------------------
-# 5. 全市场 MA 计数 + 市场宽度 (Market Pulse · 市场温度)
+# 2. 全市场 MA 计数 + 宽度
 # ---------------------------------------------------------------------------
+
+def _eligible_meta(code: str) -> dict[str, Any] | None:
+    meta = get_stock_meta(code)
+    if meta is None or not meta.get("is_active", True) or meta.get("is_st"):
+        return None
+    return meta
+
 
 def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
-    """对所有活跃股票在 trade_date 算 close > MA20/MA60/both + 5日上涨 + 60日新低 + 252日新高 数量.
-
-    算法: SQL 一次扫 daily_qfq, 6 个窗口函数 (MA20/MA60, LAG(close,5), LAG(close,59),
-    MIN(60d), LAG(close,251), MAX(252d)).
-    ma60 IS NOT NULL 隐含该 code 至少有 60 天历史 (排除次新股).
-    5d 上涨: close > LAG(close, 5)  (近 5 个交易日相对)
-    60d 新低: close <= MIN(close) over 60-day window AND LAG(close, 59) IS NOT NULL
-             (后者保证窗口是满的 60 行, 避免次新股被算作新低)
-    252d 新高: close >= MAX(close) over 252-day window AND LAG(close, 251) IS NOT NULL
-             (跟 60d 新低对称, "持平"算新高)
-
-    Python 端过滤:
-      1. code 在活跃 universe 内 (排除退市/B股/ETF 等 daily_qfq 残留)
-      2. 非 ST (跟涨跌停面板同口径)
-
-    Returns:
-      {
-        "tradeDate": "2026-06-16",
-        "totalEligible": 4520,
-        "aboveMa20": 1820, "aboveMa60": 2150, "aboveBoth": 1450,
-        "pctAboveMa20": 40.27, "pctAboveMa60": 47.57, "pctAboveBoth": 32.08,
-        "up5dCount": 2010, "pctUp5d": 44.47,                  # 近 5 日上涨占比
-        "newLow60dCount": 150, "pctNewLow60d": 3.32,          # 60 日新低占比
-        "newHigh252dCount": 120, "pctNewHigh252d": 2.65,      # 252 日新高占比
-        "byBoard": {
-          "main_sh": {total, aboveMa20, aboveMa60, aboveBoth,
-                      pctMa20, pctMa60, pctBoth,
-                      up5d, pctUp5d, newLow60d, pctNewLow60d,
-                      newHigh252d, pctNewHigh252d},
-          ...
-        },
-        "elapsedMs": 820, "source": "duckdb.daily_qfq"
-      }
-    """
-    from backend.repositories.market.stock_meta_repo import (
-        get_board_type, get_stock_meta,
-    )
-    import time
-
     td = _to_date(trade_date)
     assert td is not None
-
-    t0 = time.time()
-    con = get_conn()
-    # 单次 SQL: 一次扫 daily_qfq, 算 MA20/MA60 + 1d/5d LAG + 60d MIN/LAG + 252d MAX/LAG
-    rows = con.execute(
-        f"""
+    t0 = __import__("time").time()
+    rows = query_rows(
+        """
         SELECT code, close,
-               AVG(close) OVER (PARTITION BY code ORDER BY trade_date
-                                ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS ma20,
-               AVG(close) OVER (PARTITION BY code ORDER BY trade_date
-                                ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
-               LAG(close, 1)   OVER (PARTITION BY code ORDER BY trade_date) AS close_1d_ago,
-               LAG(close, 5)   OVER (PARTITION BY code ORDER BY trade_date) AS close_5d_ago,
-               LAG(close, 59)  OVER (PARTITION BY code ORDER BY trade_date) AS close_59d_ago,
-               MIN(close)      OVER (PARTITION BY code ORDER BY trade_date
-                                     ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS min_60d,
-               LAG(close, 251) OVER (PARTITION BY code ORDER BY trade_date) AS close_251d_ago,
-               MAX(close)      OVER (PARTITION BY code ORDER BY trade_date
-                                     ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS max_252d
+               AVG(close) OVER (PARTITION BY code ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS ma20,
+               AVG(close) OVER (PARTITION BY code ORDER BY trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
+               lag(close, 1)   OVER (PARTITION BY code ORDER BY trade_date) AS close_1d_ago,
+               lag(close, 5)   OVER (PARTITION BY code ORDER BY trade_date) AS close_5d_ago,
+               lag(close, 59)  OVER (PARTITION BY code ORDER BY trade_date) AS close_59d_ago,
+               MIN(close)      OVER (PARTITION BY code ORDER BY trade_date ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS min_60d,
+               lag(close, 251) OVER (PARTITION BY code ORDER BY trade_date) AS close_251d_ago,
+               MAX(close)      OVER (PARTITION BY code ORDER BY trade_date ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS max_252d
           FROM daily_qfq
-         WHERE trade_date <= ?
-         QUALIFY trade_date = ?
+         WHERE trade_date <= %s
+         QUALIFY trade_date = %s
         """,
-        [td, td],
-    ).fetchall()
-
+        (td, td),
+    )
     above_ma20 = above_ma60 = above_both = 0
     up_5d = new_low_60d = new_high_252d = advancing = 0
     eligible = 0
     by_board: dict[str, dict[str, int]] = {}
-    for (code, close, ma20, ma60, close_1d_ago, close_5d_ago, close_59d_ago, min_60d,
-         close_251d_ago, max_252d) in rows:
+    for (code, close, ma20, ma60, close_1d_ago, close_5d_ago, close_59d_ago, min_60d, close_251d_ago, max_252d) in rows:
         if ma20 is None or ma60 is None:
-            # 次新股 (历史 < 60 天), 排除
             continue
-        code_str = str(code)
-        # 必须先确认在 active universe 内 (daily_qfq 可能含退市/B股/ETF 残留)
-        meta = get_stock_meta(code_str)
-        if meta is None or not meta.get("is_active", True):
-            continue
-        if meta.get("is_st"):
+        meta = _eligible_meta(str(code))
+        if meta is None:
             continue
         eligible += 1
         close_f = float(close)
         ma20_f = float(ma20)
         ma60_f = float(ma60)
-        board = meta.get("board") or get_board_type(code_str)
-        slot = by_board.setdefault(board, {
-            "total": 0, "aboveMa20": 0, "aboveMa60": 0, "aboveBoth": 0,
-            "up5d": 0, "newLow60d": 0, "newHigh252d": 0, "advancing": 0,
-        })
+        board = meta.get("board") or get_board_type(str(code))
+        slot = by_board.setdefault(board, {"total": 0, "aboveMa20": 0, "aboveMa60": 0, "aboveBoth": 0, "up5d": 0, "newLow60d": 0, "newHigh252d": 0, "advancing": 0})
         slot["total"] += 1
         a20 = close_f > ma20_f
         a60 = close_f > ma60_f
@@ -517,20 +329,15 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
         if a20 and a60:
             above_both += 1
             slot["aboveBoth"] += 1
-        # 5 日上涨: 需要 5 天前的收盘价存在 (即 ≥ 5 天历史, 60d 窗口已保证)
         if close_5d_ago is not None and close_f > float(close_5d_ago):
             up_5d += 1
             slot["up5d"] += 1
-        # 60 日新低: 窗口必须满 (59d 前的 close 存在)
         if close_59d_ago is not None and min_60d is not None and close_f <= float(min_60d):
             new_low_60d += 1
             slot["newLow60d"] += 1
-        # 252 日新高: 窗口必须满 (251d 前的 close 存在) + close >= 252d 窗口内 max
-        if (close_251d_ago is not None and max_252d is not None
-                and close_f >= float(max_252d)):
+        if close_251d_ago is not None and max_252d is not None and close_f >= float(max_252d):
             new_high_252d += 1
             slot["newHigh252d"] += 1
-        # 当日上涨: close > 前一日 close (60d 窗口已保证有 2 天历史)
         if close_1d_ago is not None and close_f > float(close_1d_ago):
             advancing += 1
             slot["advancing"] += 1
@@ -538,9 +345,8 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
     def pct(num: int, den: int) -> float:
         return round(num / den * 100, 2) if den > 0 else 0.0
 
-    by_board_out: dict[str, dict[str, Any]] = {}
-    for board, slot in by_board.items():
-        by_board_out[board] = {
+    by_board_out = {
+        board: {
             "total": slot["total"],
             "aboveMa20": slot["aboveMa20"],
             "aboveMa60": slot["aboveMa60"],
@@ -557,8 +363,10 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
             "advancing": slot["advancing"],
             "pctAdvancing": pct(slot["advancing"], slot["total"]),
         }
+        for board, slot in by_board.items()
+    }
 
-    elapsed_ms = int((time.time() - t0) * 1000)
+    elapsed_ms = int((__import__("time").time() - t0) * 1000)
     return {
         "tradeDate": td.isoformat(),
         "totalEligible": eligible,
@@ -578,77 +386,44 @@ def calc_ma_count(trade_date: date | str) -> dict[str, Any]:
         "pctAdvancing": pct(advancing, eligible),
         "byBoard": by_board_out,
         "elapsedMs": elapsed_ms,
-        "source": "duckdb.daily_qfq",
+        "source": "clickhouse.daily_qfq",
     }
 
 
-# ---------------------------------------------------------------------------
-# 6. MA 计数持久化 (duckdb.ma_count_daily)
-# ---------------------------------------------------------------------------
-#
-# 设计: cache-aside
-#   - calc_ma_count() 默认先查 ma_count_daily 表, 有就返 (O(<10ms))
-#   - 没记录才现算 + 自动 save 落盘 (下次直接命中)
-#   - 写穿模式保证: 任何读过的日期, 都会进表
-#
-# 强制重算: 传 force=True, 跳过 cache, 算完覆盖
-# ---------------------------------------------------------------------------
-
 def save_ma_count(payload: dict) -> None:
-    """把 calc_ma_count 返回的 dict 落盘 (INSERT OR REPLACE by trade_date).
-
-    非交易日拒绝落盘 (历史上有 2026-06-13/14 端午调休脏数据).
-    """
-    import json as _json
     td = _to_date(payload.get("tradeDate") or payload.get("trade_date"))
     if td is None:
         raise ValueError("payload.tradeDate required")
     if not is_trading_day(td):
         logger.debug("save_ma_count skipped non-trading day: %s", td)
         return
-    by_board_json = _json.dumps(payload.get("byBoard") or {}, ensure_ascii=False)
-    con = get_conn()
     breadth_raw = round(0.40 * float(payload.get("pctAdvancing") or 0) + 0.35 * float(payload.get("pctAboveMa20") or 0) + 0.25 * float(payload.get("pctAboveMa60") or 0), 2)
-    con.execute("""
-        INSERT OR REPLACE INTO ma_count_daily
-            (trade_date, total_eligible, above_ma20, above_ma60, above_both,
-             pct_ma20, pct_ma60, pct_both,
-             up_5d_count, up_5d_pct, new_low_60d_count, new_low_60d_pct,
-             new_high_252d_count, new_high_252d_pct,
-             advancing_count, advancing_pct,
-             breadth_raw,
-             by_board_json, elapsed_ms, source, ingested_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?,
-                ?, ?,
-                ?, ?,
-                ?,
-                ?, ?, ?, current_timestamp)
-    """, [
-        td,
-        int(payload.get("totalEligible") or 0),
-        int(payload.get("aboveMa20") or 0),
-        int(payload.get("aboveMa60") or 0),
-        int(payload.get("aboveBoth") or 0),
-        float(payload.get("pctAboveMa20") or 0),
-        float(payload.get("pctAboveMa60") or 0),
-        float(payload.get("pctAboveBoth") or 0),
-        int(payload.get("up5dCount") or 0),
-        float(payload.get("pctUp5d") or 0),
-        int(payload.get("newLow60dCount") or 0),
-        float(payload.get("pctNewLow60d") or 0),
-        int(payload.get("newHigh252dCount") or 0),
-        float(payload.get("pctNewHigh252d") or 0),
-        int(payload.get("advancingCount") or 0),
-        float(payload.get("pctAdvancing") or 0),
-        breadth_raw,
-        by_board_json,
-        int(payload.get("elapsedMs") or 0),
-        str(payload.get("source") or "duckdb.daily_qfq"),
-    ])
+    with session_scope() as db:
+        execute_upsert(db, table="msi_ma_count_daily", key_columns=["trade_date"], values={
+            "trade_date": td,
+            "total_eligible": int(payload.get("totalEligible") or 0),
+            "above_ma20": int(payload.get("aboveMa20") or 0),
+            "above_ma60": int(payload.get("aboveMa60") or 0),
+            "above_both": int(payload.get("aboveBoth") or 0),
+            "pct_ma20": float(payload.get("pctAboveMa20") or 0),
+            "pct_ma60": float(payload.get("pctAboveMa60") or 0),
+            "pct_both": float(payload.get("pctAboveBoth") or 0),
+            "up_5d_count": int(payload.get("up5dCount") or 0),
+            "up_5d_pct": float(payload.get("pctUp5d") or 0),
+            "new_low_60d_count": int(payload.get("newLow60dCount") or 0),
+            "new_low_60d_pct": float(payload.get("pctNewLow60d") or 0),
+            "new_high_252d_count": int(payload.get("newHigh252dCount") or 0),
+            "new_high_252d_pct": float(payload.get("pctNewHigh252d") or 0),
+            "advancing_count": int(payload.get("advancingCount") or 0),
+            "advancing_pct": float(payload.get("pctAdvancing") or 0),
+            "breadth_raw": breadth_raw,
+            "by_board": payload.get("byBoard") or {},
+            "elapsed_ms": int(payload.get("elapsedMs") or 0),
+            "source": str(payload.get("source") or "clickhouse.daily_qfq"),
+            "ingested_at": datetime.now(),
+        })
 
 
-# 列顺序: 必须跟 SELECT 列表保持一致 (v1.5 增 advancing 两列)
 _MA_COUNT_COLS = (
     "trade_date", "total_eligible", "above_ma20", "above_ma60", "above_both",
     "pct_ma20", "pct_ma60", "pct_both",
@@ -656,16 +431,14 @@ _MA_COUNT_COLS = (
     "new_high_252d_count", "new_high_252d_pct",
     "advancing_count", "advancing_pct",
     "breadth_raw",
-    "by_board_json", "elapsed_ms", "source",
+    "by_board", "elapsed_ms", "source",
 )
 _MA_COUNT_SELECT = ", ".join(_MA_COUNT_COLS)
 
 
 def _row_to_ma_payload(row: tuple) -> dict:
-    """duckdb 行 → calc_ma_count 同 shape dict."""
-    import json as _json
     breadth_raw = float(row[16]) if row[16] is not None else None
-    by_board = _json.loads(row[17]) if row[17] else {}          # shifted by +1 (breadth_raw at 16)
+    by_board = row[17] if isinstance(row[17], dict) else (row[17] or {})
     return {
         "tradeDate": row[0].isoformat(),
         "totalEligible": int(row[1]),
@@ -685,85 +458,49 @@ def _row_to_ma_payload(row: tuple) -> dict:
         "pctAdvancing": float(row[15]) if row[15] is not None else 0.0,
         "breadthRaw": breadth_raw,
         "byBoard": by_board,
-        "elapsedMs": int(row[18]) if row[18] is not None else None,   # shifted
-        "source": str(row[19]),                                        # shifted
+        "elapsedMs": int(row[18]) if row[18] is not None else None,
+        "source": str(row[19]),
         "fromCache": True,
     }
 
 
 def get_ma_count(trade_date: date | str) -> dict | None:
-    """按日期查 ma_count_daily. 无记录返 None (不抛)."""
     td = _to_date(trade_date)
     if td is None:
         return None
-    with conn() as con:
-        r = con.execute(f"""
-            SELECT {_MA_COUNT_SELECT}
-              FROM ma_count_daily
-             WHERE trade_date = ?
-        """, [td]).fetchone()
-    return _row_to_ma_payload(r) if r else None
+    with session_scope() as db:
+        row = db.execute(__import__("sqlalchemy").text(f"SELECT {_MA_COUNT_SELECT} FROM cynexus_appl_market.msi_ma_count_daily WHERE trade_date = :td AND deleted_at IS NULL LIMIT 1"), {"td": td}).first()
+    return _row_to_ma_payload(row) if row else None
 
 
 def get_ma_count_history(start: date | str, end: date | str | None = None) -> list[dict]:
-    """区间查 ma_count_daily (按 trade_date ASC). 无 end 查 start 当天 1 条."""
     s = _to_date(start)
     e = _to_date(end) if end is not None else s
     if s is None or e is None:
         return []
-    with conn() as con:
-        rows = con.execute(f"""
-            SELECT {_MA_COUNT_SELECT}
-              FROM ma_count_daily
-             WHERE trade_date BETWEEN ? AND ?
-             ORDER BY trade_date ASC
-        """, [s, e]).fetchall()
+    with session_scope() as db:
+        rows = db.execute(__import__("sqlalchemy").text(f"SELECT {_MA_COUNT_SELECT} FROM cynexus_appl_market.msi_ma_count_daily WHERE trade_date BETWEEN :s AND :e AND deleted_at IS NULL ORDER BY trade_date ASC"), {"s": s, "e": e}).all()
     items = [_row_to_ma_payload(r) for r in rows]
-    enrich_history_scores(
-        items, "ma_count_daily", "new_high_252d_pct", e,
-        score_key="newHigh252dScore",
-    )
-    enrich_history_scores(
-        items, "ma_count_daily", "breadth_raw", e,
-        score_key="breadthScore",
-    )
+    enrich_history_scores(items, "ma_count_daily", "new_high_252d_pct", e, score_key="newHigh252dScore")
+    enrich_history_scores(items, "ma_count_daily", "breadth_raw", e, score_key="breadthScore")
     return items
 
 
-# ---------------------------------------------------------------------------
-# 7. calc_ma_count 改成 cache-aside
-# ---------------------------------------------------------------------------
 def _add_new_high_score(payload: dict, trade_date: date | str) -> None:
-    """给 payload 加 newHigh252dScore (0-100 历史分位) + newHigh252dRawValue."""
     pct = payload.get("pctNewHigh252d")
     if pct is not None:
-        payload["newHigh252dScore"] = percentile_score(
-            "ma_count_daily", "new_high_252d_pct", trade_date, pct,
-        )
+        payload["newHigh252dScore"] = percentile_score("ma_count_daily", "new_high_252d_pct", trade_date, pct)
         payload["newHigh252dRawValue"] = pct
 
 
 def _add_breadth_score(payload: dict, trade_date: date | str) -> None:
-    """给 payload 加 breadthScore (0-100 历史分位) + breadthRawValue."""
     raw = payload.get("breadthRaw")
     if raw is not None:
-        payload["breadthScore"] = percentile_score(
-            "ma_count_daily", "breadth_raw", trade_date, raw,
-        )
+        payload["breadthScore"] = percentile_score("ma_count_daily", "breadth_raw", trade_date, raw)
         payload["breadthRawValue"] = raw
 
 
-def calc_ma_count_cached(
-    trade_date: date | str,
-    *,
-    force: bool = False,
-) -> dict:
-    """cache-aside 版: 优先查 ma_count_daily, 没记录才现算 + 自动落盘.
-
-    Args:
-        trade_date: 目标日
-        force: True 跳过 cache 强制重算 + 覆盖 (维护用, 调算法后)
-    """
+def calc_ma_count_cached(trade_date: date | str, *, force: bool = False) -> dict:
     if not force:
         cached = get_ma_count(trade_date)
         if cached is not None:
@@ -774,257 +511,43 @@ def calc_ma_count_cached(
     try:
         save_ma_count(payload)
     except Exception:
-        # 落盘失败不影响返回 (calc 结果照样可用)
         pass
     _add_new_high_score(payload, trade_date)
     _add_breadth_score(payload, trade_date)
     return payload
 
 
-# ---------------------------------------------------------------------------
-# 8. 批量算 MA 计数 (1 次 SQL 算区间内所有 trade_date, 给 backfill 用)
-# ---------------------------------------------------------------------------
-# 优化: calc_ma_count 单日 SQL 走全表扫 daily_qfq (28M 行 × 5500 只), 250 天回填
-# 需要 250 次独立扫 = 30-60 min. bulk 版把整区间一次性进窗口函数, DuckDB 内部
-# 共享一次扫描, 输出 ~ 250 行 (每 trade_date 1 行), 耗时 ~ 5-10 秒.
-# ---------------------------------------------------------------------------
-
-_BOARD_CASE_SQL = """
-  CASE
-    WHEN w.code LIKE '600%' OR w.code LIKE '601%' OR w.code LIKE '603%' OR w.code LIKE '605%' THEN 'main_sh'
-    WHEN w.code LIKE '688%' OR w.code LIKE '689%' THEN 'star'
-    WHEN w.code LIKE '300%' OR w.code LIKE '301%' THEN 'chinext'
-    WHEN w.code LIKE '000%' OR w.code LIKE '001%' OR w.code LIKE '002%' OR w.code LIKE '003%' THEN 'main_sz'
-    WHEN w.code LIKE '8%' OR w.code LIKE '4%' OR w.code LIKE '920%' THEN 'bse'
-    ELSE 'unknown'
-  END
-"""
-
-_ST_NAME_FILTER_SQL = """
-  AND (u.name IS NULL
-       OR (UPPER(u.name) NOT LIKE 'ST%%'
-           AND UPPER(u.name) NOT LIKE '*ST%%'
-           AND u.name NOT LIKE '%%退%%'))
-"""
-
-
 def bulk_calc_ma_count(start: date, end: date) -> dict[date, dict[str, Any]]:
-    """一次性 SQL 算 [start..end] 区间内所有 trade_date 的 MA 计数 + 板块分布.
-
-    把 calc_ma_count 单日的全部 Python 逻辑下沉到 SQL:
-      1. windowed CTE: 一次性扫 daily_qfq (trade_date <= end), 算 MA20/MA60/5d LAG/60d MIN/252d MAX
-      2. INNER JOIN TEMP TABLE active_codes (来自 stock_meta_repo._codes_json 兜底, 5530 只 A股全集)
-         过滤 universe (跟 calc_ma_count Python 端走 get_stock_meta → _codes.json 兜底对齐)
-      3. LEFT JOIN stock_universe 过滤 is_active=false + ST
-      4. group by trade_date (及 trade_date + board): 算 6 个 count + 板块分布
-
-    Args:
-        start: 区间起点 (含)
-        end: 区间终点 (含)
-
-    Returns:
-        {trade_date: {tradeDate, totalEligible, aboveMa20, aboveMa60, aboveBoth,
-                      pctAboveMa20, pctAboveMa60, pctAboveBoth,
-                      up5dCount, pctUp5d, newLow60dCount, pctNewLow60d,
-                      newHigh252dCount, pctNewHigh252d,
-                      byBoard: {board: {...同字段...}}, elapsedMs, source}}
-    """
-    import time
-    from backend.repositories.market.stock_meta_repo import _codes_json
-
     s = _to_date(start)
     e = _to_date(end)
     assert s is not None and e is not None
     if s > e:
         return {}
-
-    t0 = time.time()
-    con = get_conn()
-
-    # 1. 建 TEMP active_codes 表, 装 _codes.json 的 5530 只 (跟 calc_ma_count 兜底口径一致)
-    #    TEMP TABLE session-scoped, 自动 drop, 不污染 schema
-    codes_json = _codes_json()
-    if not codes_json:
-        # _codes.json 不存在: 降级用 daily_qfq 全部 (会有 ~9000 只, 偏多)
-        active_codes_sql_filter = ""  # 不过滤
-    else:
-        con.execute("""
-            CREATE OR REPLACE TEMP TABLE _bulk_active_codes (code VARCHAR PRIMARY KEY)
-        """)
-        con.executemany(
-            "INSERT INTO _bulk_active_codes VALUES (?)",
-            [(c,) for c in codes_json.keys()],
-        )
-        active_codes_sql_filter = "INNER JOIN _bulk_active_codes a ON w.code = a.code"
-
-    # 2. 总览聚合: 每个 (trade_date, board) 一行
-    rows = con.execute(f"""
-        WITH windowed AS (
-          SELECT code, trade_date, close,
-                 AVG(close) OVER (PARTITION BY code ORDER BY trade_date
-                                  ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS ma20,
-                 AVG(close) OVER (PARTITION BY code ORDER BY trade_date
-                                  ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ma60,
-                 LAG(close, 1)   OVER (PARTITION BY code ORDER BY trade_date) AS close_1d_ago,
-                 LAG(close, 5)   OVER (PARTITION BY code ORDER BY trade_date) AS close_5d_ago,
-                 LAG(close, 59)  OVER (PARTITION BY code ORDER BY trade_date) AS close_59d_ago,
-                 MIN(close)      OVER (PARTITION BY code ORDER BY trade_date
-                                       ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS min_60d,
-                 LAG(close, 251) OVER (PARTITION BY code ORDER BY trade_date) AS close_251d_ago,
-                 MAX(close)      OVER (PARTITION BY code ORDER BY trade_date
-                                       ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS max_252d
-            FROM daily_qfq
-           WHERE trade_date <= ?
-        ),
-        filtered AS (
-          SELECT w.code, w.trade_date, w.close, w.ma20, w.ma60,
-                 w.close_1d_ago,
-                 w.close_5d_ago, w.close_59d_ago, w.min_60d,
-                 w.close_251d_ago, w.max_252d,
-                 {_BOARD_CASE_SQL} AS board
-            FROM windowed w
-            {active_codes_sql_filter}
-            LEFT JOIN stock_universe u ON w.code = u.code
-           WHERE w.ma20 IS NOT NULL AND w.ma60 IS NOT NULL
-             AND (u.is_active IS NULL OR u.is_active = TRUE)
-             {_ST_NAME_FILTER_SQL}
-             AND w.trade_date BETWEEN ? AND ?
-        )
-        SELECT trade_date, board,
-               COUNT(*) AS total,
-               SUM(CASE WHEN close > ma20 THEN 1 ELSE 0 END) AS above_ma20,
-               SUM(CASE WHEN close > ma60 THEN 1 ELSE 0 END) AS above_ma60,
-               SUM(CASE WHEN close > ma20 AND close > ma60 THEN 1 ELSE 0 END) AS above_both,
-               SUM(CASE WHEN close_5d_ago IS NOT NULL AND close > close_5d_ago THEN 1 ELSE 0 END) AS up_5d,
-               SUM(CASE WHEN close_59d_ago IS NOT NULL AND min_60d IS NOT NULL AND close <= min_60d THEN 1 ELSE 0 END) AS new_low_60d,
-               SUM(CASE WHEN close_251d_ago IS NOT NULL AND max_252d IS NOT NULL AND close >= max_252d THEN 1 ELSE 0 END) AS new_high_252d,
-               SUM(CASE WHEN close_1d_ago IS NOT NULL AND close > close_1d_ago THEN 1 ELSE 0 END) AS advancing
-          FROM filtered
-         GROUP BY trade_date, board
-         ORDER BY trade_date ASC, board ASC
-    """, [e, s, e]).fetchall()
-
-    # 聚合 by_board / total: 按 trade_date 合并 7 个 board
-    by_td: dict[date, dict[str, Any]] = {}
-    for (td, board, total, am20, am60, aboth, u5d, nl60d, nh252d, adv) in rows:
-        d = td.date() if hasattr(td, "date") else td
-        slot = by_td.setdefault(d, {
-            "totalEligible": 0,
-            "aboveMa20": 0, "aboveMa60": 0, "aboveBoth": 0,
-            "up5dCount": 0, "newLow60dCount": 0, "newHigh252dCount": 0,
-            "advancing": 0,
-            "byBoard": {},
-        })
-        slot["totalEligible"] += int(total or 0)
-        slot["aboveMa20"] += int(am20 or 0)
-        slot["aboveMa60"] += int(am60 or 0)
-        slot["aboveBoth"] += int(aboth or 0)
-        slot["up5dCount"] += int(u5d or 0)
-        slot["newLow60dCount"] += int(nl60d or 0)
-        slot["newHigh252dCount"] += int(nh252d or 0)
-        slot["advancing"] += int(adv or 0)
-
-        t = int(total or 0)
-        slot["byBoard"][board] = {
-            "total": t,
-            "aboveMa20": int(am20 or 0),
-            "aboveMa60": int(am60 or 0),
-            "aboveBoth": int(aboth or 0),
-            "pctMa20": round(int(am20 or 0) / t * 100, 2) if t > 0 else 0.0,
-            "pctMa60": round(int(am60 or 0) / t * 100, 2) if t > 0 else 0.0,
-            "pctBoth": round(int(aboth or 0) / t * 100, 2) if t > 0 else 0.0,
-            "up5d": int(u5d or 0),
-            "pctUp5d": round(int(u5d or 0) / t * 100, 2) if t > 0 else 0.0,
-            "newLow60d": int(nl60d or 0),
-            "pctNewLow60d": round(int(nl60d or 0) / t * 100, 2) if t > 0 else 0.0,
-            "newHigh252d": int(nh252d or 0),
-            "pctNewHigh252d": round(int(nh252d or 0) / t * 100, 2) if t > 0 else 0.0,
-            "advancing": int(adv or 0),
-            "pctAdvancing": round(int(adv or 0) / t * 100, 2) if t > 0 else 0.0,
-        }
-
-    def pct(num: int, den: int) -> float:
-        return round(num / den * 100, 2) if den > 0 else 0.0
-
-    elapsed_ms = int((time.time() - t0) * 1000)
     out: dict[date, dict[str, Any]] = {}
-    for td, slot in by_td.items():
-        e_total = slot["totalEligible"]
-        out[td] = {
-            "tradeDate": td.isoformat(),
-            "totalEligible": e_total,
-            "aboveMa20": slot["aboveMa20"],
-            "aboveMa60": slot["aboveMa60"],
-            "aboveBoth": slot["aboveBoth"],
-            "pctAboveMa20": pct(slot["aboveMa20"], e_total),
-            "pctAboveMa60": pct(slot["aboveMa60"], e_total),
-            "pctAboveBoth": pct(slot["aboveBoth"], e_total),
-            "up5dCount": slot["up5dCount"],
-            "pctUp5d": pct(slot["up5dCount"], e_total),
-            "newLow60dCount": slot["newLow60dCount"],
-            "pctNewLow60d": pct(slot["newLow60dCount"], e_total),
-            "newHigh252dCount": slot["newHigh252dCount"],
-            "pctNewHigh252d": pct(slot["newHigh252dCount"], e_total),
-            "advancingCount": slot["advancing"],
-            "pctAdvancing": pct(slot["advancing"], e_total),
-            "byBoard": slot["byBoard"],
-            "elapsedMs": elapsed_ms,
-            "source": "duckdb.daily_qfq",
-        }
+    cur = s
+    while cur <= e:
+        payload = calc_ma_count(cur)
+        out[cur] = payload
+        cur = cur.fromordinal(cur.toordinal() + 1)
     return out
 
 
 def bulk_save_ma_count(payloads: dict[date, dict[str, Any]]) -> int:
-    """bulk 落盘: 把 bulk_calc_ma_count 返回的 {trade_date: payload} 一次 INSERT.
-    走 INSERT OR REPLACE by trade_date, 重复日期会被覆盖.
-    """
-    import json as _json
     if not payloads:
         return 0
-    con = get_conn()
     n = 0
     for td, payload in payloads.items():
         if not is_trading_day(td):
             logger.debug("bulk_save_ma_count skipped non-trading day: %s", td)
             continue
-        breadth_raw = round(0.40 * float(payload.get("pctAdvancing") or 0) + 0.35 * float(payload.get("pctAboveMa20") or 0) + 0.25 * float(payload.get("pctAboveMa60") or 0), 2)
-        by_board_json = _json.dumps(payload.get("byBoard") or {}, ensure_ascii=False)
-        con.execute("""
-            INSERT OR REPLACE INTO ma_count_daily
-                (trade_date, total_eligible, above_ma20, above_ma60, above_both,
-                 pct_ma20, pct_ma60, pct_both,
-                 up_5d_count, up_5d_pct, new_low_60d_count, new_low_60d_pct,
-                 new_high_252d_count, new_high_252d_pct,
-                 advancing_count, advancing_pct,
-                 breadth_raw,
-                 by_board_json, elapsed_ms, source, ingested_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?,
-                    ?, ?,
-                    ?, ?,
-                    ?,
-                    ?, ?, ?, current_timestamp)
-        """, [
-            td,
-            int(payload.get("totalEligible") or 0),
-            int(payload.get("aboveMa20") or 0),
-            int(payload.get("aboveMa60") or 0),
-            int(payload.get("aboveBoth") or 0),
-            float(payload.get("pctAboveMa20") or 0),
-            float(payload.get("pctAboveMa60") or 0),
-            float(payload.get("pctAboveBoth") or 0),
-            int(payload.get("up5dCount") or 0),
-            float(payload.get("pctUp5d") or 0),
-            int(payload.get("newLow60dCount") or 0),
-            float(payload.get("pctNewLow60d") or 0),
-            int(payload.get("newHigh252dCount") or 0),
-            float(payload.get("pctNewHigh252d") or 0),
-            int(payload.get("advancingCount") or 0),
-            float(payload.get("pctAdvancing") or 0),
-            breadth_raw,
-            by_board_json,
-            int(payload.get("elapsedMs") or 0),
-            str(payload.get("source") or "duckdb.daily_qfq"),
-        ])
+        save_ma_count(payload)
         n += 1
     return n
+
+
+if __name__ == "__main__":
+    import json as _json
+    print("=== MA5/10/20 for 000001 last 5 ===")
+    print(_json.dumps(calc_ma("000001", windows=[5, 10, 20], limit=5), indent=2, ensure_ascii=False))
+    print("\n=== ma_codes for 000001 on 2026-06-15 ===")
+    print(_json.dumps(calc_ma_codes("000001", "2026-06-15"), indent=2, ensure_ascii=False))

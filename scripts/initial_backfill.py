@@ -1,4 +1,4 @@
-"""One-shot backfill: parse every TDX .day file under hsjday/ into daily_raw.
+"""One-shot backfill: parse every TDX .day file under hsjday/ into ClickHouse daily_raw.
 
 Strategy
 --------
@@ -7,12 +7,9 @@ Strategy
    ``unit_scale = 1`` (the spec default); scale anomalies are surfaced via
    a separate validation step (see ``validate_daily_raw.py``) so we don't
    pay for an API round-trip per stock during the bulk load.
-3. Bulk-insert into ``daily_raw`` via DuckDB's ``register()`` + ``INSERT ...
-   SELECT`` (NOT ``executemany`` which is ~500× slower for bulk loads).
-   Rows are accumulated into a list of DataFrames and flushed every
-   ``BATCH_FILES`` files (default 200 ≈ 1.4M rows / batch).
-4. Update ``ingest_state`` after each file so we can resume from the last
-   successful file.
+3. Bulk-insert into ClickHouse ``daily_raw`` in batches.
+4. Append ``ingest_state`` rows so we can resume from the latest successful
+   state for each code.
 
 Speed
 -----
@@ -24,7 +21,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 # Make sibling scripts/ + backend/ importable.
@@ -36,50 +33,91 @@ import pandas as pd  # noqa: E402
 from tdx_downloader import iter_day_files, DayFile  # noqa: E402
 from tdx_parser import parse_day_file  # noqa: E402
 
-from backend.adapters.market.duckdb_store import conn, init_schema  # noqa: E402
+from backend.adapters.market.clickhouse_store import command, insert, query_rows  # noqa: E402
 
 BATCH_FILES = 200      # files per flush (≈ 1.4M rows / batch on avg)
 PROGRESS_EVERY = 50    # files between progress logs
 
 
-def _flush(c, dfs: list[pd.DataFrame]) -> int:
-    """register+INSERT all queued DataFrames in one call. Returns total rows."""
+def _quote_ch_strings(values: list[str]) -> str:
+    return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+
+
+def _flush(dfs: list[pd.DataFrame]) -> int:
+    """Insert all queued DataFrames into ClickHouse daily_raw. Returns total rows."""
     if not dfs:
         return 0
     big = pd.concat(dfs, ignore_index=True)
-    c.register("_staging", big)
-    n = len(big)
-    c.execute(
-        "INSERT OR IGNORE INTO daily_raw "
-        "(code, trade_date, open, high, low, close, "
-        " volume, amount, unit_scale, source, ingested_at) "
-        "SELECT code, trade_date, open, high, low, close, "
-        "       volume, amount, unit_scale, source, current_timestamp "
-        "FROM _staging"
+    if big.empty:
+        return 0
+
+    codes = sorted(str(c) for c in big["code"].dropna().unique())
+    min_date = big["trade_date"].min()
+    max_date = big["trade_date"].max()
+    if codes:
+        command(
+            "ALTER TABLE daily_raw DELETE "
+            f"WHERE code IN ({_quote_ch_strings(codes)}) "
+            f"AND trade_date BETWEEN toDate('{min_date}') AND toDate('{max_date}')",
+            settings={"mutations_sync": 1},
+        )
+
+    now = datetime.now()
+    rows = [
+        (
+            str(r.code),
+            r.trade_date,
+            float(r.open),
+            float(r.high),
+            float(r.low),
+            float(r.close),
+            int(r.volume),
+            float(r.amount),
+            int(r.unit_scale),
+            str(r.source),
+            now,
+        )
+        for r in big.itertuples(index=False)
+    ]
+    insert(
+        "daily_raw",
+        rows,
+        ["code", "trade_date", "open", "high", "low", "close", "volume", "amount", "unit_scale", "source", "ingested_at"],
     )
-    c.unregister("_staging")
-    return n
+    return len(rows)
 
 
-def _update_state(c, code: str, day_file: DayFile,
+def _update_state(code: str, day_file: DayFile,
                   last_trade_date: date | None, unit_scale: int,
                   status: str, rows_inserted: int) -> None:
-    c.execute(
-        """
-        INSERT INTO ingest_state(code, day_file_path, processed_bytes,
-                                 last_trade_date, last_unit_scale, last_run_at, last_status)
-        VALUES (?, ?, ?, ?, ?, current_timestamp, ?)
-        ON CONFLICT(code) DO UPDATE SET
-            day_file_path    = excluded.day_file_path,
-            processed_bytes  = excluded.processed_bytes,
-            last_trade_date  = excluded.last_trade_date,
-            last_unit_scale  = excluded.last_unit_scale,
-            last_run_at      = excluded.last_run_at,
-            last_status      = excluded.last_status
-        """,
-        (code, str(day_file.path), day_file.size, last_trade_date,
-         unit_scale, f"{status}|rows={rows_inserted}"),
+    insert(
+        "ingest_state",
+        [(
+            code,
+            str(day_file.path),
+            int(day_file.size),
+            last_trade_date,
+            int(unit_scale),
+            datetime.now(),
+            f"{status}|rows={rows_inserted}",
+        )],
+        ["code", "day_file_path", "processed_bytes", "last_trade_date", "last_unit_scale", "last_run_at", "last_status"],
     )
+
+
+def _done_codes() -> set[str]:
+    rows = query_rows(
+        """
+        SELECT code
+          FROM (
+                SELECT code, argMax(last_status, last_run_at) AS last_status
+                  FROM ingest_state
+                 GROUP BY code
+               )
+         WHERE startsWith(last_status, 'ok')
+        """
+    )
+    return {str(r[0]) for r in rows}
 
 
 def backfill(limit: int | None = None,
@@ -94,13 +132,9 @@ def backfill(limit: int | None = None,
         unit_scale:   forced unit_scale for all files in this pass (1 = spec).
         resume:       if True, skip files already marked 'ok' in ingest_state.
     """
-    init_schema()
     all_files = list(iter_day_files(markets=markets))
     if resume:
-        with conn() as c:
-            done = {r[0] for r in c.execute(
-                "SELECT code FROM ingest_state WHERE last_status LIKE 'ok%'"
-            ).fetchall()}
+        done = _done_codes()
         before = len(all_files)
         all_files = [f for f in all_files if f.code not in done]
         skipped = before - len(all_files)
@@ -114,52 +148,51 @@ def backfill(limit: int | None = None,
     bad_files = 0
     pending: list[pd.DataFrame] = []
 
-    with conn() as c:
-        for i, df in enumerate(all_files, start=1):
-            try:
-                result = parse_day_file(df.path, api_close=None)
-                # Force unit_scale if requested (overrides auto-detect).
-                if unit_scale != result.unit_scale:
-                    ratio = unit_scale / result.unit_scale
-                    for col in ('open', 'high', 'low', 'close'):
-                        result.df[col] = result.df[col] * ratio
-                    result.df['unit_scale'] = unit_scale
-                    result.unit_scale = unit_scale
+    for i, df in enumerate(all_files, start=1):
+        try:
+            result = parse_day_file(df.path, api_close=None)
+            # Force unit_scale if requested (overrides auto-detect).
+            if unit_scale != result.unit_scale:
+                ratio = unit_scale / result.unit_scale
+                for col in ('open', 'high', 'low', 'close'):
+                    result.df[col] = result.df[col] * ratio
+                result.df['unit_scale'] = unit_scale
+                result.unit_scale = unit_scale
 
-                pending.append(result.df[['code', 'trade_date', 'open', 'high',
-                                           'low', 'close', 'volume', 'amount',
-                                           'unit_scale', 'source']])
-                last_td = result.df['trade_date'].iloc[-1] if len(result.df) else None
+            pending.append(result.df[['code', 'trade_date', 'open', 'high',
+                                      'low', 'close', 'volume', 'amount',
+                                      'unit_scale', 'source']])
+            last_td = result.df['trade_date'].iloc[-1] if len(result.df) else None
 
-                if len(pending) >= BATCH_FILES:
-                    inserted_rows += _flush(c, pending)
-                    pending.clear()
+            if len(pending) >= BATCH_FILES:
+                inserted_rows += _flush(pending)
+                pending.clear()
 
-                _update_state(c, df.code, df, last_td, result.unit_scale,
-                              'ok', len(result.df))
+            _update_state(df.code, df, last_td, result.unit_scale,
+                          'ok', len(result.df))
 
-            except Exception as exc:
-                bad_files += 1
-                _update_state(c, df.code, df, None, unit_scale,
-                              f'parse_error: {type(exc).__name__}', 0)
-                if bad_files <= 5:
-                    print(f"  ! {df.filename}: {type(exc).__name__}: {exc}",
-                          flush=True)
+        except Exception as exc:
+            bad_files += 1
+            _update_state(df.code, df, None, unit_scale,
+                          f'parse_error: {type(exc).__name__}', 0)
+            if bad_files <= 5:
+                print(f"  ! {df.filename}: {type(exc).__name__}: {exc}",
+                      flush=True)
 
-            if i % PROGRESS_EVERY == 0 or i == len(all_files):
-                elapsed = time.time() - t0
-                rate = i / elapsed if elapsed else 0
-                eta = (len(all_files) - i) / rate if rate else 0
-                print(
-                    f"  [{i:>6d}/{len(all_files)}]  {rate:>6.1f} files/s"
-                    f"  rows={inserted_rows:>10,d}  bad={bad_files}"
-                    f"  ETA {eta:>5.0f}s",
-                    flush=True,
-                )
+        if i % PROGRESS_EVERY == 0 or i == len(all_files):
+            elapsed = time.time() - t0
+            rate = i / elapsed if elapsed else 0
+            eta = (len(all_files) - i) / rate if rate else 0
+            print(
+                f"  [{i:>6d}/{len(all_files)}]  {rate:>6.1f} files/s"
+                f"  rows={inserted_rows:>10,d}  bad={bad_files}"
+                f"  ETA {eta:>5.0f}s",
+                flush=True,
+            )
 
-        # Flush remainder.
-        if pending:
-            inserted_rows += _flush(c, pending)
+    # Flush remainder.
+    if pending:
+        inserted_rows += _flush(pending)
 
     elapsed = time.time() - t0
     print()
@@ -169,7 +202,7 @@ def backfill(limit: int | None = None,
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI 入口, 接受 argv 给 in-process 调用方 (避免 subprocess 撞 duckdb 锁)."""
+    """CLI 入口, 接受 argv 给 in-process 调用方."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None,
                     help="Process only first N files (smoke test).")

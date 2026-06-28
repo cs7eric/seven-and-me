@@ -1,26 +1,4 @@
-r"""板块扩散 (Market Pulse · Sector Breadth) 仓储.
-
-维护前请先看:
-`F:\dev-repo\mp4-to-word-new\design\backend\industry-concept-fund-flow-postgres-migration.md`
-
-公式 (跟 schema.sql §19 一致):
-  advancing = count(industry where change_pct > 0)
-  declining = count(industry where change_pct < 0)
-  flat      = count(industry where change_pct = 0)
-  total     = count(*)  (90 行业全量, 当前 91 含重复)
-  advance_pct = advancing / total
-
-数据源: Postgres `app.sector_fund_flow_daily_snapshots` 的 alive 快照
-计算: 先从 Postgres 读指定交易日的行业涨跌分布, 再把结果落到 DuckDB 的
-`market_pulse_sector_breadth_daily` 供 MSI 现有链路复用.
-
-写入路径 (2 处, INSERT OR REPLACE 幂等):
-  1. ths_industry_fund_flow_daily_scheduler._job_run_backfill() 末尾
-     (工作日 17:15 同 ths 一起, 不需要额外 cron)
-  2. scripts/backfill_sector_breadth.py (一次性回填所有历史日)
-
-用途: market-pulse 页面 "板块扩散" card / 跨日 advance_pct 趋势.
-"""
+"""板块扩散 (Sector Breadth) 仓储 — PostgreSQL source/target."""
 from __future__ import annotations
 
 import logging
@@ -28,170 +6,93 @@ import time
 from datetime import date
 from typing import Any
 
-from backend.adapters.market.duckdb_store import get_conn
-from backend.config.database import get_db_session
-from backend.repositories.market.ths_industry_fund_flow_repo import ThsIndustryFundFlowRepository
+from backend.config.database import session_scope
+from backend.repositories.market.market_pg_cynexus_repo import execute_upsert, to_date
 
 logger = logging.getLogger(__name__)
 
 
 def _to_date(v: date | str | None) -> date | None:
-    if v is None or isinstance(v, date):
-        return v
-    return date.fromisoformat(v)
+    return to_date(v)
 
 
-# ---------------------------------------------------------------------------
-# 1. 核心: 1 日 1 行, SQL 聚合自 ths_industry_fund_flow_daily
-# ---------------------------------------------------------------------------
 def upsert_sector_breadth(trade_date: date | str) -> int:
-    """计算指定交易日的板块扩散并 upsert.
-
-    Returns:
-        写入行数 (0 表示该日 ths_industry_fund_flow_daily 无数据, 跳过)
-    """
     td = _to_date(trade_date)
     if td is None:
         return 0
     t0 = time.time()
-    db = get_db_session()
-    try:
-        source = ThsIndustryFundFlowRepository(db).get_sector_breadth_input(td)
-    finally:
-        db.close()
-    if source is None:
+    with session_scope() as db:
+        rows = db.execute(__import__("sqlalchemy").text("""
+            SELECT COUNT(*) FILTER (WHERE change_pct > 0) AS advancing,
+                   COUNT(*) FILTER (WHERE change_pct < 0) AS declining,
+                   COUNT(*) FILTER (WHERE change_pct = 0) AS flat,
+                   COUNT(*) AS total
+              FROM cynexus_appl_market.mkt_ths_industry_fund_flow_daily
+             WHERE trade_date = :td AND deleted_at IS NULL
+        """), {"td": td}).first()
+    if not rows or rows[3] is None:
         return 0
-
-    advancing = int(source["advancing"])
-    declining = int(source["declining"])
-    flat = int(source["flat"])
-    total = int(source["total"])
-    # advance_pct: 0-1, 4 位小数 (前端显示 *100 转 %)
-    advance_pct = round(advancing / total, 4) if total > 0 else 0.0
-    elapsed_ms = int((time.time() - t0) * 1000)
-
-    con = get_conn()
-    con.execute(
-        """
-        INSERT OR REPLACE INTO market_pulse_sector_breadth_daily
-            (trade_date, advancing, declining, flat, total,
-             advance_pct, source, elapsed_ms, ingested_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
-        """,
-        [td, advancing, declining, flat, total,
-         advance_pct, "app.sector_fund_flow_daily_snapshots", elapsed_ms],
-    )
+    advancing, declining, flat, total = int(rows[0] or 0), int(rows[1] or 0), int(rows[2] or 0), int(rows[3] or 0)
+    if total <= 0:
+        return 0
+    advance_pct = round(advancing / total, 4)
+    with session_scope() as db:
+        execute_upsert(db, table="msi_sector_breadth_daily", key_columns=["trade_date"], values={
+            "trade_date": td,
+            "advancing": advancing,
+            "declining": declining,
+            "flat": flat,
+            "total": total,
+            "advance_pct": advance_pct,
+            "source": "postgres.mkt_ths_industry_fund_flow_daily",
+            "elapsed_ms": int((time.time() - t0) * 1000),
+            "ingested_at": __import__("datetime").datetime.now(),
+        })
     return 1
 
 
-# ---------------------------------------------------------------------------
-# 2. 读 API
-# ---------------------------------------------------------------------------
-_COLS = (
-    "trade_date", "advancing", "declining", "flat", "total",
-    "advance_pct", "source", "elapsed_ms",
-)
+_COLS = ("trade_date", "advancing", "declining", "flat", "total", "advance_pct", "source", "elapsed_ms")
 _COL_SELECT = ", ".join(_COLS)
 
 
 def _row_to_payload(row: tuple) -> dict[str, Any]:
     advance_pct = float(row[5]) if row[5] is not None else 0.0
-    return {
-        "tradeDate": row[0].isoformat(),
-        "advancing": int(row[1]) if row[1] is not None else 0,
-        "declining": int(row[2]) if row[2] is not None else 0,
-        "flat": int(row[3]) if row[3] is not None else 0,
-        "total": int(row[4]) if row[4] is not None else 0,
-        "advancePct": advance_pct,
-        # score: 板块扩散天然百分比 → ×100 直接得 0-100 情绪得分
-        # (上涨行业占比 0~1, 跟 ma_count 上涨占比同口径, 不需要百分位)
-        "score": round(advance_pct * 100, 2),
-        "source": str(row[6]) if row[6] is not None else None,
-        "elapsedMs": int(row[7]) if row[7] is not None else None,
-        "fromCache": True,
-    }
+    return {"tradeDate": row[0].isoformat(), "advancing": int(row[1]) if row[1] is not None else 0, "declining": int(row[2]) if row[2] is not None else 0, "flat": int(row[3]) if row[3] is not None else 0, "total": int(row[4]) if row[4] is not None else 0, "advancePct": advance_pct, "score": round(advance_pct * 100, 2), "source": str(row[6]) if row[6] is not None else None, "elapsedMs": int(row[7]) if row[7] is not None else None, "fromCache": True}
 
 
 def get_sector_breadth(trade_date: date | str) -> dict | None:
-    """按日期查 market_pulse_sector_breadth_daily. 无记录返 None (不抛)."""
     td = _to_date(trade_date)
     if td is None:
         return None
-    con = get_conn()
-    r = con.execute(
-        f"SELECT {_COL_SELECT} FROM market_pulse_sector_breadth_daily "
-        f"WHERE trade_date = ?",
-        [td],
-    ).fetchone()
-    return _row_to_payload(r) if r else None
+    with session_scope() as db:
+        row = db.execute(__import__("sqlalchemy").text(f"SELECT {_COL_SELECT} FROM cynexus_appl_market.msi_sector_breadth_daily WHERE trade_date = :td AND deleted_at IS NULL LIMIT 1"), {"td": td}).first()
+    return _row_to_payload(row) if row else None
 
 
-def get_sector_breadth_history(
-    start: date | str,
-    end: date | str | None = None,
-    limit: int = 60,
-) -> list[dict[str, Any]]:
-    """区间查 (按 trade_date ASC). 跨日趋势图用."""
+def get_sector_breadth_history(start: date | str, end: date | str | None = None, limit: int = 60) -> list[dict[str, Any]]:
     s = _to_date(start)
     e = _to_date(end) if end is not None else s
     if s is None or e is None:
         return []
     limit = max(1, min(limit, 365))
-    con = get_conn()
-    rows = con.execute(
-        f"SELECT {_COL_SELECT} FROM market_pulse_sector_breadth_daily "
-        f"WHERE trade_date BETWEEN ? AND ? "
-        f"ORDER BY trade_date DESC LIMIT ?",
-        [s, e, limit],
-    ).fetchall()
+    with session_scope() as db:
+        rows = db.execute(__import__("sqlalchemy").text(f"SELECT {_COL_SELECT} FROM cynexus_appl_market.msi_sector_breadth_daily WHERE trade_date BETWEEN :s AND :e AND deleted_at IS NULL ORDER BY trade_date DESC LIMIT :limit"), {"s": s, "e": e, "limit": limit}).all()
     return [_row_to_payload(r) for r in reversed(rows)]
 
 
 def coverage() -> dict[str, Any]:
-    """覆盖度: first / last / 总行数."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
-        "FROM market_pulse_sector_breadth_daily"
-    ).fetchone()
-    return {
-        "firstDate": r[0].isoformat() if r[0] else None,
-        "lastDate": r[1].isoformat() if r[1] else None,
-        "rowCount": int(r[2]) if r[2] else 0,
-    }
+    with session_scope() as db:
+        row = db.execute(__import__("sqlalchemy").text("SELECT MIN(trade_date), MAX(trade_date), COUNT(*) FROM cynexus_appl_market.msi_sector_breadth_daily WHERE deleted_at IS NULL")).one()
+    return {"firstDate": row[0].isoformat() if row[0] else None, "lastDate": row[1].isoformat() if row[1] else None, "rowCount": int(row[2]) if row[2] else 0}
 
 
-def calc_sector_breadth_cached(
-    trade_date: date | str,
-    *,
-    force: bool = False,
-) -> dict | None:
-    """cache-aside 版: 优先查 market_pulse_sector_breadth_daily, 没记录才现算 + 自动落盘.
-
-    Returns: {ok, tradeDate, advancing, declining, flat, total, advancePct, source, ...}
-             返回 None 表示 ths_industry_fund_flow_daily 也没数据 (不是交易日)
-    """
+def calc_sector_breadth_cached(trade_date: date | str, *, force: bool = False) -> dict | None:
     if not force:
         cached = get_sector_breadth(trade_date)
         if cached is not None:
             return {"ok": True, **cached}
-    # 现算 + 自动落盘
     n = upsert_sector_breadth(trade_date)
     if n == 0:
         return None
     payload = get_sector_breadth(trade_date)
     return {"ok": True, **(payload or {})}
-
-
-# ---------------------------------------------------------------------------
-# smoke
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    import json as _json
-    print("=== coverage ===")
-    print(_json.dumps(coverage(), indent=2, ensure_ascii=False))
-    print("\n=== upsert smoke ===")
-    n = upsert_sector_breadth("2026-06-16")
-    print(f"upserted {n} row(s)")
-    print("\n=== get_sector_breadth(2026-06-16) ===")
-    print(_json.dumps(get_sector_breadth("2026-06-16"), indent=2, ensure_ascii=False))

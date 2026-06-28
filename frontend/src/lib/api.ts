@@ -15,51 +15,65 @@ import type {
   IndustryCompareResponse,
   IndustryFundFlowIndustryListResponse,
 } from "@/views/stock-overview/market-pulse/lib/types";
+import { fetchWithRetry } from "@/services/common/http";
 
 const API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_BASE) || "";
 const DOWNLOADER_API_BASE = (typeof import.meta !== "undefined" && import.meta.env?.VITE_DOWNLOADER_API_BASE) || "https://downloader-api.bhwa233.com";
 
-// ---------------------------------------------------------------------------
-// 请求重试: 失败时最多重试 3 次 (1 初始 + 3 重试 = 4 次总尝试, 指数退避).
-// 触发重试: 网络异常 (fetch 抛错) / 5xx / 408 / 429. 其它 4xx 不重试.
-// AI 分析相关 request 请走 `fetchWithRetry(url, init, { retry: false })`.
-// ---------------------------------------------------------------------------
-const RETRY_MAX_RETRIES = 3
-const RETRY_BASE_DELAY_MS = 400
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function isRetryableStatus(status: number): boolean {
-  return status >= 500 || status === 408 || status === 429
-}
-
-export async function fetchWithRetry(
-  input: RequestInfo | URL,
-  init?: RequestInit,
-  options: { retry?: boolean; maxRetries?: number; baseDelayMs?: number } = {},
-): Promise<Response> {
-  const { retry = true, maxRetries = RETRY_MAX_RETRIES, baseDelayMs = RETRY_BASE_DELAY_MS } = options
-  const maxAttempts = retry ? maxRetries + 1 : 1
-  let lastError: unknown = null
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const res = await fetch(input, init)
-      if (!isRetryableStatus(res.status) || attempt === maxAttempts) {
-        return res
-      }
-    } catch (err) {
-      lastError = err
-      if (attempt === maxAttempts) throw err
-    }
-    // 指数退避: 400ms, 800ms, 1600ms
-    await sleep(baseDelayMs * Math.pow(2, attempt - 1))
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("fetch failed")
-}
+export { fetchWithRetry } from "@/services/common/http";
+export { SERVICE_PREFIX } from "@/services/common/service-prefix";
+export type {
+  AiBindingItem,
+  AiCapability,
+  AiProviderItem,
+  AiProviderType,
+} from "@/services/ai/provider";
+export {
+  createAiProvider,
+  deleteAiProvider,
+  fetchAiBindings,
+  fetchAiCapabilities,
+  fetchAiProviderTypes,
+  fetchAiProviders,
+  updateAiProvider,
+  upsertAiBinding,
+} from "@/services/ai/provider";
+export type {
+  SelfSelectedGroup,
+  SelfSelectedGroupActionResponse,
+  SelfSelectedGroupListResponse,
+  SelfSelectedItem,
+  SelfSelectedItemActionResponse,
+  SelfSelectedItemListResponse,
+} from "@/services/market/self-selected";
+export {
+  createSelfSelectedGroup,
+  createSelfSelectedItem,
+  deleteSelfSelectedGroup,
+  deleteSelfSelectedItem,
+  fetchSelfSelectedGroups,
+  fetchSelfSelectedItems,
+  updateSelfSelectedGroup,
+  updateSelfSelectedItem,
+} from "@/services/market/self-selected";
+export type {
+  SchedulerCategory,
+  SchedulerDailyStatItem,
+  SchedulerJobHistoryItem,
+  SchedulerJobItem,
+} from "@/services/scheduler/management";
+export {
+  deleteSchedulerJob,
+  disableSchedulerJob,
+  enableSchedulerJob,
+  fetchSchedulerCategories,
+  fetchSchedulerDailyStats,
+  fetchSchedulerJobHistory,
+  fetchSchedulerJobs,
+  startSchedulerJob,
+  stopSchedulerJob,
+  triggerSchedulerJob,
+} from "@/services/scheduler/management";
 
 export type { MP4HistoryListItem, MP4HistoryRecord } from "./history-types";
 
@@ -3725,132 +3739,6 @@ export async function triggerMarketPulseSnapshot(): Promise<Record<string, unkno
   return data
 }
 
-// AI Provider API docs:
-//   design/frontend/ai-provider.md
-// Keep that document in sync when changing these types or request helpers.
-
-export interface AiCapability {
-  code: string
-  label: string
-}
-
-export interface AiProviderType {
-  code: string
-  label: string
-  default_base_url: string
-  default_model: string
-  api_key_env: string
-  group_id_env: string
-}
-
-export interface AiProviderItem {
-  id: string
-  code: string
-  name: string
-  provider_type: string
-  base_url: string
-  default_model: string
-  models: string[]
-  api_key?: string
-  api_key_masked: string
-  api_key_env: string
-  group_id: string
-  group_id_env: string
-  is_enabled: boolean
-  timeout_seconds: number | null
-  extra: Record<string, unknown>
-  remark: string
-  created_at?: string | null
-  updated_at?: string | null
-}
-
-export interface AiBindingItem {
-  id: string
-  capability: string
-  label: string
-  provider_id: string
-  provider: AiProviderItem | null
-  model_override: string
-  is_enabled: boolean
-  params: Record<string, unknown>
-  remark: string
-}
-
-export async function fetchAiCapabilities(): Promise<AiCapability[]> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/capabilities`, { cache: "no-store" })
-  const data = (await res.json().catch(() => null)) as { items?: AiCapability[] } | null
-  if (!res.ok || !data) throw new Error("获取 AI 能力列表失败")
-  return data.items || []
-}
-
-export async function fetchAiProviderTypes(): Promise<AiProviderType[]> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/provider-types`, { cache: "no-store" })
-  const data = (await res.json().catch(() => null)) as { items?: AiProviderType[] } | null
-  if (!res.ok || !data) throw new Error("获取 AI Provider 类型失败")
-  return data.items || []
-}
-
-export async function fetchAiProviders(): Promise<AiProviderItem[]> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers`, { cache: "no-store" })
-  const data = (await res.json().catch(() => null)) as { items?: AiProviderItem[] } | null
-  if (!res.ok || !data) throw new Error("获取 AI Provider 失败")
-  return data.items || []
-}
-
-export async function createAiProvider(payload: Partial<AiProviderItem>): Promise<AiProviderItem> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-  const data = (await res.json().catch(() => null)) as AiProviderItem | { error?: string } | null
-  if (!res.ok || !data || !("id" in data)) {
-    throw new Error((data && "error" in data && data.error) || "创建 AI Provider 失败")
-  }
-  return data
-}
-
-export async function updateAiProvider(id: string, payload: Partial<AiProviderItem>): Promise<AiProviderItem> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-  const data = (await res.json().catch(() => null)) as AiProviderItem | { error?: string } | null
-  if (!res.ok || !data || !("id" in data)) {
-    throw new Error((data && "error" in data && data.error) || "更新 AI Provider 失败")
-  }
-  return data
-}
-
-export async function deleteAiProvider(id: string): Promise<void> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/providers/${id}`, { method: "DELETE" })
-  if (!res.ok) {
-    const data = (await res.json().catch(() => null)) as { error?: string } | null
-    throw new Error(data?.error || "删除 AI Provider 失败")
-  }
-}
-
-export async function fetchAiBindings(): Promise<AiBindingItem[]> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/bindings`, { cache: "no-store" })
-  const data = (await res.json().catch(() => null)) as { items?: AiBindingItem[] } | null
-  if (!res.ok || !data) throw new Error("获取 AI 绑定失败")
-  return data.items || []
-}
-
-export async function upsertAiBinding(payload: Partial<AiBindingItem>): Promise<AiBindingItem> {
-  const res = await fetchWithRetry(`${API_BASE}/api/ai/bindings`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-  const data = (await res.json().catch(() => null)) as AiBindingItem | { error?: string } | null
-  if (!res.ok || !data || !("id" in data)) {
-    throw new Error((data && "error" in data && data.error) || "保存 AI 绑定失败")
-  }
-  return data
-}
-
 export async function askQuestion(
   taskId: string,
   question: string
@@ -4026,373 +3914,6 @@ export async function listApplicationAnalysisRecent30Full(
     `${API_BASE}/api/stock-chart/application-analysis/recent30/${encodeURIComponent(targetId)}/full?limit=${encodeURIComponent(String(limit))}`,
   )
   return (await res.json()) as ApplicationAnalysisRecent30FullResponse
-}
-
-// ---------------------------------------------------------------------------
-// Scheduler Management（/settings/scheduler 页面用）
-// ---------------------------------------------------------------------------
-
-export interface SchedulerJobItem {
-  id: string
-  name: string
-  description?: string
-  config_file?: string
-  service_module?: string
-  service_class?: string
-  registered_at?: string
-  /** 后端按 JOB_CATEGORY_MAP 注入: job 属于的所有 category id (numeric, BIGSERIAL). 多对多, 已按 sort_order 排好. */
-  categories?: number[]
-  /** 每个 category 中该 job 的排序权重 (key: category_id, value: sort_order). 前端用于按执行顺序排列. */
-  categorySortOrders?: Record<number, number>
-  supports_enable: boolean
-  enabled: boolean
-  config_enabled: boolean
-  config: Record<string, unknown>
-  live: Record<string, unknown>
-  /** 后端归一化的"上次运行"摘要, 前端只读这六个字段, 不用管各 scheduler 异构字段名. */
-  last_run?: {
-    last_run_at: string | null
-    last_status: string | null
-    last_targets_processed: number | null
-    last_duration_seconds: number | null
-    last_error: string | null
-    total_runs: number | null
-  }
-}
-
-export interface SchedulerJobsResponse {
-  ok: boolean
-  items: SchedulerJobItem[]
-  count: number
-  error?: string
-}
-
-// ---------------------------------------------------------------------------
-// Scheduler categories (从后端 /api/scheduler/categories 拉, 给 tab 用)
-// ---------------------------------------------------------------------------
-
-export interface SchedulerCategory {
-  id: number
-  label: string
-  /** lucide 图标名, 前端 ICON_MAP 映射到组件 */
-  icon_hint: string
-  sort_order: number
-  description?: string
-  /** 该 category 下的 job 数 */
-  count: number
-}
-
-export interface SchedulerCategoriesResponse {
-  ok: boolean
-  items: SchedulerCategory[]
-  count: number
-  error?: string
-}
-
-// ---------------------------------------------------------------------------
-// Scheduler daily run statistics
-// ---------------------------------------------------------------------------
-
-export interface SchedulerDailyStatItem {
-  date: string
-  total: number
-  success: number
-  failed: number
-  skipped: number
-}
-
-export interface SchedulerDailyStatsSummary {
-  total: number
-  failed: number
-  success_rate: number
-}
-
-export interface SchedulerDailyStatsResponse {
-  ok: boolean
-  items: SchedulerDailyStatItem[]
-  summary: SchedulerDailyStatsSummary
-  error?: string
-}
-
-export async function fetchSchedulerDailyStats(days = 14): Promise<SchedulerDailyStatsResponse> {
-  const res = await fetchWithRetry(
-    `${API_BASE}/api/scheduler/stats/daily?days=${encodeURIComponent(String(days))}`,
-    { cache: "no-store" },
-  )
-  const data = (await res.json().catch(() => null)) as SchedulerDailyStatsResponse | null
-  if (!res.ok || !data) throw new Error("获取调度任务日统计失败")
-  return data
-}
-
-export async function fetchSchedulerCategories(): Promise<SchedulerCategoriesResponse> {
-  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/categories`, { cache: "no-store" })
-  const data = (await res.json().catch(() => null)) as SchedulerCategoriesResponse | null
-  if (!res.ok || !data) throw new Error("获取调度任务分类失败")
-  return data
-}
-
-export async function fetchSchedulerJobs(): Promise<SchedulerJobsResponse> {
-  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/jobs`, { cache: "no-store" })
-  const data = (await res.json().catch(() => null)) as SchedulerJobsResponse | null
-  if (!res.ok || !data) throw new Error("获取调度任务列表失败")
-  return data
-}
-
-export interface SchedulerJobActionResponse {
-  ok: boolean
-  job_id?: string
-  enabled?: boolean
-  status?: Record<string, unknown>
-  result?: Record<string, unknown> | { ok: boolean; items?: unknown[]; count?: number; error?: string }
-  config?: Record<string, unknown>
-  error?: string
-}
-
-/** 单条 job run history (来自 /api/scheduler/jobs/<id>/history). */
-export interface SchedulerJobHistoryItem {
-  id?: string
-  start_at: string
-  end_at: string
-  /** 触发方式: "auto" = cron 自动 / "manual" = 手动点"立即触发" */
-  trigger_type: "auto" | "manual" | string
-  /** 运行结果: success / failed / skipped / running / processing */
-  status: "success" | "failed" | "skipped" | "running" | "processing" | string
-  /** 失败时的错误信息 (成功时为 null) */
-  error: string | null
-  /** 成功时的详情信息 (如 "ok, parsed 12236 files → daily_raw"), 失败时为 null */
-  message?: string | null
-  /** 耗时 (秒) */
-  duration_seconds: number | null
-  /** application_analysis 专用: 本次触发的标的数 / 成功数 */
-  target_count?: number
-  succeeded?: number
-}
-
-export interface SchedulerJobHistoryResponse {
-  ok: boolean
-  job_id?: string
-  items: SchedulerJobHistoryItem[]
-  count: number
-  error?: string
-}
-
-export async function fetchSchedulerJobHistory(
-  jobId: string,
-  limit = 50,
-): Promise<SchedulerJobHistoryResponse> {
-  const res = await fetchWithRetry(
-    `${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}/history?limit=${encodeURIComponent(String(limit))}`,
-    { cache: "no-store" },
-  )
-  const data = (await res.json().catch(() => null)) as SchedulerJobHistoryResponse | null
-  if (!res.ok || !data) throw new Error(`获取 job history 失败: ${res.status}`)
-  return data
-}
-
-async function postSchedulerAction(
-  jobId: string,
-  action: "enable" | "disable" | "trigger" | "start" | "stop",
-  body?: Record<string, unknown>,
-): Promise<SchedulerJobActionResponse> {
-  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}/${action}`, {
-    method: "POST",
-    ...(body
-      ? {
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }
-      : {}),
-  })
-  const data = (await res.json().catch(() => null)) as SchedulerJobActionResponse | null
-  if (!res.ok || !data) {
-    throw new Error(data?.error || `调度任务 ${action} 失败`)
-  }
-  return data
-}
-
-export const enableSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "enable")
-export const disableSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "disable")
-export const triggerSchedulerJob = (jobId: string, options?: { targetDate?: string | null }) =>
-  postSchedulerAction(
-    jobId,
-    "trigger",
-    options?.targetDate ? { target_date: options.targetDate } : undefined,
-  )
-export const startSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "start")
-export const stopSchedulerJob = (jobId: string) => postSchedulerAction(jobId, "stop")
-
-/** 从 jobs.json 注册表里删除一个 job (后端同时停掉运行中的线程) */
-export async function deleteSchedulerJob(jobId: string): Promise<SchedulerJobActionResponse> {
-  const res = await fetchWithRetry(`${API_BASE}/api/scheduler/jobs/${encodeURIComponent(jobId)}`, {
-    method: "DELETE",
-  })
-  const data = (await res.json().catch(() => null)) as SchedulerJobActionResponse | null
-  if (!res.ok || !data) {
-    throw new Error(data?.error || `删除 job ${jobId} 失败`)
-  }
-  return data
-}
-
-// ---------------------------------------------------------------------------
-// Self-Selected（/stock-overview/self-selected 页面用）
-// ---------------------------------------------------------------------------
-
-export interface SelfSelectedGroup {
-  id: string
-  name: string
-  description?: string | null
-  color?: string
-  list_kind?: string
-  sort_order?: number
-  created_at: string
-  updated_at: string
-}
-
-export interface SelfSelectedItem {
-  id: string
-  group_id: string
-  symbol: string
-  market?: string | null
-  name?: string | null
-  notes?: string | null
-  target_type?: "stock" | "hk_stock" | "etf" | "index" | "other"
-  source_type?: "manual" | "search" | "imported"
-  sort_order?: number
-  created_at: string
-  updated_at: string
-}
-
-export interface SelfSelectedGroupListResponse {
-  ok: boolean
-  items: SelfSelectedGroup[]
-  count: number
-  error?: string
-}
-
-export interface SelfSelectedGroupActionResponse {
-  ok: boolean
-  item?: SelfSelectedGroup
-  group_id?: string
-  error?: string
-}
-
-export interface SelfSelectedItemListResponse {
-  ok: boolean
-  items: SelfSelectedItem[]
-  count: number
-  group_id?: string | null
-  error?: string
-}
-
-export interface SelfSelectedItemActionResponse {
-  ok: boolean
-  item?: SelfSelectedItem
-  item_id?: string
-  error?: string
-}
-
-async function selfSelectedJson<T>(res: Response): Promise<T> {
-  const data = (await res.json().catch(() => null)) as T | null
-  if (!res.ok || !data) {
-    const message =
-      (data && typeof (data as { error?: string }).error === "string"
-        ? (data as { error?: string }).error
-        : null) || `request failed: ${res.status}`
-    throw new Error(message)
-  }
-  return data
-}
-
-// group
-export async function fetchSelfSelectedGroups(): Promise<SelfSelectedGroupListResponse> {
-  return selfSelectedJson<SelfSelectedGroupListResponse>(
-    await fetchWithRetry(`${API_BASE}/api/self-selected/groups`, { cache: "no-store" }),
-  )
-}
-
-export async function createSelfSelectedGroup(
-  payload: { name: string; description?: string; color?: string },
-): Promise<SelfSelectedGroupActionResponse> {
-  return selfSelectedJson<SelfSelectedGroupActionResponse>(
-    await fetchWithRetry(`${API_BASE}/api/self-selected/groups`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  )
-}
-
-export async function updateSelfSelectedGroup(
-  groupId: string,
-  payload: Partial<Pick<SelfSelectedGroup, "name" | "description" | "color" | "sort_order">>,
-): Promise<SelfSelectedGroupActionResponse> {
-  return selfSelectedJson<SelfSelectedGroupActionResponse>(
-    await fetchWithRetry(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  )
-}
-
-export async function deleteSelfSelectedGroup(groupId: string): Promise<SelfSelectedGroupActionResponse> {
-  return selfSelectedJson<SelfSelectedGroupActionResponse>(
-    await fetchWithRetry(`${API_BASE}/api/self-selected/groups/${encodeURIComponent(groupId)}`, {
-      method: "DELETE",
-    }),
-  )
-}
-
-// item
-export async function fetchSelfSelectedItems(
-  groupId?: string,
-): Promise<SelfSelectedItemListResponse> {
-  const url = groupId
-    ? `${API_BASE}/api/self-selected/items?group_id=${encodeURIComponent(groupId)}`
-    : `${API_BASE}/api/self-selected/items`
-  return selfSelectedJson<SelfSelectedItemListResponse>(
-    await fetchWithRetry(url, { cache: "no-store" }),
-  )
-}
-
-export async function createSelfSelectedItem(
-  payload: {
-    group_id: string
-    symbol: string
-    market?: string
-    name?: string
-    notes?: string
-    target_type?: "stock" | "hk_stock" | "etf" | "index" | "other"
-  },
-): Promise<SelfSelectedItemActionResponse> {
-  return selfSelectedJson<SelfSelectedItemActionResponse>(
-    await fetchWithRetry(`${API_BASE}/api/self-selected/items`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  )
-}
-
-export async function updateSelfSelectedItem(
-  itemId: string,
-  payload: Partial<Pick<SelfSelectedItem, "group_id" | "symbol" | "market" | "name" | "notes" | "target_type" | "sort_order">>,
-): Promise<SelfSelectedItemActionResponse> {
-  return selfSelectedJson<SelfSelectedItemActionResponse>(
-    await fetchWithRetry(`${API_BASE}/api/self-selected/items/${encodeURIComponent(itemId)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }),
-  )
-}
-
-export async function deleteSelfSelectedItem(itemId: string): Promise<SelfSelectedItemActionResponse> {
-  return selfSelectedJson<SelfSelectedItemActionResponse>(
-    await fetchWithRetry(`${API_BASE}/api/self-selected/items/${encodeURIComponent(itemId)}`, {
-      method: "DELETE",
-    }),
-  )
 }
 
 // =============================================================================

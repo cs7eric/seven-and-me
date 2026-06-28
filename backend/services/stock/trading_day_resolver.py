@@ -3,7 +3,7 @@
 ``is_trading_day`` (trading_calendar) 只看本地 HOLIDAYS 集合 + 周末判定, 偶尔
 漏掉国务院临时调整 (e.g. 突发休市) 或本地 HOLIDAYS 没维护到的历史节假日.
 
-更可靠的判定: 直接查 duckdb.index_daily_raw 里 sh000001 是否有 K 线.
+更可靠的判定: 直接查 ClickHouse index_daily_raw 里 sh000001 是否有 K 线.
 有 K 线 → 那一天 A 股有交易. 没有 → 那天没交易.
 
 用法::
@@ -16,7 +16,7 @@
     resolve_target_trading_day()                    # 今日 / 上一交易日
     resolve_target_trading_day(date(2026, 6, 20))  # 给定日期
 
-    # 异常 / 不可用时返 None (不抛), 跟 duckdb 锁冲突 / 文件缺失 兼容
+    # 异常 / 不可用时返 None (不抛), 跟 ClickHouse 不可用 / 数据缺失 兼容
     resolve_target_trading_day_safe()
 """
 from __future__ import annotations
@@ -37,36 +37,22 @@ _LOOKBACK_DAYS = 14
 
 
 def _has_sh_kline(d: date, lookback_days: int = _LOOKBACK_DAYS) -> bool | None:
-    """查 duckdb.index_daily_raw 里 d (含) 之前最近 lookback_days 天内, sh000001
+    """查 ClickHouse index_daily_raw 里 d (含) 之前最近 lookback_days 天内, sh000001
     是否有 K 线.
 
     返回:
       True  → d (含) 之前 ≤lookback_days 范围内, 至少 1 天有 sh000001 K 线
-      False → 都没有 (可能 duckdb 还没建库, 也可能数据没拉)
-      None  → 抛错 (duckdb 锁冲突 / 文件不存在) — caller 决定 fallback
+      False → 都没有 (可能 ClickHouse 还没建库, 也可能数据没拉)
+      None  → 抛错 (ClickHouse 不可用 / 查询失败) — caller 决定 fallback
     """
     try:
-        from backend.adapters.market.duckdb_store import get_conn
-    except Exception:
-        return None
-    try:
+        from backend.repositories.market.index_repo import latest_index_trade_date
         start = d - timedelta(days=lookback_days)
-        with get_conn() as c:
-            row = c.execute(
-                """
-                SELECT MAX(trade_date)
-                  FROM index_daily_raw
-                 WHERE code = ? AND trade_date <= ? AND trade_date >= ?
-                """,
-                [SH_INDEX_FULL_CODE, d, start],
-            ).fetchone()
+        last = latest_index_trade_date(SH_INDEX_FULL_CODE, d)
     except Exception as exc:  # noqa: BLE001
         logger.debug("sh k-line lookup failed for %s: %s", d, exc)
         return None
-    if not row:
-        return False
-    last = row[0]
-    return last is not None
+    return bool(last is not None and last >= start)
 
 
 def resolve_target_trading_day(today: date | None = None) -> date:
@@ -90,38 +76,16 @@ def resolve_target_trading_day(today: date | None = None) -> date:
     if is_trading_day(today):
         return today
 
-    # 2) 查 sh000001 K 线 (权威, 但要求 duckdb 可用 + sh000001 已落库)
+    # 2) 查 sh000001 K 线 (权威, 但要求 ClickHouse 可用 + sh000001 已落库)
     try:
-        from backend.adapters.market.duckdb_store import get_conn
-    except Exception as exc:
-        logger.debug("resolve_target_trading_day: duckdb import failed: %s", exc)
-        return previous_trading_day(today)
-
-    try:
-        lookback = max(_LOOKBACK_DAYS, 30)  # 节假日最长 ~7 天, 30 天足够
-        start = today - timedelta(days=lookback)
-        with get_conn() as c:
-            row = c.execute(
-                """
-                SELECT MAX(trade_date)
-                  FROM index_daily_raw
-                 WHERE code = ? AND trade_date <= ? AND trade_date >= ?
-                """,
-                [SH_INDEX_FULL_CODE, today, start],
-            ).fetchone()
+        from backend.repositories.market.index_repo import latest_index_trade_date
+        last = latest_index_trade_date(SH_INDEX_FULL_CODE, today)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("resolve_target_trading_day: duckdb query failed: %s", exc)
+        logger.debug("resolve_target_trading_day: ClickHouse query failed: %s", exc)
         return previous_trading_day(today)
 
-    if row and row[0] is not None:
-        last = row[0]
-        # duckdb 的 trade_date 是 date 类型, 但保险起见 .date() 兜底
-        if isinstance(last, date):
-            return last
-        try:
-            return date.fromisoformat(str(last))
-        except ValueError:
-            pass
+    if last is not None:
+        return last
 
     # 3) 本地 fallback
     return previous_trading_day(today)

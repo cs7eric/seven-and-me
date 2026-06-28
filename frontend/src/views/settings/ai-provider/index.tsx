@@ -30,7 +30,7 @@ import {
   fetchAiProviders,
   updateAiProvider,
   upsertAiBinding,
-} from "@/lib/api"
+} from "@/services/ai/provider"
 import { cn } from "@/lib/utils"
 
 // AI Provider frontend docs:

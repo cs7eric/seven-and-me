@@ -19,3 +19,6 @@ pandas>=2.0.0  # 同花顺全行业资金 (pd.read_html 解析表格)
 SQLAlchemy>=2.0
 psycopg[binary]>=3.2
 alembic>=1.13
+
+# ClickHouse market-data store
+clickhouse-connect>=0.8

@@ -1,10 +1,10 @@
-"""大盘概况 / 市场脉搏 90 行业 DuckDB 同步 scheduler.
+"""大盘概况 / 市场脉搏 90 行业 PostgreSQL 同步 scheduler.
 
 单 job:
   - 工作日 17:10 触发 (cron ``10 17 * * mon-fri``, is_trading_day 二次过滤)
   - 调 ``scripts/backfill_market_overview_daily.py``:
     1. 从 PostgreSQL app.market_overview_snapshots 取目标日大盘快照
-       → duckdb.market_overview_daily (MSI / turnover_activity 下游缓存)
+       → PostgreSQL.market_overview_daily (MSI / turnover_activity 下游缓存)
     2. 本地 JSON archive 仅保留为历史兼容 / 手工回填路径
   - 幂等: 全部走 INSERT OR REPLACE / 字段级 UPSERT
 
@@ -46,11 +46,11 @@ from backend.services.scheduler.backfill_validator import fetch_scalar_value, va
 
 logger = logging.getLogger(__name__)
 
-OVERVIEW_DAILY_CRON = "45 18 * * mon-fri"  # 工作日 18:45 (北京时间, 跟 Market Sentiment 因子错峰, 避免 DuckDB 写锁重叠)
+OVERVIEW_DAILY_CRON = "45 18 * * mon-fri"  # 工作日 18:45 (北京时间, 跟 Market Sentiment 因子错峰)
 _JOB_ID = "market_overview_daily"
 _SCRIPT_PATH_KEY = "market_overview_daily_script"  # 状态文件可覆盖脚本路径 (测试用)
 
-# PG -> DuckDB 同步通常 < 30s; 给 5 min 上限足够, 防止历史兼容路径异常卡住
+# PG 同步通常 < 30s; 给 5 min 上限足够, 防止历史兼容路径异常卡住
 _JOB_TIMEOUT_SECONDS = 5 * 60
 
 _scheduler: BackgroundScheduler | None = None
@@ -94,7 +94,7 @@ def _save_job_status(status: dict[str, Any]) -> None:
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
     register_job(
         code="market_overview_daily", name=name,
-        description="工作日 17:10 触发, 从 PostgreSQL app.market_overview_snapshots 同步目标日大盘快照到 DuckDB market_overview_daily.",
+        description="工作日 18:45 触发, 同步目标日大盘快照到 PostgreSQL mkt_overview_daily.",
         service_module="backend.services.scheduler.market_overview_daily_scheduler",
         service_class="MarketOverviewDailyScheduler",
         config_file="market_overview_daily_job.json",
@@ -200,7 +200,7 @@ def _job_run_backfill(target_date=None) -> None:
         status["lastSectorDays"] = None
 
         if r.returncode == 0:
-            # DuckDB 数据校验: 有值且不为 0
+            # PostgreSQL 数据校验: 有值且不为 0
             _valid_ok, _valid_err = validate_scalar("market_overview_daily", "total_amount", target_date)
             if not _valid_ok:
                 status["lastRunOk"] = False
@@ -215,12 +215,12 @@ def _job_run_backfill(target_date=None) -> None:
                 status["lastPgToDuckdbSynced"] = True
                 status["lastTotalAmount"] = total_amount
                 status["lastMessage"] = (
-                    f"pg_to_duckdb total_amount={total_amount} "
+                    f"pg_to_PostgreSQL total_amount={total_amount} "
                     f"(target={target_date.isoformat()})"
                 )
                 status["totalRuns"] = int(status.get("totalRuns") or 0) + 1
                 logger.info(
-                    "market_overview_daily ok in %.1fs: pg_to_duckdb total_amount=%s target=%s",
+                    "market_overview_daily ok in %.1fs: pg_to_PostgreSQL total_amount=%s target=%s",
                     elapsed, total_amount, target_date,
                 )
             # 写覆盖度给前端看
@@ -263,31 +263,13 @@ def _job_run_backfill(target_date=None) -> None:
 
 
 def _refresh_coverage(status: dict[str, Any]) -> None:
-    """回填成功后, 读 2 张表的覆盖度写到 status (前端展示用)."""
+    """回填成功后, 读 2 张 PG 表的覆盖度写到 status (前端展示用)."""
     try:
-        from backend.adapters.market.duckdb_store import get_conn
-        with get_conn(read_only=True) as c:
-            r1 = c.execute(
-                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
-                "FROM market_overview_daily"
-            ).fetchone()
-            r2 = c.execute(
-                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*), "
-                "COUNT(DISTINCT trade_date) FROM market_pulse_sector_daily"
-            ).fetchone()
-        if r1:
-            status["lastOverviewCoverage"] = {
-                "firstDate": r1[0].isoformat() if r1[0] else None,
-                "lastDate": r1[1].isoformat() if r1[1] else None,
-                "rowCount": int(r1[2]) if r1[2] else 0,
-            }
-        if r2:
-            status["lastSectorCoverage"] = {
-                "firstDate": r2[0].isoformat() if r2[0] else None,
-                "lastDate": r2[1].isoformat() if r2[1] else None,
-                "rowCount": int(r2[2]) if r2[2] else 0,
-                "tradeDayCount": int(r2[3]) if r2[3] else 0,
-            }
+        from backend.repositories.market.market_overview_repo import coverage as overview_coverage
+        from backend.repositories.market.market_pulse_sector_repo import coverage as sector_coverage
+
+        status["lastOverviewCoverage"] = overview_coverage()
+        status["lastSectorCoverage"] = sector_coverage()
     except Exception as exc:
         logger.debug("refresh_coverage failed: %s", exc)
 
@@ -323,7 +305,7 @@ def start_market_overview_daily_scheduler() -> None:
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
         _register_job(
             _JOB_ID,
-            "market_overview_daily (17:10 工作日, 大盘 / 行业 回填 duckdb)",
+            "market_overview_daily (17:10 工作日, 大盘 / 行业 回填 PostgreSQL)",
             None,
             )
         _save_job_status(status)

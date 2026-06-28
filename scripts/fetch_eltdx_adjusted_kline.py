@@ -9,8 +9,8 @@ Architecture:
      up to 800 bars (≈ 3.3 years of trading days). For older histories use
      get_adjusted_kline_all() with pagination, or run multiple passes with
      start offsets.
-  2. Bulk insert via DuckDB register+INSERT (NOT executemany) — ~500× faster.
-  3. Idempotent via INSERT OR IGNORE on (code, trade_date).
+  2. Bulk insert into ClickHouse daily_qfq / daily_hfq.
+  3. Idempotent via DELETE affected (code, trade_date) range then INSERT.
 
 Speed
 -----
@@ -28,20 +28,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from threading import Lock, local
+from threading import local
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import duckdb  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from eltdx import TdxClient  # noqa: E402
 
-from backend.adapters.market.duckdb_store import (  # noqa: E402
-    get_conn,
-    init_schema,
-    table_stats,
-)
+from backend.adapters.market.clickhouse_store import command, insert, query_rows  # noqa: E402
 
 # ---------- thread-local TdxClient -------------------------------
 
@@ -62,10 +57,8 @@ def _to_full_code(code: str) -> str:
     return f"sh{code}" if code.startswith(("5", "6", "9")) else f"sz{code}"
 
 
-def _bars_to_rows(code: str, bars, target_table: str):
-    """Convert eltdx bars into (code, trade_date, open, high, low, close,
-    volume, amount, adj_factor?) tuples ready for bulk insert.
-    """
+def _bars_to_rows(code: str, bars):
+    """Convert eltdx bars into ClickHouse row tuples."""
     rows = []
     for r in bars:
         rows.append((
@@ -106,7 +99,7 @@ def _fetch_one(code: str, adjust: str, max_retries: int = 3) -> tuple[list, str 
             )
             bars = series.bars if hasattr(series, "bars") else series.items
             if bars:
-                return _bars_to_rows(code, bars, "daily_qfq"), None
+                return _bars_to_rows(code, bars), None
             # Empty: treat as transient (could be server blip).
             last_err = "empty result"
         except retriable as exc:                                    # noqa: PERF203
@@ -124,52 +117,77 @@ def _fetch_one(code: str, adjust: str, max_retries: int = 3) -> tuple[list, str 
 # ---------- main ---------------------------------------------------
 
 def _done_codes(adjust: str) -> set[str]:
-    con = get_conn()
-    rows = con.execute(
-        f"SELECT code FROM ingest_state "
-        f"WHERE last_status LIKE ? || '_ok%'",
-        [adjust],
-    ).fetchall()
+    rows = query_rows(
+        """
+        SELECT DISTINCT code
+          FROM ingest_state
+         WHERE startsWith(last_status, %s)
+        """,
+        (f"{adjust}_ok",),
+    )
     return {r[0] for r in rows}
 
 
-def _mark_done(code: str, adjust: str, n_rows: int) -> None:
-    con = get_conn()
-    con.execute(
-        """
-        MERGE INTO ingest_state t
-        USING (SELECT ? AS code, ? AS status) s
-        ON t.code = s.code
-        WHEN MATCHED THEN
-            UPDATE SET last_run_at = current_timestamp, last_status = s.status
-        WHEN NOT MATCHED THEN
-            INSERT (code, day_file_path, processed_bytes, last_run_at, last_status)
-            VALUES (s.code, '', 0, current_timestamp, s.status)
-        """,
-        (code, f"{adjust}_ok|rows={n_rows}"),
+def _mark_done(code: str, adjust: str, n_rows: int, last_trade_date) -> None:
+    insert(
+        "ingest_state",
+        [(
+            code,
+            "",
+            0,
+            last_trade_date,
+            1,
+            datetime.now(),
+            f"{adjust}_ok|rows={n_rows}",
+        )],
+        ["code", "day_file_path", "processed_bytes", "last_trade_date", "last_unit_scale", "last_run_at", "last_status"],
     )
 
 
+def _quote_ch_strings(values: list[str]) -> str:
+    return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+
+
 def _bulk_insert(adjust: str, rows: list) -> int:
-    """Register DataFrame + INSERT OR IGNORE. ~500× faster than executemany."""
+    """Delete affected rows, then insert adjusted bars into ClickHouse."""
     if not rows:
         return 0
     target = "daily_qfq" if adjust == "qfq" else "daily_hfq"
     df = pd.DataFrame(rows, columns=[
         "code", "trade_date", "open", "high", "low", "close", "volume", "amount",
     ])
-    con = get_conn()
-    con.register("_eltdx_staging", df)
-    n = len(df)
-    con.execute(
-        f"INSERT OR IGNORE INTO {target} "
-        "(code, trade_date, open, high, low, close, volume, amount, "
-        " adj_factor, ingested_at) "
-        "SELECT code, trade_date, open, high, low, close, volume, amount, "
-        "       1.0, current_timestamp FROM _eltdx_staging"
+    codes = sorted(str(c) for c in df["code"].dropna().unique())
+    min_date = df["trade_date"].min()
+    max_date = df["trade_date"].max()
+    if codes:
+        command(
+            f"ALTER TABLE {target} DELETE "
+            f"WHERE code IN ({_quote_ch_strings(codes)}) "
+            f"AND trade_date BETWEEN toDate('{min_date}') AND toDate('{max_date}')",
+            settings={"mutations_sync": 1},
+        )
+    now = datetime.now()
+    out_rows = [
+        (
+            str(r.code),
+            r.trade_date,
+            float(r.open),
+            float(r.high),
+            float(r.low),
+            float(r.close),
+            int(r.volume),
+            float(r.amount),
+            1.0,
+            now,
+        )
+        for r in df.itertuples(index=False)
+    ]
+    insert(
+        target,
+        out_rows,
+        ["code", "trade_date", "open", "high", "low", "close", "volume", "amount", "adj_factor", "ingested_at"],
     )
-    con.unregister("_eltdx_staging")
-    return n
+    return len(out_rows)
 
 
 def main():
@@ -183,16 +201,7 @@ def main():
                          "Use to retry codes that failed in a previous run.")
     args = ap.parse_args()
 
-    init_schema()
-    con = get_conn()
-    print("SCHEMA state:")
-    for t, n in table_stats().items():
-        print(f"  {t:20s} {n:>12,d}")
-    print()
-
-    rows = con.execute(
-        "SELECT DISTINCT code FROM daily_raw ORDER BY code"
-    ).fetchall()
+    rows = query_rows("SELECT DISTINCT code FROM daily_raw ORDER BY code")
     all_codes = [r[0] for r in rows]
 
     skip = set()
@@ -208,9 +217,7 @@ def main():
     if args.retry_missing:
         # Skip resume filter — codes marked 'ok|rows=0' but actually empty
         # in the table should still be retried. Restore full list.
-        all_codes = [r[0] for r in con.execute(
-            "SELECT DISTINCT code FROM daily_raw ORDER BY code"
-        ).fetchall()]
+        all_codes = [r[0] for r in query_rows("SELECT DISTINCT code FROM daily_raw ORDER BY code")]
         skip = set()
         print("retry-missing: ignoring resume filter (will retry even 'ok' codes)")
 
@@ -230,13 +237,12 @@ def main():
             # Narrow the set per adjust if both — only fetch codes with NO row
             # in the target table.
             adj_target = f"daily_{adj}"
-            miss = con.execute(f"""
+            miss = query_rows(f"""
                 SELECT DISTINCT r.code
                   FROM daily_raw r
-                 WHERE NOT EXISTS (SELECT 1 FROM {adj_target} t
-                                    WHERE t.code = r.code)
+                 WHERE r.code NOT IN (SELECT DISTINCT t.code FROM {adj_target} t)
                  ORDER BY r.code
-            """).fetchall()
+            """)
             missing_set = {r[0] for r in miss}
             adj_codes = [c for c in all_codes if c in missing_set]
         else:
@@ -260,7 +266,8 @@ def main():
                         print(f"  ! {code}: {err}", flush=True)
                 else:
                     all_rows.extend(rows)
-                    _mark_done(code, adj, len(rows))
+                    last_trade_date = max((r[1] for r in rows), default=None)
+                    _mark_done(code, adj, len(rows), last_trade_date)
 
                 if completed % 200 == 0 or completed == len(adj_codes):
                     elapsed = time.time() - t0

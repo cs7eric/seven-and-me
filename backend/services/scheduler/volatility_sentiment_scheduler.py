@@ -1,15 +1,15 @@
-"""波动率情绪 (Volatility Sentiment) duckdb 回填 scheduler.
+"""波动率情绪 (Volatility Sentiment) ClickHouse/PostgreSQL 回填 scheduler.
 
 单 job:
   - 工作日 17:07 触发 (cron ``7 17 * * mon-fri``, is_trading_day 二次过滤)
   - 调 ``scripts/backfill_volatility_sentiment.py --days=2``:
-    1. 检查 duckdb.index_daily_raw[sh000300] 是否有 ≥ 282 行, 不足自动调
+    1. 检查 ClickHouse/PostgreSQL.index_daily_raw[sh000300] 是否有 ≥ 282 行, 不足自动调
        fetch_index_history.py --days=300 --codes=000300 补数
     2. 算近 20 日日收益 std × √252 → vol
     3. 算近 252 日 vol 滚动分位 → 1 - percentile → 情绪得分 0-100
-    4. 落 duckdb.volatility_sentiment_daily (1 日 1 行)
+    4. 落 ClickHouse/PostgreSQL.volatility_sentiment_daily (1 日 1 行)
 
-依赖: duckdb.index_daily_raw 沪深300 数据 (auto-pull 会拉),
+依赖: ClickHouse/PostgreSQL.index_daily_raw 沪深300 数据 (auto-pull 会拉),
       daily_eod_incremental (17:00) 先把 daily_raw 落库 (auto-pull 走的脚本不依赖).
 
 启动: :mod:`backend.bootstrap` 调 :func:`start_volatility_sentiment_scheduler`.
@@ -49,7 +49,7 @@ from backend.services.scheduler.backfill_validator import (
 
 logger = logging.getLogger(__name__)
 
-VOLATILITY_SENTIMENT_CRON = "15 18 * * mon-fri"  # 工作日 18:15 (北京时间, 跟 ma_count 错开 10 min, 避免 DuckDB 写锁重叠)
+VOLATILITY_SENTIMENT_CRON = "15 18 * * mon-fri"  # 工作日 18:15 (北京时间, 跟 ma_count 错开 10 min, 避免上游写入重叠)
 _JOB_ID = "volatility_sentiment_refresh"
 _SCRIPT_PATH_KEY = "volatility_sentiment_script"  # 状态文件可覆盖脚本路径 (测试用)
 # 单日 --days=2 计算 < 0.5s; auto-pull 拉一次 ~ 3s; 给 5 min 上限足够
@@ -179,7 +179,7 @@ def _job_run_backfill(target_date=None) -> None:
             status["lastRowsSkipped"] = int(m.group(2))
 
         if r.returncode == 0:
-            # DuckDB 数据校验: 有值且不为 0
+            # PostgreSQL 数据校验: 有值且不为 0
             validated_date = resolve_latest_scalar_date("volatility_sentiment_daily", "sentiment_score", target_date) or target_date
             status["lastValidatedTradeDate"] = validated_date.isoformat()
             _valid_ok, _valid_err = validate_scalar("volatility_sentiment_daily", "sentiment_score", validated_date)
@@ -242,17 +242,9 @@ def _job_run_backfill(target_date=None) -> None:
 
 def _refresh_coverage(status: dict[str, Any]) -> None:
     try:
-        from backend.adapters.market.duckdb_store import get_conn
-        with get_conn(read_only=True) as c:
-            r = c.execute(
-                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
-                "FROM volatility_sentiment_daily"
-            ).fetchone()
-        status["lastCoverage"] = {
-            "firstDate": r[0].isoformat() if r[0] else None,
-            "lastDate": r[1].isoformat() if r[1] else None,
-            "rowCount": int(r[2]) if r[2] else 0,
-        }
+        from backend.repositories.market.volatility_sentiment_repo import coverage
+
+        status["lastCoverage"] = coverage()
     except Exception as exc:
         logger.debug("refresh_coverage failed: %s", exc)
 
@@ -288,7 +280,7 @@ def start_volatility_sentiment_scheduler() -> None:
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
         _register_job(
             _JOB_ID,
-            "volatility_sentiment_refresh (17:07 工作日, 波动率情绪回填 duckdb)",
+            "volatility_sentiment_refresh (17:07 工作日, 波动率情绪回填 ClickHouse/PostgreSQL)",
             None,
             )
         _save_job_status(status)

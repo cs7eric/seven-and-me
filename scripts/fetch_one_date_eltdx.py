@@ -1,4 +1,4 @@
-"""Focused fetch: 调 eltdx 拉单个交易日 (默认 6/17) 的 qfq/hfq 数据, 写到 daily_qfq/daily_hfq.
+"""Focused fetch: 调 eltdx 拉单个交易日 (默认 6/17) 的 qfq/hfq 数据, 写到 ClickHouse daily_qfq/daily_hfq.
 
 比 fetch_eltdx_adjusted_kline.py 更快:
   - 只取最近 10 天 (~ 3 次 API 调用足够覆盖 6/17 + 历史)
@@ -13,18 +13,16 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, timedelta
+from datetime import datetime
 from pathlib import Path
-from threading import Lock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import duckdb
 import pandas as pd
 
 from eltdx import TdxClient
 
-from backend.adapters.market.duckdb_store import get_conn, init_schema, get_db_path
+from backend.adapters.market.clickhouse_store import command, insert, query_one
 from backend.repositories.market.stock_meta_repo import _codes_json
 
 
@@ -73,19 +71,45 @@ def _fetch_one(code: str, anchor_date: str, max_retries: int = 3) -> tuple[list,
     return [], last_err
 
 
+def _quote_ch_strings(values: list[str]) -> str:
+    return ", ".join("'" + v.replace("'", "''") + "'" for v in values)
+
+
 def _bulk_insert(target: str, df: pd.DataFrame) -> int:
-    con = get_conn()
-    con.register("_staging", df)
-    n = len(df)
-    con.execute(
-        f"INSERT OR IGNORE INTO {target} "
-        "(code, trade_date, open, high, low, close, volume, amount, "
-        " adj_factor, ingested_at) "
-        "SELECT code, trade_date, open, high, low, close, volume, amount, "
-        "       1.0, current_timestamp FROM _staging"
+    if df.empty:
+        return 0
+    codes = sorted(str(c) for c in df["code"].dropna().unique())
+    min_date = df["trade_date"].min()
+    max_date = df["trade_date"].max()
+    if codes:
+        command(
+            f"ALTER TABLE {target} DELETE "
+            f"WHERE code IN ({_quote_ch_strings(codes)}) "
+            f"AND trade_date BETWEEN toDate('{min_date}') AND toDate('{max_date}')",
+            settings={"mutations_sync": 1},
+        )
+    now = datetime.now()
+    rows = [
+        (
+            str(r.code),
+            r.trade_date,
+            float(r.open),
+            float(r.high),
+            float(r.low),
+            float(r.close),
+            int(r.volume),
+            float(r.amount),
+            1.0,
+            now,
+        )
+        for r in df.itertuples(index=False)
+    ]
+    insert(
+        target,
+        rows,
+        ["code", "trade_date", "open", "high", "low", "close", "volume", "amount", "adj_factor", "ingested_at"],
     )
-    con.unregister("_staging")
-    return n
+    return len(rows)
 
 
 def main():
@@ -103,19 +127,16 @@ def main():
 
 
 def run(date_str: str, adjust: str = "both", workers: int = 32) -> dict:
-    """In-process 入口 (给 daily_eod_incremental 等调用, 避免 subprocess 文件锁冲突).
+    """In-process 入口.
 
     Returns:
         {"qfq_rows": int, "hfq_rows": int, "elapsed": float}
     """
-    init_schema()
-
     # 1. universe: stock_meta_repo._codes.json 的 5530 只 A 股 (active)
     all_codes = list(_codes_json().keys())
     print(f"universe: {len(all_codes)} A-share codes (from _codes.json)")
 
-    # 2. 对每个 (code, date) 调 eltdx, INSERT OR IGNORE (已存在的不覆盖)
-    con = get_conn()
+    # 2. 对每个 (code, date) 调 eltdx, 写入 ClickHouse daily_qfq / daily_hfq
     completed = 0
     err_count = 0
     grand_qfq = 0
@@ -163,7 +184,7 @@ def run(date_str: str, adjust: str = "both", workers: int = 32) -> dict:
                 grand_qfq = n
             else:
                 grand_hfq = n
-            print(f"  daily_{adj}: +{n:,} new rows")
+            print(f"  daily_{adj}: +{n:,} rows")
 
     elapsed = time.time() - t0
     print()
@@ -174,7 +195,7 @@ def run(date_str: str, adjust: str = "both", workers: int = 32) -> dict:
     print()
     print(f"=== 验证 {date_str} ===")
     for table in ("daily_qfq", "daily_hfq"):
-        n = con.execute(f"SELECT COUNT(*), COUNT(DISTINCT code) FROM {table} WHERE trade_date = ?", [date_str]).fetchone()
+        n = query_one(f"SELECT COUNT(*), COUNT(DISTINCT code) FROM {table} WHERE trade_date = %s", (date_str,))
         print(f"  {table} {date_str}: {n[0]:,} rows, {n[1]:,} distinct codes")
     return {
         "qfq_rows": grand_qfq,

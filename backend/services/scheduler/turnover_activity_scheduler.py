@@ -1,4 +1,4 @@
-"""成交活跃度 (Turnover Activity) duckdb 回填 scheduler.
+"""成交活跃度 (Turnover Activity) ClickHouse/PostgreSQL 回填 scheduler.
 
 单 job:
   - 工作日 17:12 触发 (cron ``12 17 * * mon-fri``)
@@ -90,8 +90,8 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
         description=(
             "MSI Factor 2: turnover (成交活跃度, weight 15%). "
             "工作日 17:12 触发, 调 scripts/backfill_turnover_activity.py --days=3, "
-            "从 duckdb.daily_raw 的 999999 + 399001 成交额求和计算 ratio = 全市场成交额/20日均 -> 3年历史分位 0-100. "
-            "依赖 TDX 日线已落 duckdb.daily_raw, 结果写入 duckdb.turnover_activity_daily."
+            "从 ClickHouse/PostgreSQL.daily_raw 的 999999 + 399001 成交额求和计算 ratio = 全市场成交额/20日均 -> 3年历史分位 0-100. "
+            "依赖 TDX 日线已落 ClickHouse/PostgreSQL.daily_raw, 结果写入 ClickHouse/PostgreSQL.turnover_activity_daily."
         ),
         service_module="backend.services.scheduler.turnover_activity_scheduler",
         service_class="TurnoverActivityScheduler",
@@ -102,34 +102,26 @@ def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
 
 def _fetch_turnover_activity_debug_snapshot(target_date) -> dict[str, Any]:
     try:
-        from backend.adapters.market.duckdb_store import get_conn
+        from backend.adapters.market.clickhouse_store import query_rows
+        from backend.repositories.market.turnover_activity_repo import get_turnover_activity
 
-        with get_conn(read_only=True) as con:
-            source_row = con.execute(
-                """
-                SELECT trade_date,
-                       SUM(CASE WHEN code = '999999' THEN amount ELSE 0 END) AS sh_amount,
-                       SUM(CASE WHEN code = '399001' THEN amount ELSE 0 END) AS sz_amount,
-                       (SUM(CASE WHEN code = '999999' THEN amount ELSE 0 END)
-                        + SUM(CASE WHEN code = '399001' THEN amount ELSE 0 END)) / 100000000.0 AS total_amount_yi
-                  FROM daily_raw
-                 WHERE trade_date <= ?
-                   AND code IN ('999999', '399001')
-                 GROUP BY trade_date
-                HAVING COUNT(DISTINCT code) = 2
-                 ORDER BY trade_date DESC
-                 LIMIT 21
-                """,
-                [target_date],
-            ).fetchall()
-            saved_row = con.execute(
-                """
-                SELECT trade_date, total_amount, avg_20d_amount, ratio, score, elapsed_ms, source
-                  FROM turnover_activity_daily
-                 WHERE trade_date = ?
-                """,
-                [target_date],
-            ).fetchone()
+        source_row = query_rows(
+            """
+            SELECT trade_date,
+                   sumIf(amount, code = %s) AS sh_amount,
+                   sumIf(amount, code = %s) AS sz_amount,
+                   (sumIf(amount, code = %s) + sumIf(amount, code = %s)) / 100000000.0 AS total_amount_yi
+              FROM daily_raw
+             WHERE trade_date <= %s
+               AND code IN (%s, %s)
+             GROUP BY trade_date
+            HAVING countDistinct(code) = 2
+             ORDER BY trade_date DESC
+             LIMIT 21
+            """,
+            ("999999", "399001", "999999", "399001", target_date, "999999", "399001"),
+        )
+        saved = get_turnover_activity(target_date)
     except Exception as exc:
         return {"error": f"debug snapshot query failed: {exc}"}
 
@@ -172,15 +164,15 @@ def _fetch_turnover_activity_debug_snapshot(target_date) -> dict[str, Any]:
         },
     }
 
-    if saved_row:
+    if saved:
         result["saved"] = {
-            "tradeDate": saved_row[0].isoformat() if saved_row[0] else None,
-            "totalAmount": float(saved_row[1]) if saved_row[1] is not None else None,
-            "avg20dAmount": float(saved_row[2]) if saved_row[2] is not None else None,
-            "ratio": float(saved_row[3]) if saved_row[3] is not None else None,
-            "score": float(saved_row[4]) if saved_row[4] is not None else None,
-            "elapsedMs": int(saved_row[5]) if saved_row[5] is not None else None,
-            "source": str(saved_row[6]) if saved_row[6] is not None else None,
+            "tradeDate": saved.get("tradeDate"),
+            "totalAmount": saved.get("totalAmount"),
+            "avg20dAmount": saved.get("avg20dAmount"),
+            "ratio": saved.get("ratio"),
+            "score": saved.get("score"),
+            "elapsedMs": saved.get("elapsedMs"),
+            "source": saved.get("source"),
         }
     else:
         result["saved"] = None
@@ -311,7 +303,7 @@ def start_turnover_activity_scheduler() -> None:
         sched.start()
         _scheduler = sched
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
-        _register_job(_JOB_ID, "turnover_activity_refresh (17:12, 成交活跃度回填 duckdb)", None)
+        _register_job(_JOB_ID, "turnover_activity_refresh (17:12, 成交活跃度回填 ClickHouse/PostgreSQL)", None)
         _save_job_status(status)
         logger.info("turnover_activity_scheduler started: cron=%s", TURNOVER_ACTIVITY_CRON)
     status = _load_job_status()

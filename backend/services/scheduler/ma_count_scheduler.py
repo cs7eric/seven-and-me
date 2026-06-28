@@ -1,13 +1,13 @@
-"""市场宽度 (Market Breadth · MA 计数) + 宽基指数收益 duckdb 回填 scheduler.
+"""市场宽度 (Market Breadth · MA 计数) + 宽基指数收益 ClickHouse/PostgreSQL 回填 scheduler.
 
 单 job:
   - 工作日 17:06 触发 (cron ``6 17 * * mon-fri``, is_trading_day 二次过滤)
   - 调 ``scripts/backfill_ma_count_and_returns.py --days=2 --force``:
-    1. 对 duckdb.daily_qfq 算全市场 close > MA20/MA60 计数 + 5d 上涨/60d 新低/252d 新高
-       → 落 duckdb.ma_count_daily
-    2. 对 duckdb.index_daily_raw (上证/沪深300/中证1000) 补齐后,
+    1. 对 ClickHouse/PostgreSQL.daily_qfq 算全市场 close > MA20/MA60 计数 + 5d 上涨/60d 新低/252d 新高
+       → 落 ClickHouse/PostgreSQL.ma_count_daily
+    2. 对 ClickHouse/PostgreSQL.index_daily_raw (上证/沪深300/中证1000) 补齐后,
        算 5/10/20/60 日累计收益
-       → 落 duckdb.index_returns_daily
+       → 落 ClickHouse/PostgreSQL.index_returns_daily
   - 强制 --force: MA 计数受新日插入影响, 必须重算; 指数收益同
 
 依赖: daily_eod_incremental (17:00) 必须先把 daily_raw + qfq 落库.
@@ -50,7 +50,7 @@ from backend.services.scheduler.target_date import resolve_scheduler_target_date
 
 logger = logging.getLogger(__name__)
 
-MA_COUNT_CRON = "5 18 * * mon-fri"  # 工作日 18:05 (北京时间, 跟 risk_appetite 错开 10 min, 避免 DuckDB 写锁重叠)
+MA_COUNT_CRON = "5 18 * * mon-fri"  # 工作日 18:05 (北京时间, 跟 risk_appetite 错开 10 min, 避免上游写入重叠)
 _JOB_ID = "ma_count_refresh"
 _SCRIPT_PATH_KEY = "ma_count_script"  # 状态文件可覆盖脚本路径 (测试用)
 # 全市场 MA 计数 (5500 只 × 60 日窗口) 单日 < 1s; 给 5 min 上限足够
@@ -97,7 +97,7 @@ def _save_job_status(status: dict[str, Any]) -> None:
 def _register_job(job_id: str, name: str, next_run_time: str | None) -> None:
     register_job(
         code="ma_count_refresh", name=name,
-        description="MSI Factor 3+5: price_strength (weight 10%%) + breadth (weight 15%%). Cron 17:06, MA 计数 + 宽基指数收益 -> duckdb ma_count_daily + index_returns_daily.",
+        description="MSI Factor 3+5: price_strength (weight 10%%) + breadth (weight 15%%). Cron 17:06, MA 计数 + 宽基指数收益 -> ClickHouse/PostgreSQL ma_count_daily + index_returns_daily.",
         service_module="backend.services.scheduler.ma_count_scheduler",
         service_class="MaCountScheduler",
         config_file="ma_count_job.json",
@@ -186,7 +186,7 @@ def _job_run_backfill(target_date=None) -> None:
             status["lastIrFailed"] = int(m2.group(3))
 
         if r.returncode == 0:
-            # DuckDB 数据校验: ma_count_daily + index_returns_daily 两表
+            # CH/PG 数据校验: ma_count_daily + index_returns_daily 两表
             validated_ma_date = resolve_latest_scalar_date("ma_count_daily", "total_eligible", target_date) or target_date
             validated_ir_date = resolve_latest_count_date("index_returns_daily", target_date, min_rows=4) or target_date
             status["lastValidatedTradeDate"] = validated_ma_date.isoformat()
@@ -254,27 +254,11 @@ def _job_run_backfill(target_date=None) -> None:
 
 def _refresh_coverage(status: dict[str, Any]) -> None:
     try:
-        from backend.adapters.market.duckdb_store import get_conn
-        with get_conn(read_only=True) as c:
-            r = c.execute(
-                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
-                "FROM ma_count_daily"
-            ).fetchone()
-            r2 = c.execute(
-                "SELECT MIN(trade_date), MAX(trade_date), COUNT(*) "
-                "FROM index_returns_daily"
-            ).fetchone()
+        from backend.repositories.market.market_pg_cynexus_repo import coverage
+
         status["lastCoverage"] = {
-            "maCount": {
-                "firstDate": r[0].isoformat() if r[0] else None,
-                "lastDate": r[1].isoformat() if r[1] else None,
-                "rowCount": int(r[2]) if r[2] else 0,
-            },
-            "indexReturns": {
-                "firstDate": r2[0].isoformat() if r2[0] else None,
-                "lastDate": r2[1].isoformat() if r2[1] else None,
-                "rowCount": int(r2[2]) if r2[2] else 0,
-            },
+            "maCount": coverage("msi_ma_count_daily"),
+            "indexReturns": coverage("mkt_index_return_daily"),
         }
     except Exception as exc:
         logger.debug("refresh_coverage failed: %s", exc)
@@ -311,7 +295,7 @@ def start_ma_count_scheduler() -> None:
         status["schedulerStartedAt"] = _beijing_now().isoformat(timespec="seconds")
         _register_job(
             _JOB_ID,
-            "ma_count_refresh (17:06 工作日, MA 计数 + 宽基指数收益回填 duckdb)",
+            "ma_count_refresh (17:06 工作日, MA 计数 + 宽基指数收益回填 ClickHouse/PostgreSQL)",
             None,
             )
         _save_job_status(status)

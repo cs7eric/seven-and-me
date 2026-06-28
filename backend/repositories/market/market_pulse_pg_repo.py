@@ -17,7 +17,6 @@ from typing import Any
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.orm import Session
 
-from backend.adapters.market.duckdb_store import conn as duckdb_conn
 from backend.config.settings import STOCK_UNIVERSE_DIR
 from backend.models.market_pulse import MarketPulseCaptureBatch, MarketPulseSectorDailySnapshot
 from backend.utils.json_io import read_json_file
@@ -174,47 +173,7 @@ class MarketPulseRepository:
         }
 
     def _import_from_duckdb(self) -> int:
-        imported = 0
-        try:
-            with duckdb_conn(read_only=True) as con:
-                rows = con.execute(
-                    """
-                    SELECT trade_date, sector_name, sector_index, change_pct,
-                           inflow, outflow, main_net, stock_count,
-                           leading_stock, leading_change_pct, leading_price, source
-                    FROM market_pulse_sector_daily
-                    ORDER BY trade_date ASC, change_pct DESC, sector_name ASC
-                    """
-                ).fetchall()
-        except Exception as exc:
-            logger.warning("load duckdb market_pulse_sector_daily failed: %s", exc)
-            return 0
-
-        grouped: dict[date, list[Any]] = {}
-        for row in rows:
-            grouped.setdefault(row[0], []).append(row)
-
-        for trade_date, items in grouped.items():
-            if self.has_trade_date(trade_date):
-                continue
-            if is_trade_date_confirmed_by_tencent(trade_date) is not True:
-                logger.info("skip duckdb non-trading market pulse snapshot: %s", trade_date)
-                continue
-            normalized = [_normalize_duckdb_row(_DuckRowAdapter(row)) for row in items]
-            normalized = [row for row in normalized if row is not None]
-            if not normalized:
-                continue
-            self.replace_trade_day_snapshot(
-                trade_date=trade_date,
-                rows=normalized,
-                source_kind="duckdb_import",
-                source_name="duckdb.market_pulse_sector_daily",
-                fetched_at=datetime.now(),
-                extra={"importedFrom": "duckdb.market_pulse_sector_daily"},
-                remark="bootstrapped from duckdb legacy market_pulse_sector_daily",
-            )
-            imported += 1
-        return imported
+        return 0
 
     def _import_from_rotation_json(self) -> int:
         if not _ROTATION_DIR.exists():

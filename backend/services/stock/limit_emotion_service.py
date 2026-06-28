@@ -1106,7 +1106,7 @@ def _assemble_from_realtime(
 
 
 # ---------------------------------------------------------------------------
-# 6.5. DuckDB 适配层 — 离线 / Mock Workspace 路径
+# 6.5. ClickHouse 适配层 — 离线 / Mock Workspace 路径
 #
 # 从 daily_raw + stock_universe 实时算 limitEmotion, 跟现有 API 形状一致.
 # 跟 _assemble_from_realtime (eltdx 实时) 和 _aggregate_from_daily
@@ -1122,21 +1122,21 @@ def _assemble_from_realtime(
 #   - industry/concepts: 走 _enrich_stock (跟 realtime 一致)
 #   - isNew: 走 _load_universe_meta (跟 realtime 一致)
 # ---------------------------------------------------------------------------
-def _assemble_from_duckdb(
+def _assemble_from_clickhouse(
     today: date,
-    source: str = "duckdb.daily_raw",
+    source: str = "clickhouse.daily_raw",
 ) -> dict[str, Any] | None:
-    """从 duckdb 算 limitEmotion, 跟现有 payload 形状一致. 失败/无数据返回 None."""
+    """从 ClickHouse 算 limitEmotion, 跟现有 payload 形状一致. 失败/无数据返回 None."""
     try:
         from backend.repositories.market import limit_repo as _limit_repo
     except Exception as exc:
-        logger.debug("duckdb import failed: %s", exc)
+        logger.debug("limit_repo import failed: %s", exc)
         return None
 
     try:
         snap = _limit_repo.get_today_limit_snapshot(today)
     except Exception as exc:
-        logger.warning("duckdb get_today_limit_snapshot(%s) failed: %s", today, exc)
+        logger.warning("ClickHouse get_today_limit_snapshot(%s) failed: %s", today, exc)
         return None
     if not snap:
         return None
@@ -1175,7 +1175,7 @@ def _assemble_from_duckdb(
     keep_codes = {q["code"] for q in filtered}
     snap_filtered = [r for r in snap if (r.get("code") or "").lower() in keep_codes]
 
-    # 拼 today_rows: 复用 duckdb 已算的字段, 只补 isLimitDown
+    # 拼 today_rows: 复用 limit_repo 已算的字段, 只补 isLimitDown
     today_rows: list[dict[str, Any]] = []
     for r in snap_filtered:
         code = (r.get("code") or "").lower()
@@ -1283,23 +1283,13 @@ def _assemble_from_duckdb(
     }
 
 
-def _duckdb_latest_trading_day() -> date | None:
-    """从 daily_raw 找最近一个有数据的交易日 (兜底给非交易日用)."""
+def _clickhouse_latest_trading_day() -> date | None:
+    """从 ClickHouse index_daily_raw 找最近一个有数据的交易日 (兜底给非交易日用)."""
     try:
-        from backend.adapters.market.duckdb_store import get_conn
-        # 不要用 get_conn().execute().fetchone() 链式 — CPython GC 顺序会让 wrapper
-        # __del__ 在 result 之前跑, 关掉连接导致 "Connection already closed".
-        # 总是先把 wrapper 绑到变量, 用完 GC 关闭.
-        con = get_conn()
-        try:
-            r = con.execute(
-                "SELECT MAX(trade_date) FROM daily_raw WHERE volume > 0"
-            ).fetchone()
-        finally:
-            con.close()
-        return r[0] if r and r[0] is not None else None
+        from backend.repositories.market.index_repo import latest_index_trade_date
+        return latest_index_trade_date("sh000001")
     except Exception as exc:
-        logger.debug("duckdb latest trade date failed: %s", exc)
+        logger.debug("ClickHouse latest trade date failed: %s", exc)
         return None
 
 
@@ -1327,13 +1317,13 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
         except Exception:
             is_td = True
 
-        # 1.5) 盘前 (pre_open): 优先走 daily archive (上一交易日), duckdb 兜底, 都不行 fallthrough.
+        # 1.5) 盘前 (pre_open): 优先走 daily archive (上一交易日), ClickHouse 兜底, 都不行 fallthrough.
         # 原因: 9:00-9:30 实时数据是集合竞价的脏数据, 涨停/跌停/连板全是错的
         # (例如 eltdx 9:00 抓到 fallingCount=5527, limitDownCount=5527).
         # 既然市场没开, 显示昨日收盘的最终分布更准确.
         if is_td and market_status == "pre_open":
             # 优先 daily archive (snap_today_daily 15:30 落盘, 数据源是 qt.gtimg batch
-            # 跟 scheduler 跑出来的, 比 duckdb.daily_raw JOIN 算 change_pct 更准)
+            # 跟 scheduler 跑出来的, 比 ClickHouse daily_raw JOIN 算 change_pct 更准)
             daily = _previous_trading_day_payload_for(today)
             if daily:
                 payload = _aggregate_from_daily(daily)
@@ -1347,7 +1337,7 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                     logger.warning("write latest (pre_open from daily) failed: %s", exc)
                 _try_pg_write(payload, "daily_archive")
                 return payload
-            # daily 缺失 → duckdb 兜底 (用 close/prev_close JOIN 算, 准头不如 daily 但比 empty 强)
+            # daily 缺失 → ClickHouse 兜底 (用 close/prev_close JOIN 算, 准头不如 daily 但比 empty 强)
             prev_td: date | None = None
             try:
                 from backend.services.stock.trading_calendar import previous_trading_day
@@ -1355,25 +1345,25 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
             except Exception:
                 prev_td = None
             if prev_td is not None:
-                payload = _assemble_from_duckdb(prev_td, source="duckdb.daily_raw")
+                payload = _assemble_from_clickhouse(prev_td, source="clickhouse.daily_raw")
                 if payload:
                     payload["tradeDate"] = prev_td.isoformat()
                     payload["marketStatus"] = "pre_open"
-                    payload["dataStatus"] = "from_duckdb"
+                    payload["dataStatus"] = "from_clickhouse"
                     payload["updateTime"] = now.isoformat(timespec="seconds")
                     try:
                         _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
                     except Exception as exc:
-                        logger.warning("write latest (pre_open from duckdb) failed: %s", exc)
-                    _try_pg_write(payload, "duckdb")
+                        logger.warning("write latest (pre_open from clickhouse) failed: %s", exc)
+                    _try_pg_write(payload, "clickhouse")
                     return payload
             # 都拿不到, fallthrough 到实时 (会拿到空数据, 写空 latest)
 
         if not is_td:
-            # 非交易日: 优先走 duckdb (找最近一个有数据的交易日), 兜底 daily archive
-            latest_td = _duckdb_latest_trading_day()
+            # 非交易日: 优先走 clickhouse (找最近一个有数据的交易日), 兜底 daily archive
+            latest_td = _clickhouse_latest_trading_day()
             if latest_td is not None:
-                payload = _assemble_from_duckdb(latest_td, source="duckdb.daily_raw")
+                payload = _assemble_from_clickhouse(latest_td, source="clickhouse.daily_raw")
                 if payload:
                     payload["tradeDate"] = latest_td.isoformat()
                     payload["updateTime"] = now.isoformat(timespec="seconds")
@@ -1383,10 +1373,10 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
                     try:
                         _write_json_atomic(MARKET_PULSE_LIMIT_LATEST_FILE, payload)
                     except Exception as exc:
-                        logger.warning("write market-pulse/latest.json (duckdb) failed: %s", exc)
-                    _try_pg_write(payload, "duckdb")
+                        logger.warning("write market-pulse/latest.json (clickhouse) failed: %s", exc)
+                    _try_pg_write(payload, "clickhouse")
                     return payload
-            # duckdb 没有 → 兜底 daily archive
+            # clickhouse 没有 → 兜底 daily archive
             daily = _latest_daily_payload()
             if daily:
                 payload = _aggregate_from_daily(daily)
@@ -1460,16 +1450,16 @@ def build_limit_emotion(force: bool = False) -> dict[str, Any]:
         # 3) 拉实时 (盘内: realtime 是 primary, 收盘前 daily file 还没写)
         quotes, source, err = _fetch_realtime_quotes()
         if not quotes:
-            # Mock Workspace / 离线开发: realtime 失败时, 优先用 duckdb 兜底
+            # Mock Workspace / 离线开发: realtime 失败时, 优先用 clickhouse 兜底
             # (daily_raw 已经有今天 close, 跟实时盘中数据有几十分钟延迟, 但比 empty 强)
-            logger.warning("limitEmotion: realtime quotes empty: %s, falling back to duckdb", err)
-            payload = _assemble_from_duckdb(today, source="duckdb.daily_raw.fallback")
+            logger.warning("limitEmotion: realtime quotes empty: %s, falling back to clickhouse", err)
+            payload = _assemble_from_clickhouse(today, source="clickhouse.daily_raw.fallback")
             if payload is None:
                 payload = _empty_limit_emotion()
                 payload["_meta"]["dataStatus"] = "empty"
                 payload["_meta"]["error"] = err
             else:
-                payload["_meta"]["dataStatus"] = "from_duckdb"
+                payload["_meta"]["dataStatus"] = "from_clickhouse"
                 payload["_meta"]["error"] = err
         else:
             payload = _assemble_from_realtime(quotes, config, today, source)

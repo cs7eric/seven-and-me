@@ -1,34 +1,42 @@
-"""历史分位数 (Percentile Score) 通用仓储.
-
-对任意 (table, column, target_date, current_value) 算 3 年滚动分位数,
-返回 0-100 的情绪得分。
-
-设计思路:
-  把 Spread 类指标 (Risk Appetite / Style Risk Appetite / 成交额活跃度 / 252日新高)
-  映射到 0-100 分的"情绪得分",
-  而不是用固定经验范围 (如 ±2%) 做线性映射。
-
-  固定范围的致命问题是未来会漂移:
-    2020年牛市 spread=+8%, 2024年熊市 spread=-6%
-    "spread=+2%=100分" 这种映射过两年就不成立了
-
-  历史分位数的优点是:
-    - 始终在 0-100 范围内
-    - 自动适应市场环境变化
-    - 解释自然: "当前风险偏好高于过去 3 年中 82% 的时间"
-
-用法:
-    score = percentile_score("risk_appetite_daily", "spread_weighted", "2026-06-17", 1.8)
-    # → 82.0  (1.8% 的 spread 高于过去 3 年中 82% 的交易日)
-"""
+"""历史分位数 (Percentile Score) 通用仓储 — PostgreSQL backend."""
+from __future__ import annotations
 
 from datetime import date, timedelta
 from typing import Any
 
-from backend.adapters.market.duckdb_store import conn
+from sqlalchemy import text
 
-# 默认 3 年 ≈ 756 个交易日 ≈ 1060 个日历天
+from backend.config.database import session_scope
+from backend.repositories.market.market_pg_cynexus_repo import qname
+
 _DEFAULT_LOOKBACK = 1060
+
+_ALLOWED_COLUMNS: dict[str, set[str]] = {
+    "ma_count_daily": {"new_high_252d_pct", "breadth_raw", "up_5d_pct", "new_low_60d_pct"},
+    "risk_appetite_daily": {"spread_weighted", "spread_511010", "spread_511090"},
+    "turnover_activity_daily": {"ratio", "score"},
+    "profit_effect_daily": {"score"},
+    "style_risk_appetite_daily": {"spread"},
+    "limit_emotion_summary_daily": {"limit_up_down_ratio", "break_board_rate", "yesterday_limit_up_avg_return", "composite_score"},
+    "volatility_sentiment_daily": {"sentiment_score", "realized_vol_20d", "percentile_1y"},
+}
+
+_TABLE_MAP = {
+    "ma_count_daily": "msi_ma_count_daily",
+    "risk_appetite_daily": "msi_risk_appetite_daily",
+    "turnover_activity_daily": "msi_turnover_activity_daily",
+    "profit_effect_daily": "msi_profit_effect_daily",
+    "style_risk_appetite_daily": "msi_style_risk_daily",
+    "limit_emotion_summary_daily": "msi_limit_emotion_daily",
+    "volatility_sentiment_daily": "msi_volatility_daily",
+}
+
+
+def _resolve(table: str, column: str) -> tuple[str, str]:
+    allowed = _ALLOWED_COLUMNS.get(table)
+    if not allowed or column not in allowed:
+        raise ValueError(f"unsupported percentile source: {table}.{column}")
+    return qname(_TABLE_MAP[table]), column
 
 
 def percentile_score(
@@ -39,41 +47,24 @@ def percentile_score(
     *,
     lookback_days: int = _DEFAULT_LOOKBACK,
 ) -> float | None:
-    """计算 current_value 在 table.column 历史中的百分位排名 (0-100).
-
-    算法:
-      percentile = count(历史值 < current_value) / count(历史值) × 100
-
-    使用 target_date 之前 (不含当天) 的 lookback 天历史,
-    避免纳入未来信息 (look-ahead bias).
-
-    Args:
-        table: 表名.
-        column: 数值列名.
-        target_date: 当前交易日.
-        current_value: 当前值.
-        lookback_days: 回看天数 (默认 1060 ≈ 3y).
-
-    Returns:
-        0-100 的得分. 无历史数据或 current_value 为 None 时返回 None
-        (上游 msi 走中性 50).
-    """
     if current_value is None:
         return None
     td = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
     lookback_start = td - timedelta(days=lookback_days)
     try:
-        with conn() as con:
-            row = con.execute(
-                f"""
-                SELECT COUNT(*) FILTER (WHERE {column} < ?) * 100.0
-                       / NULLIF(COUNT(*), 0) AS score
-                FROM {table}
-                WHERE trade_date >= ? AND trade_date < ?
-                  AND {column} IS NOT NULL
-                """,
-                [float(current_value), lookback_start, td],
-            ).fetchone()
+        table_name, col = _resolve(table, column)
+        with session_scope() as db:
+            row = db.execute(
+                text(f"""
+                    SELECT COUNT(*) FILTER (WHERE {col} < :current_value) * 100.0
+                           / NULLIF(COUNT(*), 0) AS score
+                    FROM {table_name}
+                    WHERE trade_date >= :lookback_start AND trade_date < :target_date
+                      AND {col} IS NOT NULL
+                      AND deleted_at IS NULL
+                """),
+                {"current_value": float(current_value), "lookback_start": lookback_start, "target_date": td},
+            ).one()
         if row and row[0] is not None:
             return round(float(row[0]), 1)
     except Exception:
@@ -90,56 +81,36 @@ def enrich_history_scores(
     lookback_days: int = _DEFAULT_LOOKBACK,
     score_key: str = "score",
 ) -> list[dict[str, Any]]:
-    """给 history items 每行加上百分位得分.
-
-    算法 (修复 look-ahead bias):
-      对每一天 T (T ∈ [start, end]), 用 T 之前 lookback_days 天内 (含 T 自身?)
-      的所有 val 计算"严格小于 T.val 的占比", 避免 T 日之后的数据污染过去日的分位.
-
-      T 的分位 = COUNT(prev.val < T.val) / COUNT(prev) × 100
-        其中 prev 满足:  T - lookback_days ≤ prev.trade_date < T.trade_date
-
-      实现: 自连接 + 区间过滤, DuckDB 单查询 O(N²) 756²≈570k 配对 <100ms.
-
-    Args:
-        items: 历史 items (每条必须有 tradeDate 字段).
-        table: 表名.
-        column: 数值列名.
-        end_date: 查询截止日 (回看窗口终点, 含当天).
-        lookback_days: 回看天数.
-        score_key: 写入 items 的字段名 (默认 "score").
-
-    Returns:
-        同 items, 每行加 score 字段 (mutate in-place + return).
-    """
     if not items:
         return items
     end_d = date.fromisoformat(end_date) if isinstance(end_date, str) else end_date
     lookback_start = end_d - timedelta(days=lookback_days)
 
     try:
-        with conn() as con:
-            rows = con.execute(
-                f"""
-                WITH t AS (
-                  SELECT trade_date, {column} AS val
-                    FROM {table}
-                   WHERE trade_date >= ? AND trade_date <= ?
-                     AND {column} IS NOT NULL
-                )
-                SELECT
-                  cur.trade_date,
-                  100.0 * SUM(CASE WHEN prev.val < cur.val THEN 1 ELSE 0 END)
-                      / NULLIF(COUNT(prev.val), 0) AS score
-                FROM t cur
-                LEFT JOIN t prev
-                  ON prev.trade_date < cur.trade_date
-                 AND prev.trade_date >= cur.trade_date - INTERVAL '{lookback_days} days'
-                GROUP BY cur.trade_date
-                ORDER BY cur.trade_date ASC
-                """,
-                [lookback_start, end_d],
-            ).fetchall()
+        table_name, col = _resolve(table, column)
+        with session_scope() as db:
+            rows = db.execute(
+                text(f"""
+                    WITH t AS (
+                      SELECT trade_date, {col} AS val
+                        FROM {table_name}
+                       WHERE trade_date >= :lookback_start AND trade_date <= :end_date
+                         AND {col} IS NOT NULL
+                         AND deleted_at IS NULL
+                    )
+                    SELECT
+                      cur.trade_date,
+                      100.0 * SUM(CASE WHEN prev.val < cur.val THEN 1 ELSE 0 END)
+                          / NULLIF(COUNT(prev.val), 0) AS score
+                    FROM t cur
+                    LEFT JOIN t prev
+                      ON prev.trade_date < cur.trade_date
+                     AND prev.trade_date >= cur.trade_date - (:lookback_days * INTERVAL '1 day')
+                    GROUP BY cur.trade_date
+                    ORDER BY cur.trade_date ASC
+                """),
+                {"lookback_start": lookback_start, "end_date": end_d, "lookback_days": lookback_days},
+            ).all()
         score_map: dict[str, float] = {
             r[0].isoformat(): round(float(r[1]), 1) if r[1] is not None else 50.0
             for r in rows

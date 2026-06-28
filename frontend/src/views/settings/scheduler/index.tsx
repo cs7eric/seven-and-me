@@ -77,7 +77,7 @@ import {
   startSchedulerJob,
   stopSchedulerJob,
   triggerSchedulerJob,
-} from "@/lib/api"
+} from "@/services/scheduler/management"
 
 type ActionKey = "enable" | "disable" | "start" | "stop" | "trigger" | "delete"
 type ActionState = Record<string, ActionKey | null>
@@ -347,8 +347,8 @@ function JobCard({ job, pending, onAction }: JobCardProps) {
   // history: dialog 打开时才拉, 5s 轮询. pending 变化 (trigger) 也重拉.
   useEffect(() => {
     if (!dialogOpen) {
-      setHistory([])
-      return
+      const clearTimer = window.setTimeout(() => setHistory([]), 0)
+      return () => window.clearTimeout(clearTimer)
     }
     let cancelled = false
     const load = () => {
@@ -989,11 +989,16 @@ export default function SchedulerSettingsPage() {
   }, [])
 
   useEffect(() => {
-    void refresh(true)
+    const initialTimer = window.setTimeout(() => {
+      void refresh(true)
+    }, 0)
     const timer = window.setInterval(() => {
       void refresh(false)
     }, REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
   }, [refresh])
 
   const handleAction = useCallback(
@@ -1062,7 +1067,8 @@ export default function SchedulerSettingsPage() {
             const count = (res && (res as { count?: number }).count) ?? 0
             const failed = (res && (res as { failed_count?: number }).failed_count) ?? 0
             // 从 items 里取具体错误, 结构: result.items[0].lastRunError 或 result.items[0].last_error
-            const resultItems = (res && (res as any).result?.items) || []
+            const resultValue = res?.result as { items?: Array<{ lastRunError?: string; last_error?: string }> } | undefined
+            const resultItems = resultValue?.items || []
             const detailError = resultItems.length > 0
               ? (resultItems[0].lastRunError || resultItems[0].last_error || "")
               : ""
@@ -1143,8 +1149,8 @@ export default function SchedulerSettingsPage() {
       const filtered = jobs.filter((job) => (job.categories || []).includes(catId))
       // 按 categorySortOrders 排序 (market_sentiment 等按执行顺序), 无 sortOrder 的放最后
       filtered.sort((a, b) => {
-        const sa = (a as any).categorySortOrders?.[catId] ?? 999
-        const sb = (b as any).categorySortOrders?.[catId] ?? 999
+        const sa = a.categorySortOrders?.[catId] ?? 999
+        const sb = b.categorySortOrders?.[catId] ?? 999
         return sa - sb
       })
       return filtered

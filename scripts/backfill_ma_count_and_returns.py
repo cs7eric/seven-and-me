@@ -23,14 +23,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.clickhouse_store import query_one
+from backend.config.database import session_scope
 from backend.repositories.market.indicator_repo import (
     bulk_calc_ma_count, bulk_save_ma_count,
 )
 from backend.repositories.market.index_repo import (
     get_index_returns_as_of, save_index_returns,
 )
+from backend.repositories.market.market_pg_cynexus_repo import qname
 from backend.services.stock.trading_calendar import is_trading_day
+from sqlalchemy import text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,35 +70,29 @@ def _resolve_end_date() -> date:
 
 
 def _has_daily_qfq_data(trade_date: date) -> bool:
-    """检查 daily_qfq 在指定日是否有数据 (MA 计数前提)."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT COUNT(*) FROM daily_qfq WHERE trade_date = ? LIMIT 1",
-        [trade_date],
-    ).fetchone()
+    """检查 ClickHouse daily_qfq 在指定日是否有数据 (MA 计数前提)."""
+    r = query_one("SELECT count() FROM daily_qfq WHERE trade_date = %s", (trade_date,))
     return bool(r and r[0] > 0)
 
 
 def _has_index_daily_data(trade_date: date) -> bool:
-    """检查 index_daily_raw 在指定日是否有 2 只指数的数据."""
-    con = get_conn()
-    r = con.execute(
-        "SELECT COUNT(DISTINCT code) FROM index_daily_raw WHERE trade_date = ?",
-        [trade_date],
-    ).fetchone()
+    """检查 ClickHouse index_daily_raw 在指定日是否有 2 只指数的数据."""
+    r = query_one(
+        "SELECT countDistinct(code) FROM index_daily_raw WHERE trade_date = %s",
+        (trade_date,),
+    )
     return bool(r and r[0] >= 2)
 
 
 def _latest_index_daily_date() -> date | None:
-    con = get_conn()
-    r = con.execute(
-        "SELECT MIN(latest_trade_date) FROM ("
-        "  SELECT code, MAX(trade_date) AS latest_trade_date"
+    r = query_one(
+        "SELECT min(latest_trade_date) FROM ("
+        "  SELECT code, max(trade_date) AS latest_trade_date"
         "    FROM index_daily_raw"
         "   WHERE code IN ('sh000001', 'sh000300', 'sh000852')"
         "   GROUP BY code"
         ") t"
-    ).fetchone()
+    )
     if not r or r[0] is None:
         return None
     v = r[0]
@@ -129,22 +126,25 @@ def _auto_pull_index_history(days: int = 30) -> None:
 
 
 def _ma_exists(trade_date: date) -> bool:
-    con = get_conn()
-    r = con.execute("SELECT 1 FROM ma_count_daily WHERE trade_date = ?", [trade_date]).fetchone()
+    with session_scope() as db:
+        r = db.execute(
+            text(f"SELECT 1 FROM {qname('msi_ma_count_daily')} WHERE trade_date = :td AND deleted_at IS NULL LIMIT 1"),
+            {"td": trade_date},
+        ).first()
     return r is not None
 
 
 def _index_returns_exist(trade_date: date) -> bool:
-    con = get_conn()
-    r = con.execute(
-        "SELECT COUNT(DISTINCT window_days) FROM index_returns_daily WHERE trade_date = ?",
-        [trade_date],
-    ).fetchone()
+    with session_scope() as db:
+        r = db.execute(
+            text(f"SELECT COUNT(DISTINCT window_days) FROM {qname('mkt_index_return_daily')} WHERE trade_date = :td AND deleted_at IS NULL"),
+            {"td": trade_date},
+        ).first()
     return bool(r and r[0] >= 4)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="回填 MA 计数 + 指数收益到 duckdb")
+    ap = argparse.ArgumentParser(description="回填 MA 计数 + 指数收益到 PostgreSQL")
     ap.add_argument("--days", type=int, default=60,
                     help="回填窗口天数 (默认 60, 包含周末/节假日, 内部会过滤)")
     ap.add_argument("--force", action="store_true",

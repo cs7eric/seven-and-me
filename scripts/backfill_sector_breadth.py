@@ -1,11 +1,10 @@
 """板块扩散 → market_pulse_sector_breadth_daily 回填.
 
-数据源 (扫 duckdb, 不走网络):
-  ths_industry_fund_flow_daily (§18) — 取所有 DISTINCT trade_date,
-  对每个日期聚合算 advancing/declining/flat/total/advance_pct,
-  upsert 到 market_pulse_sector_breadth_daily (§19).
+数据源: PostgreSQL mkt_ths_industry_fund_flow_daily
+  取所有 DISTINCT trade_date, 对每个日期聚合算 advancing/declining/flat/total/advance_pct,
+  upsert 到 PostgreSQL msi_sector_breadth_daily.
 
-幂等: 全部走 INSERT OR REPLACE by trade_date, 重复跑不写脏.
+幂等: 通过 repository upsert 重复跑不写脏.
 
 用法:
     python scripts/backfill_sector_breadth.py
@@ -43,7 +42,7 @@ def _resolve_end_date() -> date:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="回填板块扩散到 duckdb")
+    ap = argparse.ArgumentParser(description="回填板块扩散到 PostgreSQL")
     ap.add_argument("--days", type=int, default=365,
                     help="回填最近 N 天 (默认 365)")
     ap.add_argument("--date", type=str, default=None,
@@ -55,11 +54,6 @@ def main() -> int:
     end_date = _resolve_end_date()
     log.info("start: days=%s date=%s dry_run=%s %s=%s",
              args.days, args.date, args.dry_run, _TARGET_TRADE_DATE_ENV, end_date)
-
-    # 初始化 schema (幂等)
-    from backend.adapters.market.duckdb_store import init_schema
-    init_schema()
-    log.info("schema 初始化完成 (幂等)")
 
     from backend.repositories.market.sector_breadth_repo import (
         upsert_sector_breadth, coverage, get_sector_breadth_history,

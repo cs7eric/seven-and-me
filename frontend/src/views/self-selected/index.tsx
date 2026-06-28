@@ -17,16 +17,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   type SelfSelectedGroup,
   type SelfSelectedItem,
-  type StockSectorsResponse,
   createSelfSelectedGroup,
   createSelfSelectedItem,
   deleteSelfSelectedGroup,
   deleteSelfSelectedItem,
-  fetchApplicationAnalysisTargets,
   fetchSelfSelectedGroups,
   fetchSelfSelectedItems,
-  fetchStockSectors,
   updateSelfSelectedItem,
+} from "@/services/market/self-selected"
+import {
+  type StockSectorsResponse,
+  fetchApplicationAnalysisTargets,
+  fetchStockSectors,
 } from "@/lib/api"
 
 import { AddItemTile } from "./components/add-item-tile"
@@ -100,11 +102,16 @@ export default function SelfSelectedPage() {
   }, [])
 
   useEffect(() => {
-    void loadAll(true)
+    const initialTimer = window.setTimeout(() => {
+      void loadAll(true)
+    }, 0)
     const timer = window.setInterval(() => {
       void loadAll(false)
     }, REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
   }, [loadAll])
 
   // 拉一次应用分析 targets，用于在 item 卡上打「已加入」徽章
@@ -120,17 +127,26 @@ export default function SelfSelectedPage() {
     }
   }, [])
   useEffect(() => {
-    void loadAnalysisSymbols()
+    const initialTimer = window.setTimeout(() => {
+      void loadAnalysisSymbols()
+    }, 0)
     const timer = window.setInterval(() => {
       void loadAnalysisSymbols()
     }, REFRESH_INTERVAL_MS)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
   }, [loadAnalysisSymbols])
 
   useEffect(() => {
     if (!activeGroupId && groups.length > 0) {
-      setActiveGroupId(groups[0].id)
+      const timer = window.setTimeout(() => {
+        setActiveGroupId(groups[0].id)
+      }, 0)
+      return () => window.clearTimeout(timer)
     }
+    return undefined
   }, [activeGroupId, groups])
 
   // ---------- actions ----------
@@ -288,28 +304,31 @@ export default function SelfSelectedPage() {
     if (missingSymbols.length === 0) return
 
     let active = true
-    setLoadingSectorSymbols((prev) => new Set([...prev, ...missingSymbols]))
-    Promise.allSettled(missingSymbols.map((symbol) => fetchStockSectors(symbol))).then((results) => {
-      if (!active) return
-      const next: Record<string, StockSectorsResponse> = {}
-      for (let i = 0; i < results.length; i += 1) {
-        const result = results[i]
-        const symbol = missingSymbols[i]
-        if (result.status === "fulfilled") {
-          next[symbol] = result.value
+    const timer = window.setTimeout(() => {
+      setLoadingSectorSymbols((prev) => new Set([...prev, ...missingSymbols]))
+      Promise.allSettled(missingSymbols.map((symbol) => fetchStockSectors(symbol))).then((results) => {
+        if (!active) return
+        const next: Record<string, StockSectorsResponse> = {}
+        for (let i = 0; i < results.length; i += 1) {
+          const result = results[i]
+          const symbol = missingSymbols[i]
+          if (result.status === "fulfilled") {
+            next[symbol] = result.value
+          }
         }
-      }
-      if (Object.keys(next).length > 0) {
-        setSectorsBySymbol((prev) => ({ ...prev, ...next }))
-      }
-      setLoadingSectorSymbols((prev) => {
-        const nextSet = new Set(prev)
-        for (const symbol of missingSymbols) nextSet.delete(symbol)
-        return nextSet
+        if (Object.keys(next).length > 0) {
+          setSectorsBySymbol((prev) => ({ ...prev, ...next }))
+        }
+        setLoadingSectorSymbols((prev) => {
+          const nextSet = new Set(prev)
+          for (const symbol of missingSymbols) nextSet.delete(symbol)
+          return nextSet
+        })
       })
-    })
+    }, 0)
     return () => {
       active = false
+      window.clearTimeout(timer)
     }
   }, [activeGroupId, itemsByGroup, sectorsBySymbol])
 

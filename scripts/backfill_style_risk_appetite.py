@@ -1,12 +1,12 @@
-"""风格风险偏好 duckdb 回填脚本.
+"""风格风险偏好 PostgreSQL 回填脚本.
 
 核心指标:
   spread = 中证1000 近 5 日收益率 - 沪深300 近 5 日收益率
 
-数据源: duckdb.index_returns_daily (已由 ma_count_scheduler 每日 17:06 更新)
-目标表: style_risk_appetite_daily (INSERT OR REPLACE by trade_date)
+数据源: ClickHouse daily_qfq
+目标表: PostgreSQL msi_style_risk_daily
 
-幂等: 全部走 INSERT OR REPLACE, 重复跑不写脏.
+幂等: 通过 repository upsert 重复跑不写脏.
 
 用法:
     python scripts/backfill_style_risk_appetite.py
@@ -33,7 +33,7 @@ logging.basicConfig(
 log = logging.getLogger("backfill_style_risk_appetite")
 _TARGET_TRADE_DATE_ENV = "MINIMAX_TARGET_TRADE_DATE"
 
-from backend.adapters.market.duckdb_store import init_schema
+from backend.adapters.market.clickhouse_store import query_one, query_rows
 
 
 def _resolve_end_date() -> date:
@@ -44,7 +44,7 @@ def _resolve_end_date() -> date:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="风格风险偏好 duckdb 回填")
+    ap = argparse.ArgumentParser(description="风格风险偏好 PostgreSQL 回填")
     ap.add_argument("--days", type=int, default=60, help="回填最近 N 天 (默认 60)")
     ap.add_argument("--start", type=str, default=None, help="起始日 YYYY-MM-DD")
     ap.add_argument("--end", type=str, default=None, help="结束日 YYYY-MM-DD")
@@ -52,26 +52,22 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="跳过 cache 强制重算")
     args = ap.parse_args()
 
-    init_schema()
-
-    from backend.adapters.market.duckdb_store import conn
     from backend.repositories.market.style_risk_appetite_repo import (
         calc_style_risk_appetite,
         save_style_risk_appetite,
     )
 
-    with conn() as c:
-        row = c.execute("""
-            SELECT MIN(trade_date), MAX(trade_date)
-              FROM index_returns_daily
-             WHERE index_code = 'sh000300' AND window_days = 5
-        """).fetchone()
-        if not row or row[0] is None:
-            log.warning("index_returns_daily 无数据, 请先跑 backfill_ma_count_and_returns.py")
-            return 1
-        db_min, db_max = row[0], row[1]
-        db_min = db_min.date() if hasattr(db_min, "date") else db_min
-        db_max = db_max.date() if hasattr(db_max, "date") else db_max
+    row = query_one("""
+        SELECT MIN(trade_date), MAX(trade_date)
+          FROM daily_qfq
+         WHERE code IN ('000300', '000852')
+    """)
+    if not row or row[0] is None:
+        log.warning("daily_qfq 无沪深300/中证1000数据, 请先回填 qfq")
+        return 1
+    db_min, db_max = row[0], row[1]
+    db_min = db_min.date() if hasattr(db_min, "date") else db_min
+    db_max = db_max.date() if hasattr(db_max, "date") else db_max
 
     end_date = _resolve_end_date()
     if args.start:
@@ -87,19 +83,24 @@ def main() -> int:
         log.warning("start=%s > end=%s, 无数据可回填", start, end)
         return 0
 
-    with conn() as c:
-        rows = c.execute(
-            "SELECT DISTINCT trade_date FROM index_returns_daily "
-            "WHERE trade_date BETWEEN ? AND ? AND index_code = 'sh000300' AND window_days = 5 "
-            "ORDER BY trade_date",
-            [start, end],
-        ).fetchall()
+    rows = query_rows(
+        """
+        SELECT trade_date
+          FROM daily_qfq
+         WHERE trade_date BETWEEN %s AND %s
+           AND code IN ('000300', '000852')
+         GROUP BY trade_date
+        HAVING countDistinct(code) = 2
+         ORDER BY trade_date
+        """,
+        (start, end),
+    )
     trade_dates = [
         r[0].date() if hasattr(r[0], "date") else r[0]
         for r in rows
     ]
     log.info(
-        "index_returns_daily 在 %s ~ %s 中共 %d 个交易日 (%s=%s)",
+        "daily_qfq 在 %s ~ %s 中共 %d 个沪深300/中证1000共同交易日 (%s=%s)",
         start, end, len(trade_dates), _TARGET_TRADE_DATE_ENV, end_date,
     )
     if args.dry_run:

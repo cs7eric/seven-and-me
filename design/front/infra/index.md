@@ -12,3 +12,12 @@
 
 - 修改前先看 `design/front/index.md` 与 `market-pulse.detail.md`
 - 如果改了 API、数据源、compare 默认逻辑或组件结构，同步更新 design
+
+## Frontend API Migration
+
+- Route: `multiple`
+- Module: `frontend/src/services/**`
+- Detail: `./frontend-api-migration.md`
+- Data Source: old Flask/Python APIs, Java Gateway APIs, Postgres, ClickHouse, local files/model runtime
+- APIs: migration inventory for `frontend/src/lib/api.ts` and split service files
+- Components: N/A

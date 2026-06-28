@@ -8,7 +8,7 @@
 数据流:
   沪深300 (sh000300) 近 20 日日收益率 std × √252 → vol
   近 252 日 vol 滚动分位 → 1 - percentile → 情绪得分 0-100
-  走 duckdb.index_daily_raw (有完整历史, 5200+ 行, 但只用了最近 ~280)
+  走 ClickHouse index_daily_raw (有完整历史, 5200+ 行, 但只用了最近 ~280)
 
 回填窗口: 从 --days 天前到今天, 跳过周末/节假日 (无 index_daily_raw 数据).
 强制重算: --force 会覆盖已有记录 (calc_volatility_sentiment_cached(..., force=True)).
@@ -30,7 +30,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from backend.adapters.market.duckdb_store import get_conn
+from backend.adapters.market.clickhouse_store import query_one
+from backend.config.database import session_scope
+from backend.repositories.market.market_pg_cynexus_repo import qname
 from backend.repositories.market.volatility_sentiment_repo import (
     DEFAULT_VOL_LOOKBACK,
     DEFAULT_VOL_WINDOW,
@@ -38,6 +40,7 @@ from backend.repositories.market.volatility_sentiment_repo import (
     coverage,
 )
 from backend.services.stock.trading_calendar import is_trading_day
+from sqlalchemy import text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,20 +58,12 @@ UNDERLYING = {"code": "000300", "name": "沪深300", "full": "sh000300"}
 
 
 def _index_row_count() -> int:
-    con = get_conn()
-    r = con.execute(
-        "SELECT COUNT(*) FROM index_daily_raw WHERE code = ?",
-        [UNDERLYING["full"]],
-    ).fetchone()
+    r = query_one("SELECT count() FROM index_daily_raw WHERE code = %s", (UNDERLYING["full"],))
     return int(r[0]) if r else 0
 
 
 def _latest_index_trade_date() -> date | None:
-    con = get_conn()
-    r = con.execute(
-        "SELECT MAX(trade_date) FROM index_daily_raw WHERE code = ?",
-        [UNDERLYING["full"]],
-    ).fetchone()
+    r = query_one("SELECT max(trade_date) FROM index_daily_raw WHERE code = %s", (UNDERLYING["full"],))
     if not r or r[0] is None:
         return None
     v = r[0]
@@ -94,10 +89,11 @@ def _auto_pull_index_history(days: int = 300) -> None:
 
 
 def _vs_exists(trade_date: date) -> bool:
-    con = get_conn()
-    r = con.execute(
-        "SELECT 1 FROM volatility_sentiment_daily WHERE trade_date = ?", [trade_date]
-    ).fetchone()
+    with session_scope() as db:
+        r = db.execute(
+            text(f"SELECT 1 FROM {qname('msi_volatility_daily')} WHERE trade_date = :td AND deleted_at IS NULL LIMIT 1"),
+            {"td": trade_date},
+        ).first()
     return r is not None
 
 
@@ -119,7 +115,7 @@ def _resolve_end_date() -> date:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="回填 volatility_sentiment_daily 到 duckdb")
+    ap = argparse.ArgumentParser(description="回填 volatility_sentiment_daily 到 PostgreSQL")
     ap.add_argument("--days", type=int, default=60,
                     help="回填窗口天数 (默认 60, 内部过滤非交易日)")
     ap.add_argument("--date", type=str, default=None,

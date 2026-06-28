@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 
-import type { SelfSelectedItem } from "@/lib/api"
+import type { SelfSelectedItem } from "@/services/market/self-selected"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -32,9 +32,13 @@ export function EditItemNotesDialog({
 
   useEffect(() => {
     if (open) {
-      setNotes(item?.notes || "")
-      setError(null)
+      const timer = window.setTimeout(() => {
+        setNotes(item?.notes || "")
+        setError(null)
+      }, 0)
+      return () => window.clearTimeout(timer)
     }
+    return undefined
   }, [open, item])
 
   const handleSubmit = async (e?: React.FormEvent) => {
